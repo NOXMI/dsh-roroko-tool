@@ -27,14 +27,10 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "lib/index.js",
-    "lib/types/**/*.d.ts",
-    "lib/preinject.js",
-    "lib/data.js",
-    "lib/warn.js",
-    "client/client.js",
+    "lib",
+    "client",
     "cordis.patch.yml",
-    "src/**/*.ts"
+    "src"
   ],
   "dsh": {
     "client": {
