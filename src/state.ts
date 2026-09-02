@@ -12,7 +12,8 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { readFile, rename, mkdir, writeFile } from 'node:fs/promises'
 import {
-  normalizeState, RorokoToolState, RorokoToolStateDefault,
+  normalizeState, normalizePreinjectState, RorokoPreinjectState,
+  RorokoToolState, RorokoToolStateDefault,
 } from './settings.js'
 
 /** 当前运行的 profile 名(默认 web)。 */
@@ -55,9 +56,57 @@ export async function saveState(state: RorokoToolState): Promise<void> {
 export async function setToolEnabled(tool: string, enabled: boolean): Promise<RorokoToolState> {
   const current = await loadState()
   if (!(tool in current)) throw new Error(`unknown tool "${tool}"`)
+  const next = structuredClone(current)
+  if (tool === 'preinject') {
+    // 只翻转 enabled,保留已保存的 files/header/footer/wrap。
+    next.preinject = { ...next.preinject, enabled }
+  } else if (tool === 'data' || tool === 'warn' || tool === 'mark') {
+    next[tool] = { enabled }
+  } else {
+    throw new Error(`unknown tool "${tool}"`)
+  }
+  await saveState(next)
+  return next
+}
+
+/** 可由 HTTP body 部分提供的 preinject 配置字段(宽松 unknown,内部收窄)。 */
+export interface RorokoPreinjectConfigInput {
+  enabled?: boolean
+  files?: unknown
+  header?: unknown
+  footer?: unknown
+  wrapInSystemReminder?: boolean
+}
+
+/**
+ * 覆盖保存 preinject 配置节。body 中提供的字段(非 undefined)覆盖当前值,
+ * 未提供的保留现有值(部分保存语义)。落盘后返回新状态。
+ */
+export async function setPreinjectConfig(
+  config: RorokoPreinjectConfigInput,
+): Promise<RorokoToolState> {
+  const current = await loadState()
+  const existing = current.preinject
+  const merged: RorokoPreinjectState = {
+    enabled: typeof config.enabled === 'boolean'
+      ? config.enabled
+      : existing.enabled,
+    files: Array.isArray(config.files)
+      ? config.files.filter((item): item is string => typeof item === 'string')
+      : existing.files,
+    header: typeof config.header === 'string'
+      ? config.header
+      : existing.header,
+    footer: typeof config.footer === 'string'
+      ? config.footer
+      : existing.footer,
+    wrapInSystemReminder: typeof config.wrapInSystemReminder === 'boolean'
+      ? config.wrapInSystemReminder
+      : existing.wrapInSystemReminder,
+  }
   const next: RorokoToolState = {
     ...current,
-    [tool as keyof RorokoToolState]: { enabled },
+    preinject: normalizePreinjectState(merged),
   }
   await saveState(next)
   return next

@@ -13,7 +13,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { isRorokoToolKey } from './settings.js'
-import { loadState, setToolEnabled } from './state.js'
+import { loadState, setPreinjectConfig, setToolEnabled } from './state.js'
 
 /** webServer 服务的最小结构面(host 提供真实 WebServer;此处只声明用到的面)。 */
 export interface WebServerLike {
@@ -74,11 +74,39 @@ export function registerStateRoutes(webServer: WebServerLike): () => void {
             sendJson(response, 403, { error: 'untrusted origin' })
             return
           }
-          const body = (await readJsonBody(request)) as { tool?: unknown; enabled?: unknown }
-          if (!isRorokoToolKey(body.tool) || typeof body.enabled !== 'boolean') {
-            sendJson(response, 400, {
-              error: 'tool must be one of preinject/data/warn/mark and enabled must be a boolean',
+          const body = (await readJsonBody(request)) as {
+            tool?: unknown
+            enabled?: unknown
+            files?: unknown
+            header?: unknown
+            footer?: unknown
+            wrapInSystemReminder?: unknown
+          }
+          if (!isRorokoToolKey(body.tool)) {
+            sendJson(response, 400, { error: 'tool must be one of preinject/data/warn/mark' })
+            return
+          }
+          // preinject 配置节写入:body 带 files/header/footer/wrapInSystemReminder
+          // 任意一个即视为配置保存(仅 body 提供的字段覆盖);仅带 enabled 走开关 toggle。
+          if (body.tool === 'preinject'
+            && (body.files !== undefined
+              || body.header !== undefined
+              || body.footer !== undefined
+              || body.wrapInSystemReminder !== undefined)) {
+            const state = await setPreinjectConfig({
+              ...typeof body.enabled === 'boolean' ? { enabled: body.enabled } : {},
+              ...body.files !== undefined ? { files: body.files } : {},
+              ...body.header !== undefined ? { header: body.header } : {},
+              ...body.footer !== undefined ? { footer: body.footer } : {},
+              ...typeof body.wrapInSystemReminder === 'boolean'
+                ? { wrapInSystemReminder: body.wrapInSystemReminder }
+                : {},
             })
+            sendJson(response, 200, { ok: true, state })
+            return
+          }
+          if (typeof body.enabled !== 'boolean') {
+            sendJson(response, 400, { error: 'enabled must be a boolean' })
             return
           }
           const state = await setToolEnabled(body.tool, body.enabled)

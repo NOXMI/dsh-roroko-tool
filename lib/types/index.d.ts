@@ -11,8 +11,9 @@
  * dshmarket 同款范式:状态自存 profile 目录 state 文件 + webServer HTTP
  * route,域名/隧道访问都能拨开关。
  *
- * 子插件入口(未迁入,占位):
- *   ./preinject / ./data / ./warn — agent 侧,未来读本电箱 state。
+ * 子插件入口:
+ *   ./preinject — 已迁入(2026-09-02):agent 侧一次性注入器,读本电箱 state。
+ *   ./data / ./warn — 未迁入,占位。
  */
 import type { Context } from '@deepseek-ai/cordis';
 export declare const name = "roroko-tool";

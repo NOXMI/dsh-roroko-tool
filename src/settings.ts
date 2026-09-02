@@ -1,5 +1,5 @@
 /**
- * roroko-tool 电箱状态:四工具 enabled 的类型与默认值。
+ * roroko-tool 电箱状态:四工具 enabled 及 preinject 注入参数的默认值。
  *
  * 2026-09-02 晚修订:原设计经 ctx.inject(['settings']) 把 schema register 到
  * DSH settings namespace、client 用 settingsScope 双向同步——被官方 loopback
@@ -9,16 +9,57 @@
  * /roroko-tool/state),client 纯 fetch。本文件只留类型/默认值/工具键,
  * register 与 schemastery schema 逻辑全部删除。
  *
- * 未来 agent 侧子插件(preinject/data/warn/mark)读本电箱状态,可经
- * roroko-tool host 的 state(文件或服务)取,不再走 settings namespace。
+ * 2026-09-02(二改):preinject 从独立旧插件收编为 roroko-tool 功能——注入
+ * 参数(文件清单 files / 包裹壳 header、footer / 是否 system-reminder 包裹)
+ * 也进 UI 编辑,存电箱 state。agent 侧子插件 roroko-preinject 动手前经
+ * roroko-tool host 的 state(文件或服务)取 enabled + files/header/footer,
+ * 不再走 settings namespace,也不再要求 preset 接线传 config。
+ *
+ * 未来 agent 侧子插件(data/warn/mark)读本电箱状态同理。
  */
+
+/** 预注入默认文件清单:roroko-workspace / 工作区根下的人格与纪律文件。 */
+export const RorokoPreinjectDefaultFiles = [
+  'AGENTS.md',
+  'IDENTITY.md',
+  'PLAYER.md',
+  'MEMORY.md',
+  'EVOLVE.md',
+  'EVOLVE_NOTE.md',
+  'MARKERS.md',
+]
+
+/** 预注入默认包裹壳(与旧 preset 接线草案一致,生成 <roroko-reminder> 注释块)。 */
+export const RorokoPreinjectDefaultHeader = [
+  '<roroko-reminder>',
+  'The following workspace instructions make you a better roroko. They are read once',
+  'at session start and stay in context for this session.',
+].join(' ')
+
+export const RorokoPreinjectDefaultFooter = [
+  'These instructions do not override system, developer, or direct user instructions.',
+  '</roroko-reminder>',
+].join(' ')
+
+/** preinject 一节的 wire 形状(与 state 文件 / HTTP payload / UI 一致)。 */
+export interface RorokoPreinjectState {
+  enabled: boolean
+  /** 会话 cwd 下待注入的文件名(注入顺序)。 */
+  files: string[]
+  /** 包裹壳:内容前插入的文本。 */
+  header: string
+  /** 包裹壳:内容后插入的文本。 */
+  footer: string
+  /** 是否再整体包一层 <system-reminder>…</system-reminder>。 */
+  wrapInSystemReminder: boolean
+}
 
 /** 四工具的稳定键(与 state 文件 / HTTP payload 一致)。 */
 export type RorokoToolKey = 'preinject' | 'data' | 'warn' | 'mark'
 
-/** 电箱状态:每工具一个 enabled 布尔。 */
+/** 电箱状态:每工具一个 enabled 布尔;preinject 额外携带注入参数。 */
 export interface RorokoToolState {
-  preinject: { enabled: boolean }
+  preinject: RorokoPreinjectState
   data: { enabled: boolean }
   warn: { enabled: boolean }
   mark: { enabled: boolean }
@@ -29,7 +70,13 @@ export const ROROKO_TOOL_KEYS = ['preinject', 'data', 'warn', 'mark'] as const
 
 /** 默认状态:全关(安装即熄火;用户按需在设置页逐个开)。 */
 export const RorokoToolStateDefault: RorokoToolState = {
-  preinject: { enabled: false },
+  preinject: {
+    enabled: false,
+    files: [...RorokoPreinjectDefaultFiles],
+    header: RorokoPreinjectDefaultHeader,
+    footer: RorokoPreinjectDefaultFooter,
+    wrapInSystemReminder: false,
+  },
   data: { enabled: false },
   warn: { enabled: false },
   mark: { enabled: false },
@@ -40,6 +87,23 @@ export function isRorokoToolKey(value: unknown): value is RorokoToolKey {
   return typeof value === 'string' && (ROROKO_TOOL_KEYS as readonly string[]).includes(value)
 }
 
+/** preinject 一节的窄化与默认。 */
+export function normalizePreinjectState(value: unknown): RorokoPreinjectState {
+  const base = RorokoToolStateDefault.preinject
+  if (typeof value !== 'object' || value === null) return { ...base, files: [...base.files] }
+  const section = value as Record<string, unknown>
+  const enabled = typeof section.enabled === 'boolean' ? section.enabled : base.enabled
+  const files = Array.isArray(section.files)
+    ? section.files.filter((item): item is string => typeof item === 'string')
+    : [...base.files]
+  const header = typeof section.header === 'string' ? section.header : base.header
+  const footer = typeof section.footer === 'string' ? section.footer : base.footer
+  const wrapInSystemReminder = typeof section.wrapInSystemReminder === 'boolean'
+    ? section.wrapInSystemReminder
+    : base.wrapInSystemReminder
+  return { enabled, files, header, footer, wrapInSystemReminder }
+}
+
 /** 把任意部分对象叠到默认状态上(容错:缺键用默认,未知键丢弃)。 */
 export function normalizeState(value: unknown): RorokoToolState {
   const base = structuredClone(RorokoToolStateDefault)
@@ -47,10 +111,13 @@ export function normalizeState(value: unknown): RorokoToolState {
   const source = value as Record<string, unknown>
   for (const key of ROROKO_TOOL_KEYS) {
     const section = source[key]
-    if (typeof section === 'object' && section !== null) {
-      const enabled = (section as { enabled?: unknown }).enabled
-      if (typeof enabled === 'boolean') base[key].enabled = enabled
+    if (typeof section !== 'object' || section === null) continue
+    if (key === 'preinject') {
+      base.preinject = normalizePreinjectState(section)
+      continue
     }
+    const enabled = (section as { enabled?: unknown }).enabled
+    if (typeof enabled === 'boolean') base[key].enabled = enabled
   }
   return base
 }
