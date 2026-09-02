@@ -33,6 +33,7 @@
     "lib/data.js",
     "lib/warn.js",
     "client/client.js",
+    "cordis.patch.yml",
     "src/**/*.ts"
   ],
   "dsh": {
