@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-	id: "roroko-tool",
+	id: "@roroko-tool/dsh-roroko-tool",
 	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;

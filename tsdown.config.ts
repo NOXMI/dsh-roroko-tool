@@ -9,7 +9,7 @@
  */
 import { defineConfig } from 'tsdown'
 
-const id = 'roroko-tool'
+const id = '@roroko-tool/dsh-roroko-tool'
 
 /**
  * Externals resolved from the loader module table at runtime. 只有本包
