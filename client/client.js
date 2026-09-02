@@ -803,8 +803,30 @@ window.__ModuleLoader__.load({
 			lineHeight: "18px"
 		};
 		const thinkBodyStyle = {
+			padding: "4px 0 4px calc(22px + var(--dsh-content-font-delta, 0px))",
+			color: "var(--dsw-alias-label-tertiary)",
+			fontSize: "var(--dsh-content-font-size-secondary, 13px)",
+			lineHeight: "calc(20px + var(--dsh-content-font-delta-secondary, 0px))",
 			whiteSpace: "pre-wrap",
 			wordBreak: "break-word"
+		};
+		const summaryStyle = {
+			minWidth: "0",
+			overflow: "hidden",
+			flex: "1 1 auto",
+			color: "var(--dsw-alias-label-tertiary)",
+			fontSize: "var(--dsh-content-font-size-secondary, 13px)",
+			lineHeight: "calc(20px + var(--dsh-content-font-delta-secondary, 0px))",
+			textOverflow: "ellipsis",
+			whiteSpace: "nowrap"
+		};
+		const sepStyle = {
+			flex: "none",
+			width: "2px",
+			height: "2px",
+			margin: "0 8px",
+			borderRadius: "1px",
+			background: "var(--dsw-alias-label-caption)"
 		};
 		function RorokoText({ text, streaming, fileMentions }) {
 			const enabled = useRorokoMarkEnabled();
@@ -833,10 +855,13 @@ window.__ModuleLoader__.load({
 					onToggle: () => {
 						setExpanded((value) => !value);
 					},
-					collapsedContent: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-						style: { color: "var(--dsw-alias-label-tertiary)" },
+					collapsedContent: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+						style: sepStyle,
+						"aria-hidden": true
+					}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+						style: summaryStyle,
 						children: summary
-					}),
+					})] }),
 					children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 						style: thinkBodyStyle,
 						children: text

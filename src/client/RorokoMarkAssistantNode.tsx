@@ -96,8 +96,35 @@ const stoppedStyle: Record<string, string> = {
 }
 
 const thinkBodyStyle: Record<string, string> = {
+  // 对齐官方 ReasoningRow.module.css .thinkBody:缩进到 title 行下、次级字号、
+  // tertiary 颜色,与正文(primary 级)区分开。
+  padding: '4px 0 4px calc(22px + var(--dsh-content-font-delta, 0px))',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 'var(--dsh-content-font-size-secondary, 13px)',
+  lineHeight: 'calc(20px + var(--dsh-content-font-delta-secondary, 0px))',
   whiteSpace: 'pre-wrap',
   wordBreak: 'break-word',
+}
+
+const summaryStyle: Record<string, string> = {
+  // 对齐官方 .summary:次级字号 + tertiary 颜色 + 单行省略。
+  minWidth: '0',
+  overflow: 'hidden',
+  flex: '1 1 auto',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 'var(--dsh-content-font-size-secondary, 13px)',
+  lineHeight: 'calc(20px + var(--dsh-content-font-delta-secondary, 0px))',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+const sepStyle: Record<string, string> = {
+  flex: 'none',
+  width: '2px',
+  height: '2px',
+  margin: '0 8px',
+  borderRadius: '1px',
+  background: 'var(--dsw-alias-label-caption)',
 }
 
 // ── text 块:按开关展开后渲染(展开 memo 化,流式重渲染不重掷随机) ───────────
@@ -139,7 +166,12 @@ function ThinkRow({ text, running }: { text: string; running: boolean }): ReactN
         expandable
         expandOnRowClick
         onToggle={() => { setExpanded(value => !value) }}
-        collapsedContent={<span style={{ color: 'var(--dsw-alias-label-tertiary)' }}>{summary}</span>}
+        collapsedContent={(
+          <>
+            <span style={sepStyle} aria-hidden />
+            <span style={summaryStyle}>{summary}</span>
+          </>
+        )}
       >
         <div style={thinkBodyStyle}>{text}</div>
       </DisclosureRow>
