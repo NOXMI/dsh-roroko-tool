@@ -1,0 +1,4 @@
+# dsh bundle patch: inserts this plugin into a profile's layer stack.
+- insert:
+    - id: roroko-tool
+      name: '@roroko-tool/dsh-roroko-tool'

@@ -1,6 +1,6 @@
 {
   "name": "@roroko-tool/dsh-roroko-tool",
-  "description": "洛洛可全家桶插件大包(空骨架,逐步迁入 roroko 系列 agent 侧插件)",
+  "description": "洛洛可全家桶插件大包(agent 侧子插件 + client 设置页)",
   "version": "0.0.0",
   "type": "module",
   "main": "lib/index.js",
@@ -22,6 +22,7 @@
       "types": "./lib/types/warn.d.ts",
       "default": "./lib/warn.js"
     },
+    "./client": "./client/client.js",
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
@@ -31,8 +32,21 @@
     "lib/preinject.js",
     "lib/data.js",
     "lib/warn.js",
+    "client/client.js",
     "src/**/*.ts"
   ],
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  },
   "license": "MIT",
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
