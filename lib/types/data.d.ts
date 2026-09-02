@@ -15,24 +15,30 @@
  *                   陈旧度 + 鞭策),update 按字段更新(自动同步 *_updated
  *                   时间戳 / 计数器 / hit_count 联动)。
  *
- * 电箱闸门:data.enabled 默认关(安装即熄火)。agent preset 接线本插件后,
- * apply 同步读 host state;enabled=false 时不注册任何工具(模型目录里干净,
- * 不占 token)。要启用:WebGUI 设置页拨开 data 开关 → 重启 host 让 agent
- * preset 重新挂载。dbPath 同样读 state(可覆盖默认 soul.db 路径)。
+ * 电箱闸门(2026-09-03 三改):原 `data.enabled` 运行级开关已退役——preset
+ * 在 agent.cordis.yml 声明 `roroko-data` 行即注册四把工具,不声明即不存在。
+ * 参数两层:preset 接线 `config.dbPath`(声明即配)优先,其次 host state 文件
+ * data 节覆盖(设置页编辑),最后回落服务器默认路径。参数只影响连接哪个库,
+ * 不改工具 schema,不破坏 request-cache。
  *
  * 数据层限制(安全):
  *   - 只认 soul.db 素材库,表名经白名单映射,杜绝任意表 SELECT *;
  *   - 关键词/名字查询全部参数化,不做字符串拼接;
  *   - SQL 里出现的表名列名全来自编译期白名单常量。
  *
- * 注:soul.db 路径默认 /var/www/api/database/soul.db(可从电箱 data.dbPath
- * 覆盖)。node:sqlite 为 node22 实验特性,服务器 wrapper 已强制 node22。
+ * 注:soul.db 路径默认 /var/www/api/database/soul.db(可经 preset config
+ * 或设置页覆盖)。node:sqlite 为 node22 实验特性,服务器 wrapper 已强制 node22。
  */
 import { DatabaseSync } from 'node:sqlite';
 import type { Context } from '@deepseek-ai/cordis';
 export declare const name = "roroko-data";
 /** 注入 tools 服务(注册 agent 工具必需)。 */
 export declare const inject: string[];
+/** roroko-data 接线 config:preset agent.cordis.yml 里 roroko-data 行可传。 */
+export interface RorokoDataConfig {
+    /** soul.db 绝对路径;缺省回落服务器默认路径(state 覆盖其次)。 */
+    dbPath?: string;
+}
 /** roroko_query 主逻辑:关键词查素材 → markdown。 */
 export declare function runQuery(db: DatabaseSync, tableKey: string, kwRaw: string): string;
 /** roroko_lookup 主逻辑:按名在四张素材表查详情 → markdown。 */
@@ -46,5 +52,5 @@ export declare function runRegister(db: DatabaseSync, typeKey: string, nameInput
 export declare function runSoulSnap(db: DatabaseSync, now: Date): string;
 /** roroko_soul update:宽松 fields → 白名单列写回,含 incr 快捷计数。 */
 export declare function runSoulUpdate(db: DatabaseSync, fields: Record<string, unknown>, now: Date): string;
-/** 注册四个素材库工具;data.enabled=false 时不注册。 */
-export declare function apply(ctx: Context): void;
+/** 注册四个素材库工具;preset 声明本插件即注册。 */
+export declare function apply(ctx: Context, config?: RorokoDataConfig): void;

@@ -26,14 +26,19 @@
  * `session.log`(Session 内部持久事件数组,seq 即索引,resume 后即完整),
  * 找带本插件 source 签名的 user/message,有则说明已注入过。实测:同一会话
  * 连续多 turn + 进程重启恢复后均不再重复注入。
+ *
+ * 参数(2026-09-03 三改):enabled 运行级开关退役——preset 声明本插件即启用
+ * 注入。files/header/footer/wrapInSystemReminder 两层:preset 接线
+ * `config`(声明即配)兜底,host state 文件 preinject 节覆盖优先(设置页编辑)。
+ * 参数只影响注入内容,不改工具目录,不破坏 request-cache。
  */
 import type { Context } from '@deepseek-ai/cordis';
 export declare const name = "roroko-preinject";
-/** 兼容旧接线 config(可选;优先取电箱 state)。 */
+/** 接线 config(2026-09-03 三改:成为注入参数的 preset 声明源)。 */
 export interface RorokoPreinjectConfig {
     files?: string[];
     wrapInSystemReminder?: boolean;
     header?: string;
     footer?: string;
 }
-export declare function apply(ctx: Context, config: RorokoPreinjectConfig): void;
+export declare function apply(ctx: Context, config?: RorokoPreinjectConfig): void;

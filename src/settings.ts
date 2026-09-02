@@ -1,21 +1,22 @@
 /**
- * roroko-tool 电箱状态:四工具 enabled 及 preinject 注入参数的默认值。
+ * roroko-tool 子插件配置类型与默认值(纯参数,无运行级开关)。
  *
- * 2026-09-02 晚修订:原设计经 ctx.inject(['settings']) 把 schema register 到
- * DSH settings namespace、client 用 settingsScope 双向同步——被官方 loopback
- * 写限制卡死(远程浏览器 persistence='memory',开关点击 no-op;dshmarket 源码
- * 注释亲证 "settings scope is host-mode only")。按 dshmarket 范式退役:
- * 开关状态改由 host 自存 state 文件 + webServer HTTP route 读写(GET/POST
- * /roroko-tool/state),client 纯 fetch。本文件只留类型/默认值/工具键,
- * register 与 schemastery schema 逻辑全部删除。
+ * 架构沿革(2026-09-03 三改):roroko-tool 从「host 电箱 + state 开关」转向
+ * 「preset 声明即开关」。agent preset 在 agent.cordis.yml 里声明引用哪个子
+ * 插件(roroko-data / roroko-preinject …),装配即生效;不引用即不存在。
+ * 原四工具 enabled 运行级开关全部退役——运行级动态启停会随会话装配改变
+ * 工具集,打爆 request-cache 上下文命中。
  *
- * 2026-09-02(二改):preinject 从独立旧插件收编为 roroko-tool 功能——注入
- * 参数(文件清单 files / 包裹壳 header、footer / 是否 system-reminder 包裹)
- * 也进 UI 编辑,存电箱 state。agent 侧子插件 roroko-preinject 动手前经
- * roroko-tool host 的 state(文件或服务)取 enabled + files/header/footer,
- * 不再走 settings namespace,也不再要求 preset 接线传 config。
+ * 每个子插件的参数仍支持两层:
+ *   1. preset 接线时写在 agent.cordis.yml 对应行的 `config:`(推荐,声明即配);
+ *   2. host 侧 state 文件覆盖(roroko-tool-state.json,经设置页编辑),子插件
+ *      读取时 state 覆盖优先、preset config 兜底。
+ * 子插件参数只影响行为,不改工具 schema,不破坏缓存。
  *
- * 未来 agent 侧子插件(data/warn/mark)读本电箱状态同理。
+ * 历史:2026-09-02 曾做 host 电箱四开关 + state HTTP route(client 经同源
+ * fetch 读写,绕开官方 settings loopback 写限制);2026-09-03 阿一拍板退役
+ * enabled 开关,state 只存参数覆盖。settings.ts 现在只留类型/默认值/工具键,
+ * register 与 schemastery schema 逻辑早已删除。
  */
 
 /** 预注入默认文件清单:roroko-workspace / 工作区根下的人格与纪律文件。 */
@@ -41,9 +42,14 @@ export const RorokoPreinjectDefaultFooter = [
   '</roroko-reminder>',
 ].join(' ')
 
-/** preinject 一节的 wire 形状(与 state 文件 / HTTP payload / UI 一致)。 */
+/** roroko-data 素材库工具默认数据库路径(服务器 soul.db)。 */
+export const RorokoDataDefaultDbPath = '/var/www/api/database/soul.db'
+
+/**
+ * preinject 一节的 wire 形状(state 文件 / HTTP payload / UI)。
+ * enabled 已退役:preset 声明本插件即启用;这里只存注入参数覆盖。
+ */
 export interface RorokoPreinjectState {
-  enabled: boolean
   /** 会话 cwd 下待注入的文件名(注入顺序)。 */
   files: string[]
   /** 包裹壳:内容前插入的文本。 */
@@ -54,45 +60,42 @@ export interface RorokoPreinjectState {
   wrapInSystemReminder: boolean
 }
 
-/** roroko-data 素材库工具默认数据库路径(服务器 soul.db)。 */
-export const RorokoDataDefaultDbPath = '/var/www/api/database/soul.db'
-
-/** roroko-data 一节的 wire 形状:开关 + 可选数据库路径覆盖。 */
+/**
+ * data 一节的 wire 形状:数据库路径覆盖。
+ * enabled 已退役:preset 声明 roroko-data 即注册四把工具。
+ */
 export interface RorokoDataState {
-  enabled: boolean
   /** soul.db 绝对路径;缺省回落服务器默认路径。 */
   dbPath: string
 }
 
-/** 四工具的稳定键(与 state 文件 / HTTP payload 一致)。 */
+/** 四工具参数键(与 state 文件 / HTTP payload 一致)。 */
 export type RorokoToolKey = 'preinject' | 'data' | 'warn' | 'mark'
 
-/** 电箱状态:每工具一个 enabled 布尔;preinject/data 额外携带配置。 */
+/** 电箱参数状态:每个子插件一节参数;warn/mark 暂无参数。 */
 export interface RorokoToolState {
   preinject: RorokoPreinjectState
   data: RorokoDataState
-  warn: { enabled: boolean }
-  mark: { enabled: boolean }
+  warn: Record<string, never>
+  mark: Record<string, never>
 }
 
 /** 四工具键的稳定序(渲染/校验共用)。 */
 export const ROROKO_TOOL_KEYS = ['preinject', 'data', 'warn', 'mark'] as const
 
-/** 默认状态:全关(安装即熄火;用户按需在设置页逐个开)。 */
+/** 默认参数(空参数节即「未覆盖」;子插件回落 preset config)。 */
 export const RorokoToolStateDefault: RorokoToolState = {
   preinject: {
-    enabled: false,
     files: [...RorokoPreinjectDefaultFiles],
     header: RorokoPreinjectDefaultHeader,
     footer: RorokoPreinjectDefaultFooter,
     wrapInSystemReminder: false,
   },
   data: {
-    enabled: false,
     dbPath: RorokoDataDefaultDbPath,
   },
-  warn: { enabled: false },
-  mark: { enabled: false },
+  warn: {},
+  mark: {},
 }
 
 /** 窄化未知值为工具键。 */
@@ -105,7 +108,6 @@ export function normalizePreinjectState(value: unknown): RorokoPreinjectState {
   const base = RorokoToolStateDefault.preinject
   if (typeof value !== 'object' || value === null) return { ...base, files: [...base.files] }
   const section = value as Record<string, unknown>
-  const enabled = typeof section.enabled === 'boolean' ? section.enabled : base.enabled
   const files = Array.isArray(section.files)
     ? section.files.filter((item): item is string => typeof item === 'string')
     : [...base.files]
@@ -114,7 +116,7 @@ export function normalizePreinjectState(value: unknown): RorokoPreinjectState {
   const wrapInSystemReminder = typeof section.wrapInSystemReminder === 'boolean'
     ? section.wrapInSystemReminder
     : base.wrapInSystemReminder
-  return { enabled, files, header, footer, wrapInSystemReminder }
+  return { files, header, footer, wrapInSystemReminder }
 }
 
 /** data 一节的窄化与默认。 */
@@ -122,11 +124,10 @@ export function normalizeDataState(value: unknown): RorokoDataState {
   const base = RorokoToolStateDefault.data
   if (typeof value !== 'object' || value === null) return { ...base }
   const section = value as Record<string, unknown>
-  const enabled = typeof section.enabled === 'boolean' ? section.enabled : base.enabled
   const dbPath = typeof section.dbPath === 'string' && section.dbPath.trim().length > 0
     ? section.dbPath
     : base.dbPath
-  return { enabled, dbPath }
+  return { dbPath }
 }
 
 /** 把任意部分对象叠到默认状态上(容错:缺键用默认,未知键丢弃)。 */
@@ -145,8 +146,7 @@ export function normalizeState(value: unknown): RorokoToolState {
       base.data = normalizeDataState(section)
       continue
     }
-    const enabled = (section as { enabled?: unknown }).enabled
-    if (typeof enabled === 'boolean') base[key].enabled = enabled
+    // warn/mark 无参数,忽略未知字段。
   }
   return base
 }

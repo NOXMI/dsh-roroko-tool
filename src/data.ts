@@ -15,42 +15,52 @@
  *                   陈旧度 + 鞭策),update 按字段更新(自动同步 *_updated
  *                   时间戳 / 计数器 / hit_count 联动)。
  *
- * 电箱闸门:data.enabled 默认关(安装即熄火)。agent preset 接线本插件后,
- * apply 同步读 host state;enabled=false 时不注册任何工具(模型目录里干净,
- * 不占 token)。要启用:WebGUI 设置页拨开 data 开关 → 重启 host 让 agent
- * preset 重新挂载。dbPath 同样读 state(可覆盖默认 soul.db 路径)。
+ * 电箱闸门(2026-09-03 三改):原 `data.enabled` 运行级开关已退役——preset
+ * 在 agent.cordis.yml 声明 `roroko-data` 行即注册四把工具,不声明即不存在。
+ * 参数两层:preset 接线 `config.dbPath`(声明即配)优先,其次 host state 文件
+ * data 节覆盖(设置页编辑),最后回落服务器默认路径。参数只影响连接哪个库,
+ * 不改工具 schema,不破坏 request-cache。
  *
  * 数据层限制(安全):
  *   - 只认 soul.db 素材库,表名经白名单映射,杜绝任意表 SELECT *;
  *   - 关键词/名字查询全部参数化,不做字符串拼接;
  *   - SQL 里出现的表名列名全来自编译期白名单常量。
  *
- * 注:soul.db 路径默认 /var/www/api/database/soul.db(可从电箱 data.dbPath
- * 覆盖)。node:sqlite 为 node22 实验特性,服务器 wrapper 已强制 node22。
+ * 注:soul.db 路径默认 /var/www/api/database/soul.db(可经 preset config
+ * 或设置页覆盖)。node:sqlite 为 node22 实验特性,服务器 wrapper 已强制 node22。
  */
 import { DatabaseSync } from 'node:sqlite'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { loadStateSync } from './state.js'
-import type { RorokoDataState } from './settings.js'
+import { RorokoDataDefaultDbPath } from './settings.js'
 
 export const name = 'roroko-data'
 
 /** 注入 tools 服务(注册 agent 工具必需)。 */
 export const inject = ['tools']
 
-/** roroko-data 默认数据库路径(与 settings 默认一致)。 */
-const DEFAULT_DB_PATH = '/var/www/api/database/soul.db'
+/** roroko-data 接线 config:preset agent.cordis.yml 里 roroko-data 行可传。 */
+export interface RorokoDataConfig {
+  /** soul.db 绝对路径;缺省回落服务器默认路径(state 覆盖其次)。 */
+  dbPath?: string
+}
 
 /** sqlite 行值类型收窄:字符串/数字/null/bigint。 */
 type SqlValue = string | number | bigint | null | Uint8Array
 type Row = Record<string, SqlValue>
 
-/** 同步读电箱 data 节(enabled 决定是否注册;dbPath 决定连哪个库)。 */
-function loadDataGate(): RorokoDataState {
+/**
+ * 解析最终 dbPath:preset config.dbPath 优先 → state 覆盖其次 → 默认路径。
+ * state 缺失/损坏时回落默认。
+ */
+function resolveDbPath(config: RorokoDataConfig): string {
+  if (config.dbPath !== undefined && config.dbPath.trim().length > 0) return config.dbPath.trim()
   const state = loadStateSync()
-  return state.data
+  const fromState = state.data.dbPath
+  if (fromState.trim().length > 0) return fromState.trim()
+  return RorokoDataDefaultDbPath
 }
 
 /** 打开 sqlite(工具每次 execute 独立连接,用完 close)。 */
@@ -521,11 +531,9 @@ function withDb(dbPath: string, fn: (db: DatabaseSync) => string): string {
   }
 }
 
-/** 注册四个素材库工具;data.enabled=false 时不注册。 */
-export function apply(ctx: Context): void {
-  const gate = loadDataGate()
-  if (!gate.enabled) return
-  const dbPath = gate.dbPath.trim().length > 0 ? gate.dbPath : DEFAULT_DB_PATH
+/** 注册四个素材库工具;preset 声明本插件即注册。 */
+export function apply(ctx: Context, config: RorokoDataConfig = {}): void {
+  const dbPath = resolveDbPath(config)
 
   const queryTool = defineTool({
     name: 'roroko_query',

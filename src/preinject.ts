@@ -26,6 +26,11 @@
  * `session.log`(Session 内部持久事件数组,seq 即索引,resume 后即完整),
  * 找带本插件 source 签名的 user/message,有则说明已注入过。实测:同一会话
  * 连续多 turn + 进程重启恢复后均不再重复注入。
+ *
+ * 参数(2026-09-03 三改):enabled 运行级开关退役——preset 声明本插件即启用
+ * 注入。files/header/footer/wrapInSystemReminder 两层:preset 接线
+ * `config`(声明即配)兜底,host state 文件 preinject 节覆盖优先(设置页编辑)。
+ * 参数只影响注入内容,不改工具目录,不破坏 request-cache。
  */
 
 import { readFile } from 'node:fs/promises'
@@ -39,7 +44,7 @@ import type { RorokoPreinjectState } from './settings.js'
 
 export const name = 'roroko-preinject'
 
-/** 兼容旧接线 config(可选;优先取电箱 state)。 */
+/** 接线 config(2026-09-03 三改:成为注入参数的 preset 声明源)。 */
 export interface RorokoPreinjectConfig {
   files?: string[]
   wrapInSystemReminder?: boolean
@@ -100,33 +105,37 @@ function hasInjected(session: Session): boolean {
 }
 
 /**
- * 读电箱 state 的 preinject 节。state 缺失/损坏时回落默认(默认 enabled 全关,
- * 即安装即熄火,与 roroko-tool 电箱语义一致)。
+ * 合并注入参数:preset config 兜底,state preinject 节覆盖优先。
+ * state 缺失/损坏时纯用 config。返回最终 files/header/footer/wrap。
  */
-async function loadGateState(): Promise<RorokoPreinjectState> {
+async function resolveInjectParams(
+  config: RorokoPreinjectConfig,
+): Promise<{ files: string[]; wrap: boolean; header: string; footer: string }> {
   const state = await loadState()
-  return state.preinject
+  const override: RorokoPreinjectState = state.preinject
+  const files = override.files.length > 0 ? override.files : (config.files ?? [])
+  const wrap = override.wrapInSystemReminder ?? config.wrapInSystemReminder ?? false
+  const header = override.header.length > 0 ? override.header : (config.header ?? '')
+  const footer = override.footer.length > 0 ? override.footer : (config.footer ?? '')
+  return { files, wrap, header, footer }
 }
 
-export function apply(ctx: Context, config: RorokoPreinjectConfig): void {
+export function apply(ctx: Context, config: RorokoPreinjectConfig = {}): void {
   ctx.on('agent/pre-step', async ({ agent, messages }, next): Promise<PreStepDecision> => {
     const decision = await next()
     if (decision.kind !== 'enter') return decision
-    // 电箱闸门:roroko-tool state 里 preinject.enabled === false → 熄火。
-    const gate = await loadGateState()
-    if (!gate.enabled) return decision
+    // 一次性注入判重:已注入过的会话跳过(见 hasInjected)。
     if (hasInjected(agent.session)) return decision
 
     const cwd = agent.session.header.cwd ?? process.cwd()
-    // 注入参数优先取电箱 state;state 未给 files(默认空)时回落到接线 config。
-    const files = gate.files.length > 0 ? gate.files : (config.files ?? [])
-    const content = await loadMergedText(cwd, files)
+    const params = await resolveInjectParams(config)
+    const content = await loadMergedText(cwd, params.files)
     if (content.length === 0) return decision
 
     const text = buildInjectionText(content, {
-      wrapInSystemReminder: gate.wrapInSystemReminder ?? config.wrapInSystemReminder ?? false,
-      header: gate.header.length > 0 ? gate.header : config.header,
-      footer: gate.footer.length > 0 ? gate.footer : config.footer,
+      wrapInSystemReminder: params.wrap,
+      header: params.header,
+      footer: params.footer,
     })
     const injectedMessage = createUserMessage({
       content: [{ type: 'text', text }],
