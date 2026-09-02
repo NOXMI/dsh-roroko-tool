@@ -18,6 +18,9 @@ importers:
       '@deepseek-ai/dsh-agent':
         specifier: link:E:/DSH/deepseek-harness/packages/core/agent
         version: link:../../../DSH/deepseek-harness/packages/core/agent
+      '@deepseek-ai/dsh-client-ui-primitives':
+        specifier: link:E:/DSH/deepseek-harness/packages/client/ui-primitives
+        version: link:../../../DSH/deepseek-harness/packages/client/ui-primitives
       '@deepseek-ai/dsh-llm':
         specifier: link:E:/DSH/deepseek-harness/packages/llm/llm
         version: link:../../../DSH/deepseek-harness/packages/llm/llm

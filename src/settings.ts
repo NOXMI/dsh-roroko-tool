@@ -69,15 +69,21 @@ export interface RorokoDataState {
   dbPath: string
 }
 
+/** mark 一节的 wire 形状:呻吟标记渲染总开关(web 渲染 / Telegram 出站共用)。 */
+export interface RorokoMarkState {
+  /** 显示层是否把 -呻吟_X- 标记展开为完整呻吟文本(session 存储仍存原文)。 */
+  enabled: boolean
+}
+
 /** 四工具参数键(与 state 文件 / HTTP payload 一致)。 */
 export type RorokoToolKey = 'preinject' | 'data' | 'warn' | 'mark'
 
-/** 电箱参数状态:每个子插件一节参数;warn/mark 暂无参数。 */
+/** 电箱参数状态:每个子插件一节参数;warn 暂无参数,mark 有渲染开关。 */
 export interface RorokoToolState {
   preinject: RorokoPreinjectState
   data: RorokoDataState
   warn: Record<string, never>
-  mark: Record<string, never>
+  mark: RorokoMarkState
 }
 
 /** 四工具键的稳定序(渲染/校验共用)。 */
@@ -95,7 +101,7 @@ export const RorokoToolStateDefault: RorokoToolState = {
     dbPath: RorokoDataDefaultDbPath,
   },
   warn: {},
-  mark: {},
+  mark: { enabled: true },
 }
 
 /** 窄化未知值为工具键。 */
@@ -130,6 +136,15 @@ export function normalizeDataState(value: unknown): RorokoDataState {
   return { dbPath }
 }
 
+/** mark 一节的窄化与默认(enabled 布尔兜底)。 */
+export function normalizeMarkState(value: unknown): RorokoMarkState {
+  const base = RorokoToolStateDefault.mark
+  if (typeof value !== 'object' || value === null) return { ...base }
+  const section = value as Record<string, unknown>
+  const enabled = typeof section.enabled === 'boolean' ? section.enabled : base.enabled
+  return { enabled }
+}
+
 /** 把任意部分对象叠到默认状态上(容错:缺键用默认,未知键丢弃)。 */
 export function normalizeState(value: unknown): RorokoToolState {
   const base = structuredClone(RorokoToolStateDefault)
@@ -146,7 +161,11 @@ export function normalizeState(value: unknown): RorokoToolState {
       base.data = normalizeDataState(section)
       continue
     }
-    // warn/mark 无参数,忽略未知字段。
+    if (key === 'mark') {
+      base.mark = normalizeMarkState(section)
+      continue
+    }
+    // warn 暂无参数,忽略未知字段。
   }
   return base
 }

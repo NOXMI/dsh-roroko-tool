@@ -45,3 +45,12 @@ export interface RorokoDataConfigInput {
  * 未提供的保留现有值。落盘后返回新状态。
  */
 export declare function setDataConfig(config: RorokoDataConfigInput): Promise<RorokoToolState>;
+/** mark 参数节可覆盖的字段(宽松 unknown,内部收窄)。 */
+export interface RorokoMarkConfigInput {
+    enabled?: unknown;
+}
+/**
+ * 覆盖保存 mark 参数节。body 中提供的字段(非 undefined)覆盖当前值,
+ * 未提供的保留现有值。落盘后返回新状态。
+ */
+export declare function setMarkConfig(config: RorokoMarkConfigInput): Promise<RorokoToolState>;

@@ -47,14 +47,19 @@ export interface RorokoDataState {
     /** soul.db 绝对路径;缺省回落服务器默认路径。 */
     dbPath: string;
 }
+/** mark 一节的 wire 形状:呻吟标记渲染总开关(web 渲染 / Telegram 出站共用)。 */
+export interface RorokoMarkState {
+    /** 显示层是否把 -呻吟_X- 标记展开为完整呻吟文本(session 存储仍存原文)。 */
+    enabled: boolean;
+}
 /** 四工具参数键(与 state 文件 / HTTP payload 一致)。 */
 export type RorokoToolKey = 'preinject' | 'data' | 'warn' | 'mark';
-/** 电箱参数状态:每个子插件一节参数;warn/mark 暂无参数。 */
+/** 电箱参数状态:每个子插件一节参数;warn 暂无参数,mark 有渲染开关。 */
 export interface RorokoToolState {
     preinject: RorokoPreinjectState;
     data: RorokoDataState;
     warn: Record<string, never>;
-    mark: Record<string, never>;
+    mark: RorokoMarkState;
 }
 /** 四工具键的稳定序(渲染/校验共用)。 */
 export declare const ROROKO_TOOL_KEYS: readonly ["preinject", "data", "warn", "mark"];
@@ -66,5 +71,7 @@ export declare function isRorokoToolKey(value: unknown): value is RorokoToolKey;
 export declare function normalizePreinjectState(value: unknown): RorokoPreinjectState;
 /** data 一节的窄化与默认。 */
 export declare function normalizeDataState(value: unknown): RorokoDataState;
+/** mark 一节的窄化与默认(enabled 布尔兜底)。 */
+export declare function normalizeMarkState(value: unknown): RorokoMarkState;
 /** 把任意部分对象叠到默认状态上(容错:缺键用默认,未知键丢弃)。 */
 export declare function normalizeState(value: unknown): RorokoToolState;

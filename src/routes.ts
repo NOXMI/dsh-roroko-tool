@@ -17,7 +17,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { isRorokoToolKey } from './settings.js'
-import { loadState, setDataConfig, setPreinjectConfig } from './state.js'
+import { loadState, setDataConfig, setMarkConfig, setPreinjectConfig } from './state.js'
 
 /** webServer 服务的最小结构面(host 提供真实 WebServer;此处只声明用到的面)。 */
 export interface WebServerLike {
@@ -85,6 +85,7 @@ export function registerStateRoutes(webServer: WebServerLike): () => void {
             footer?: unknown
             wrapInSystemReminder?: unknown
             dbPath?: unknown
+            enabled?: unknown
           }
           if (!isRorokoToolKey(body.tool)) {
             sendJson(response, 400, { error: 'tool must be one of preinject/data/warn/mark' })
@@ -113,7 +114,17 @@ export function registerStateRoutes(webServer: WebServerLike): () => void {
             sendJson(response, 200, { ok: true, state })
             return
           }
-          // warn/mark 无参数可保存。
+          // mark 参数节保存:渲染展开总开关 enabled。
+          if (body.tool === 'mark') {
+            if (typeof body.enabled !== 'boolean') {
+              sendJson(response, 400, { error: 'mark save requires boolean enabled' })
+              return
+            }
+            const state = await setMarkConfig({ enabled: body.enabled })
+            sendJson(response, 200, { ok: true, state })
+            return
+          }
+          // warn 无参数可保存。
           sendJson(response, 400, { error: `tool "${String(body.tool)}" has no configurable parameters` })
           return
         }

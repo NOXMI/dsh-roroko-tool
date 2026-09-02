@@ -3,13 +3,13 @@
 export const zh = {
   nav: 'Roroko Tool',
   title: 'Roroko Tool',
-  desc: '洛洛可全家桶插件电箱:四工具的独立 enabled 开关。',
+  desc: '洛洛可全家桶插件参数:指令预注入 / 素材库工具 / 呻吟标记渲染开关。',
 }
 
 export const en = {
   nav: 'Roroko Tool',
   title: 'Roroko Tool',
-  desc: 'Roroko family plugin switchboard: per-tool enabled toggles.',
+  desc: 'Roroko family plugin params: preinject / material tools / moan-marker rendering toggle.',
 }
 
 export const NS = 'roroko-tool'

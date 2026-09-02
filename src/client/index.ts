@@ -16,6 +16,8 @@
  */
 import { createElement as h, useEffect, useState } from 'react'
 import { NS, en, zh } from './locales.ts'
+import { setRorokoMarkEnabled } from './roroko-mark.ts'
+import { RorokoMarkAssistantNode } from './RorokoMarkAssistantNode.tsx'
 
 /** 本插件用到的 slots 服务子面(结构类型,不依赖 monorepo 内部类型)。 */
 interface SlotsService {
@@ -46,12 +48,12 @@ interface DataWire {
   dbPath: string
 }
 
-/** state 文件参数 wire(host 返回;warn/mark 无参数为空节)。 */
+/** state 文件参数 wire(host 返回;warn 无参数为空节,mark 有渲染开关)。 */
 interface RorokoToolState {
   preinject: PreinjectWire
   data: DataWire
   warn: Record<string, never>
-  mark: Record<string, never>
+  mark: { enabled: boolean }
 }
 
 export const name = 'roroko-tool'
@@ -329,6 +331,39 @@ function DataPanel(props: {
   })
 }
 
+/** mark 渲染开关面板:展开总开关(web 渲染 / Telegram 出站共用)。 */
+function MarkPanel(props: {
+  enabled: boolean
+  busy: boolean
+  onToggle: (next: boolean) => void
+}): ReturnType<typeof h> {
+  const { enabled, busy, onToggle } = props
+  return h(PanelShell, {
+    children: [
+      h('div', { style: { fontWeight: 600, marginBottom: 8, fontSize: '0.9em' } },
+        '渲染展开开关(存 state,web / Telegram 共用)'),
+      h('div', {
+        style: { fontSize: '0.85em', color: 'var(--dsw-text-secondary, #888)', marginBottom: 8 },
+      },
+        '开启后,助手回复中的 -呻吟_X- 标记在显示层展开为呻吟文本;会话日志仍存原文,模型上下文零污染。'),
+      h('label', {
+        style: {
+          display: 'flex', alignItems: 'center', gap: 6,
+          fontSize: '0.85em', cursor: 'pointer',
+        },
+      },
+        h('input', {
+          type: 'checkbox',
+          checked: enabled,
+          disabled: busy,
+          onChange: () => { onToggle(!enabled) },
+        }),
+        enabled ? '展开已开启(推荐保持)' : '展开已关闭(-呻吟_X- 原样显示)',
+      ),
+    ],
+  })
+}
+
 /** 设置页内容:加载 host state,渲染各子插件参数编辑器。 */
 export function RorokoToolSection(): ReturnType<typeof h> {
   const [state, setState] = useState<RorokoToolState | null>(null)
@@ -409,6 +444,26 @@ export function RorokoToolSection(): ReturnType<typeof h> {
     }
   }
 
+  const saveMark = async (enabled: boolean): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    setBusyTool('mark')
+    setError(null)
+    try {
+      const next = await setRorokoMarkEnabled(enabled)
+      if (next === null) {
+        setError('failed to save mark config')
+        return
+      }
+      setState(next as unknown as RorokoToolState)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+      setBusyTool(null)
+    }
+  }
+
   return h('div', { style: { padding: '6px 0' } },
     h('div', {
       style: {
@@ -433,8 +488,13 @@ export function RorokoToolSection(): ReturnType<typeof h> {
             busy: busy && busyTool === 'data',
             onSave: (next) => { void saveData(next) },
           }),
+          h(ToolHeader, { title: '呻吟标记渲染 (roroko-mark)', desc: '-呻吟_X- 标记在 web / Telegram 显示层展开;preset 声明即启用。' }),
+          h(MarkPanel, {
+            enabled: state.mark.enabled,
+            busy: busy && busyTool === 'mark',
+            onToggle: (next) => { void saveMark(next) },
+          }),
           h(ToolHeader, { title: '超量收敛警告 (roroko-warn)', desc: '工具调用/思考超量时注入收敛警告(未实现)。' }),
-          h(ToolHeader, { title: '呻吟标记扩展 (roroko-mark)', desc: '-呻吟_X- 标记的渲染与处理(未实现)。' }),
           error !== null
             ? h('div', {
               style: {
@@ -462,4 +522,13 @@ export function apply(ctx: RorokoToolClientContext): void {
     label: () => t('nav'),
     locale: NS,
   }, RorokoToolSection))
+
+  // roroko-mark shadow:顶掉官方 assistant-step 节点渲染(priority -1 < 官方 0),
+  // 显示层按 state mark.enabled 展开 -呻吟_X- 标记。渲染只动显示,不改 session。
+  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
+    name: 'conversation.chat.node',
+    key: 'assistant-step',
+    priority: -1,
+    locale: NS,
+  }, RorokoMarkAssistantNode))
 }

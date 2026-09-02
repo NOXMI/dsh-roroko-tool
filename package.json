@@ -72,6 +72,7 @@
   },
   "devDependencies": {
     "@deepseek-ai/dsh-agent": "link:E:/DSH/deepseek-harness/packages/core/agent",
+    "@deepseek-ai/dsh-client-ui-primitives": "link:E:/DSH/deepseek-harness/packages/client/ui-primitives",
     "@deepseek-ai/dsh-llm": "link:E:/DSH/deepseek-harness/packages/llm/llm",
     "@deepseek-ai/dsh-session": "link:E:/DSH/deepseek-harness/packages/core/session",
     "@deepseek-ai/dsh-tools": "link:E:/DSH/deepseek-harness/packages/core/tools",

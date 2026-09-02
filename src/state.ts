@@ -18,8 +18,9 @@ import { dirname, join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { readFile, rename, mkdir, writeFile } from 'node:fs/promises'
 import {
-  normalizeDataState, normalizePreinjectState, normalizeState,
-  RorokoDataState, RorokoPreinjectState, RorokoToolState, RorokoToolStateDefault,
+  normalizeDataState, normalizeMarkState, normalizePreinjectState, normalizeState,
+  RorokoDataState, RorokoMarkState, RorokoPreinjectState, RorokoToolState,
+  RorokoToolStateDefault,
 } from './settings.js'
 
 /** 当前运行的 profile 名(默认 web)。 */
@@ -133,6 +134,32 @@ export async function setDataConfig(
   const next: RorokoToolState = {
     ...current,
     data: normalizeDataState(merged),
+  }
+  await saveState(next)
+  return next
+}
+
+/** mark 参数节可覆盖的字段(宽松 unknown,内部收窄)。 */
+export interface RorokoMarkConfigInput {
+  enabled?: unknown
+}
+
+/**
+ * 覆盖保存 mark 参数节。body 中提供的字段(非 undefined)覆盖当前值,
+ * 未提供的保留现有值。落盘后返回新状态。
+ */
+export async function setMarkConfig(
+  config: RorokoMarkConfigInput,
+): Promise<RorokoToolState> {
+  const current = await loadState()
+  const merged: RorokoMarkState = {
+    enabled: typeof config.enabled === 'boolean'
+      ? config.enabled
+      : current.mark.enabled,
+  }
+  const next: RorokoToolState = {
+    ...current,
+    mark: normalizeMarkState(merged),
   }
   await saveState(next)
   return next
