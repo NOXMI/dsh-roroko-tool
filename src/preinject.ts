@@ -27,7 +27,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
-import { ROROKO_TOOL_SETTINGS_NS } from './settings.ts'
+import { ROROKO_TOOL_SETTINGS_NS } from './settings'
 
 export const name = 'roroko-preinject'
 

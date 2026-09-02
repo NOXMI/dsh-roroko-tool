@@ -8,6 +8,7 @@
  * 决定工具在不在 agent 层跑,电箱决定通不通电。
  */
 import z from '@deepseek-ai/schemastery'
+import type { Context } from '@deepseek-ai/cordis'
 
 /** settings 命名空间(须匹配 /^[a-z][a-z0-9-]*$/) */
 export const ROROKO_TOOL_SETTINGS_NS = 'roroko-tool'
@@ -54,8 +55,9 @@ type SettingsCapableCtx = {
  * 电箱接线入口:在 roroko-tool host(profile 层)注册四工具开关。
  * settings 服务不可用时静默跳过(插件照常挂载,闸门缺失按默认全开)。
  */
-export function installRorokoToolSettings(ctx: SettingsCapableCtx): void {
-  ctx.inject?.(['settings'], (scoped) => {
+export function installRorokoToolSettings(ctx: Context): void {
+  const capable = ctx as unknown as SettingsCapableCtx
+  capable.inject?.(['settings'], (scoped) => {
     scoped.settings.register(ROROKO_TOOL_SETTINGS_NS, RorokoToolSettings, {
       base: RorokoToolSettingsDefault,
     })

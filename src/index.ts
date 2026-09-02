@@ -15,7 +15,7 @@
  * 最小验证壳。子插件逐步迁入。
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { installRorokoToolSettings } from './settings.ts'
+import { installRorokoToolSettings } from './settings'
 
 export const name = 'roroko-tool'
 
