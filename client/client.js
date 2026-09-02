@@ -266,7 +266,64 @@ window.__ModuleLoader__.load({
 				color: "var(--dsw-text-success, #46a758)"
 			} }, "已保存") : null));
 		}
-		/** 设置页内容:加载 host state,渲染四开关(preinject 带配置面板)。 */
+		/** data 配置面板:数据库路径编辑(部分保存,enabled 随开关走)。 */
+		function DataPanel(props) {
+			const { config, busy, onSave } = props;
+			const [dbPath, setDbPath] = (0, react.useState)(config.dbPath);
+			const [dirty, setDirty] = (0, react.useState)(false);
+			const [saved, setSaved] = (0, react.useState)(false);
+			const save = () => {
+				onSave({
+					enabled: config.enabled,
+					dbPath: dbPath.trim()
+				});
+				setDirty(false);
+				setSaved(true);
+			};
+			return (0, react.createElement)("div", { style: {
+				background: "var(--dsw-surface-secondary, rgba(128,128,128,.06))",
+				borderRadius: 6,
+				margin: "8px 0 4px",
+				padding: "10px 12px"
+			} }, (0, react.createElement)("div", { style: {
+				fontWeight: 600,
+				marginBottom: 8,
+				fontSize: "0.9em"
+			} }, "数据库路径(存 state,工具执行时读取)"), (0, react.createElement)("div", { style: {
+				fontSize: "0.85em",
+				color: "var(--dsw-text-secondary, #888)",
+				marginBottom: 8
+			} }, "soul.db 绝对路径,默认服务器 /var/www/api/database/soul.db。"), (0, react.createElement)("input", {
+				type: "text",
+				value: dbPath,
+				disabled: busy,
+				placeholder: "/var/www/api/database/soul.db",
+				style: inputStyle,
+				onChange: (event) => {
+					setDbPath(event.target.value);
+					setDirty(true);
+					setSaved(false);
+				}
+			}), (0, react.createElement)("div", { style: {
+				display: "flex",
+				gap: 8,
+				alignItems: "center",
+				marginTop: 10
+			} }, (0, react.createElement)("button", {
+				type: "button",
+				disabled: busy || !dirty,
+				style: {
+					...buttonStyle,
+					borderColor: dirty ? "var(--dsw-text-primary, #eee)" : void 0,
+					color: dirty ? "var(--dsw-text-primary, #eee)" : void 0
+				},
+				onClick: save
+			}, "保存路径"), saved && !dirty ? (0, react.createElement)("span", { style: {
+				fontSize: "0.8em",
+				color: "var(--dsw-text-success, #46a758)"
+			} }, "已保存") : null));
+		}
+		/** 设置页内容:加载 host state,渲染四开关(preinject/data 带配置面板)。 */
 		function RorokoToolSection() {
 			const [state, setState] = (0, react.useState)(null);
 			const [error, setError] = (0, react.useState)(null);
@@ -343,8 +400,37 @@ window.__ModuleLoader__.load({
 					setBusyTool(null);
 				}
 			};
+			const saveData = async (next) => {
+				if (busy) return;
+				setBusy(true);
+				setBusyTool("data");
+				setError(null);
+				try {
+					const response = await fetch(api("/roroko-tool/state"), {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({
+							tool: "data",
+							enabled: next.enabled,
+							dbPath: next.dbPath
+						})
+					});
+					const body = await response.json();
+					if (!response.ok || body.ok !== true || body.state === void 0) {
+						setError(body.error ?? `failed to save data config (HTTP ${response.status})`);
+						return;
+					}
+					setState(body.state);
+				} catch (cause) {
+					setError(cause instanceof Error ? cause.message : String(cause));
+				} finally {
+					setBusy(false);
+					setBusyTool(null);
+				}
+			};
 			const enabledOf = (tool) => state?.[tool.id]?.enabled ?? false;
 			const preinjectConfig = () => state?.preinject ?? null;
+			const dataConfig = () => state?.data ?? null;
 			return (0, react.createElement)("div", { style: { padding: "6px 0" } }, (0, react.createElement)("div", { style: {
 				color: "var(--dsw-text-secondary, #888)",
 				fontSize: "0.9em",
@@ -353,7 +439,8 @@ window.__ModuleLoader__.load({
 				color: "var(--dsw-text-secondary, #888)",
 				fontSize: "0.9em"
 			} }, error === null ? "加载中…" : `加载失败: ${error}`) : (0, react.createElement)("div", {}, ...TOOLS.map((tool) => {
-				const config = preinjectConfig();
+				const preinjectCfg = tool.id === "preinject" ? preinjectConfig() : null;
+				const dataCfg = tool.id === "data" ? dataConfig() : null;
 				return (0, react.createElement)("div", {
 					key: tool.id,
 					style: { marginTop: 6 }
@@ -364,11 +451,17 @@ window.__ModuleLoader__.load({
 					onToggle: (next) => {
 						toggle(tool.id, next);
 					}
-				}), tool.id === "preinject" && config !== null ? (0, react.createElement)(PreinjectPanel, {
-					config,
+				}), tool.id === "preinject" && preinjectCfg !== null ? (0, react.createElement)(PreinjectPanel, {
+					config: preinjectCfg,
 					busy: busy && busyTool === "preinject",
 					onSave: (next) => {
 						savePreinject(next);
+					}
+				}) : null, tool.id === "data" && dataCfg !== null ? (0, react.createElement)(DataPanel, {
+					config: dataCfg,
+					busy: busy && busyTool === "data",
+					onSave: (next) => {
+						saveData(next);
 					}
 				}) : null);
 			}), error !== null ? (0, react.createElement)("div", { style: {

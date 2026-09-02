@@ -10,10 +10,11 @@
 
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { readFile, rename, mkdir, writeFile } from 'node:fs/promises'
 import {
-  normalizeState, normalizePreinjectState, RorokoPreinjectState,
-  RorokoToolState, RorokoToolStateDefault,
+  normalizeDataState, normalizePreinjectState, normalizeState,
+  RorokoDataState, RorokoPreinjectState, RorokoToolState, RorokoToolStateDefault,
 } from './settings.js'
 
 /** 当前运行的 profile 名(默认 web)。 */
@@ -43,6 +44,20 @@ export async function loadState(): Promise<RorokoToolState> {
   }
 }
 
+/**
+ * 同步读 state(agent preset 层插件 apply 阶段用,不能 await 时)。
+ * 文件缺失/损坏时回落到默认(不抛)。
+ */
+export function loadStateSync(): RorokoToolState {
+  const file = rorokoToolStatePath()
+  try {
+    const raw = readFileSync(file, 'utf8')
+    return normalizeState(JSON.parse(raw) as unknown)
+  } catch {
+    return structuredClone(RorokoToolStateDefault)
+  }
+}
+
 /** 原子写 state(临时文件 + rename)。 */
 export async function saveState(state: RorokoToolState): Promise<void> {
   const file = rorokoToolStatePath()
@@ -60,7 +75,10 @@ export async function setToolEnabled(tool: string, enabled: boolean): Promise<Ro
   if (tool === 'preinject') {
     // 只翻转 enabled,保留已保存的 files/header/footer/wrap。
     next.preinject = { ...next.preinject, enabled }
-  } else if (tool === 'data' || tool === 'warn' || tool === 'mark') {
+  } else if (tool === 'data') {
+    // 只翻转 enabled,保留 dbPath。
+    next.data = { ...next.data, enabled }
+  } else if (tool === 'warn' || tool === 'mark') {
     next[tool] = { enabled }
   } else {
     throw new Error(`unknown tool "${tool}"`)
@@ -107,6 +125,37 @@ export async function setPreinjectConfig(
   const next: RorokoToolState = {
     ...current,
     preinject: normalizePreinjectState(merged),
+  }
+  await saveState(next)
+  return next
+}
+
+/** data 配置节可部分覆盖的字段(宽松 unknown,内部收窄)。 */
+export interface RorokoDataConfigInput {
+  enabled?: boolean
+  dbPath?: unknown
+}
+
+/**
+ * 覆盖保存 data 配置节。body 中提供的字段(非 undefined)覆盖当前值,
+ * 未提供的保留现有值。落盘后返回新状态。
+ */
+export async function setDataConfig(
+  config: RorokoDataConfigInput,
+): Promise<RorokoToolState> {
+  const current = await loadState()
+  const existing = current.data
+  const merged: RorokoDataState = {
+    enabled: typeof config.enabled === 'boolean'
+      ? config.enabled
+      : existing.enabled,
+    dbPath: typeof config.dbPath === 'string' && config.dbPath.trim().length > 0
+      ? config.dbPath.trim()
+      : existing.dbPath,
+  }
+  const next: RorokoToolState = {
+    ...current,
+    data: normalizeDataState(merged),
   }
   await saveState(next)
   return next

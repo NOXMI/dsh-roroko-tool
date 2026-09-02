@@ -34,14 +34,20 @@ export interface RorokoPreinjectState {
     /** 是否再整体包一层 <system-reminder>…</system-reminder>。 */
     wrapInSystemReminder: boolean;
 }
+/** roroko-data 素材库工具默认数据库路径(服务器 soul.db)。 */
+export declare const RorokoDataDefaultDbPath = "/var/www/api/database/soul.db";
+/** roroko-data 一节的 wire 形状:开关 + 可选数据库路径覆盖。 */
+export interface RorokoDataState {
+    enabled: boolean;
+    /** soul.db 绝对路径;缺省回落服务器默认路径。 */
+    dbPath: string;
+}
 /** 四工具的稳定键(与 state 文件 / HTTP payload 一致)。 */
 export type RorokoToolKey = 'preinject' | 'data' | 'warn' | 'mark';
-/** 电箱状态:每工具一个 enabled 布尔;preinject 额外携带注入参数。 */
+/** 电箱状态:每工具一个 enabled 布尔;preinject/data 额外携带配置。 */
 export interface RorokoToolState {
     preinject: RorokoPreinjectState;
-    data: {
-        enabled: boolean;
-    };
+    data: RorokoDataState;
     warn: {
         enabled: boolean;
     };
@@ -57,5 +63,7 @@ export declare const RorokoToolStateDefault: RorokoToolState;
 export declare function isRorokoToolKey(value: unknown): value is RorokoToolKey;
 /** preinject 一节的窄化与默认。 */
 export declare function normalizePreinjectState(value: unknown): RorokoPreinjectState;
+/** data 一节的窄化与默认。 */
+export declare function normalizeDataState(value: unknown): RorokoDataState;
 /** 把任意部分对象叠到默认状态上(容错:缺键用默认,未知键丢弃)。 */
 export declare function normalizeState(value: unknown): RorokoToolState;

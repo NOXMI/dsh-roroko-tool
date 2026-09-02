@@ -40,9 +40,15 @@ interface PreinjectWire {
   wrapInSystemReminder: boolean
 }
 
+/** data 配置 wire 形状(与 host settings.ts 一致)。 */
+interface DataWire {
+  enabled: boolean
+  dbPath: string
+}
+
 interface RorokoToolState {
   preinject: PreinjectWire
-  data: { enabled: boolean }
+  data: DataWire
   warn: { enabled: boolean }
   mark: { enabled: boolean }
 }
@@ -297,7 +303,62 @@ function PreinjectPanel(props: {
   )
 }
 
-/** 设置页内容:加载 host state,渲染四开关(preinject 带配置面板)。 */
+/** data 配置面板:数据库路径编辑(部分保存,enabled 随开关走)。 */
+function DataPanel(props: {
+  config: DataWire
+  busy: boolean
+  onSave: (next: DataWire) => void
+}): ReturnType<typeof h> {
+  const { config, busy, onSave } = props
+  const [dbPath, setDbPath] = useState(config.dbPath)
+  const [dirty, setDirty] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  const save = (): void => {
+    onSave({ enabled: config.enabled, dbPath: dbPath.trim() })
+    setDirty(false)
+    setSaved(true)
+  }
+
+  return h('div', {
+    style: {
+      background: 'var(--dsw-surface-secondary, rgba(128,128,128,.06))',
+      borderRadius: 6,
+      margin: '8px 0 4px',
+      padding: '10px 12px',
+    },
+  },
+    h('div', { style: { fontWeight: 600, marginBottom: 8, fontSize: '0.9em' } },
+      '数据库路径(存 state,工具执行时读取)'),
+    h('div', { style: { fontSize: '0.85em', color: 'var(--dsw-text-secondary, #888)', marginBottom: 8 } },
+      'soul.db 绝对路径,默认服务器 /var/www/api/database/soul.db。'),
+    h('input', {
+      type: 'text',
+      value: dbPath,
+      disabled: busy,
+      placeholder: '/var/www/api/database/soul.db',
+      style: inputStyle,
+      onChange: (event: { target: { value: string } }) => { setDbPath(event.target.value); setDirty(true); setSaved(false) },
+    }),
+    h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 10 } },
+      h('button', {
+        type: 'button',
+        disabled: busy || !dirty,
+        style: {
+          ...buttonStyle,
+          borderColor: dirty ? 'var(--dsw-text-primary, #eee)' : undefined,
+          color: dirty ? 'var(--dsw-text-primary, #eee)' : undefined,
+        },
+        onClick: save,
+      }, '保存路径'),
+      saved && !dirty
+        ? h('span', { style: { fontSize: '0.8em', color: 'var(--dsw-text-success, #46a758)' } }, '已保存')
+        : null,
+    ),
+  )
+}
+
+/** 设置页内容:加载 host state,渲染四开关(preinject/data 带配置面板)。 */
 export function RorokoToolSection(): ReturnType<typeof h> {
   const [state, setState] = useState<RorokoToolState | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -374,11 +435,43 @@ export function RorokoToolSection(): ReturnType<typeof h> {
     }
   }
 
+  const saveData = async (next: DataWire): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    setBusyTool('data')
+    setError(null)
+    try {
+      const response = await fetch(api('/roroko-tool/state'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          tool: 'data',
+          enabled: next.enabled,
+          dbPath: next.dbPath,
+        }),
+      })
+      const body = (await response.json()) as { ok?: boolean; error?: string; state?: RorokoToolState }
+      if (!response.ok || body.ok !== true || body.state === undefined) {
+        setError(body.error ?? `failed to save data config (HTTP ${response.status})`)
+        return
+      }
+      setState(body.state)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+      setBusyTool(null)
+    }
+  }
+
   const enabledOf = (tool: (typeof TOOLS)[number]): boolean =>
     state?.[tool.id as keyof RorokoToolState]?.enabled ?? false
 
   const preinjectConfig = (): PreinjectWire | null =>
     state?.preinject ?? null
+
+  const dataConfig = (): DataWire | null =>
+    state?.data ?? null
 
   return h('div', { style: { padding: '6px 0' } },
     h('div', {
@@ -393,7 +486,8 @@ export function RorokoToolSection(): ReturnType<typeof h> {
           error === null ? '加载中…' : `加载失败: ${error}`)
       : h('div', {},
           ...TOOLS.map((tool) => {
-            const config = preinjectConfig()
+            const preinjectCfg = tool.id === 'preinject' ? preinjectConfig() : null
+            const dataCfg = tool.id === 'data' ? dataConfig() : null
             return h('div', { key: tool.id, style: { marginTop: 6 } },
               h(ToolRow, {
                 tool,
@@ -401,11 +495,18 @@ export function RorokoToolSection(): ReturnType<typeof h> {
                 busy: busy && busyTool === tool.id,
                 onToggle: (next) => { void toggle(tool.id, next) },
               }),
-              tool.id === 'preinject' && config !== null
+              tool.id === 'preinject' && preinjectCfg !== null
                 ? h(PreinjectPanel, {
-                  config,
+                  config: preinjectCfg,
                   busy: busy && busyTool === 'preinject',
                   onSave: (next) => { void savePreinject(next) },
+                })
+                : null,
+              tool.id === 'data' && dataCfg !== null
+                ? h(DataPanel, {
+                  config: dataCfg,
+                  busy: busy && busyTool === 'data',
+                  onSave: (next) => { void saveData(next) },
                 })
                 : null,
             )

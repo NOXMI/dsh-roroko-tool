@@ -13,7 +13,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { isRorokoToolKey } from './settings.js'
-import { loadState, setPreinjectConfig, setToolEnabled } from './state.js'
+import { loadState, setDataConfig, setPreinjectConfig, setToolEnabled } from './state.js'
 
 /** webServer 服务的最小结构面(host 提供真实 WebServer;此处只声明用到的面)。 */
 export interface WebServerLike {
@@ -81,6 +81,7 @@ export function registerStateRoutes(webServer: WebServerLike): () => void {
             header?: unknown
             footer?: unknown
             wrapInSystemReminder?: unknown
+            dbPath?: unknown
           }
           if (!isRorokoToolKey(body.tool)) {
             sendJson(response, 400, { error: 'tool must be one of preinject/data/warn/mark' })
@@ -101,6 +102,15 @@ export function registerStateRoutes(webServer: WebServerLike): () => void {
               ...typeof body.wrapInSystemReminder === 'boolean'
                 ? { wrapInSystemReminder: body.wrapInSystemReminder }
                 : {},
+            })
+            sendJson(response, 200, { ok: true, state })
+            return
+          }
+          // data 配置节写入:body 带 dbPath 即视为配置保存(部分覆盖);仅带 enabled 走开关。
+          if (body.tool === 'data' && body.dbPath !== undefined) {
+            const state = await setDataConfig({
+              ...typeof body.enabled === 'boolean' ? { enabled: body.enabled } : {},
+              dbPath: body.dbPath,
             })
             sendJson(response, 200, { ok: true, state })
             return

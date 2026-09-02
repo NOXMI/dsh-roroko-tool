@@ -24,6 +24,9 @@ importers:
       '@deepseek-ai/dsh-session':
         specifier: link:E:/DSH/deepseek-harness/packages/core/session
         version: link:../../../DSH/deepseek-harness/packages/core/session
+      '@deepseek-ai/dsh-tools':
+        specifier: link:E:/DSH/deepseek-harness/packages/core/tools
+        version: link:../../../DSH/deepseek-harness/packages/core/tools
       '@types/node':
         specifier: ^22.20.0
         version: 22.20.1

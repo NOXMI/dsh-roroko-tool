@@ -54,13 +54,23 @@ export interface RorokoPreinjectState {
   wrapInSystemReminder: boolean
 }
 
+/** roroko-data 素材库工具默认数据库路径(服务器 soul.db)。 */
+export const RorokoDataDefaultDbPath = '/var/www/api/database/soul.db'
+
+/** roroko-data 一节的 wire 形状:开关 + 可选数据库路径覆盖。 */
+export interface RorokoDataState {
+  enabled: boolean
+  /** soul.db 绝对路径;缺省回落服务器默认路径。 */
+  dbPath: string
+}
+
 /** 四工具的稳定键(与 state 文件 / HTTP payload 一致)。 */
 export type RorokoToolKey = 'preinject' | 'data' | 'warn' | 'mark'
 
-/** 电箱状态:每工具一个 enabled 布尔;preinject 额外携带注入参数。 */
+/** 电箱状态:每工具一个 enabled 布尔;preinject/data 额外携带配置。 */
 export interface RorokoToolState {
   preinject: RorokoPreinjectState
-  data: { enabled: boolean }
+  data: RorokoDataState
   warn: { enabled: boolean }
   mark: { enabled: boolean }
 }
@@ -77,7 +87,10 @@ export const RorokoToolStateDefault: RorokoToolState = {
     footer: RorokoPreinjectDefaultFooter,
     wrapInSystemReminder: false,
   },
-  data: { enabled: false },
+  data: {
+    enabled: false,
+    dbPath: RorokoDataDefaultDbPath,
+  },
   warn: { enabled: false },
   mark: { enabled: false },
 }
@@ -104,6 +117,18 @@ export function normalizePreinjectState(value: unknown): RorokoPreinjectState {
   return { enabled, files, header, footer, wrapInSystemReminder }
 }
 
+/** data 一节的窄化与默认。 */
+export function normalizeDataState(value: unknown): RorokoDataState {
+  const base = RorokoToolStateDefault.data
+  if (typeof value !== 'object' || value === null) return { ...base }
+  const section = value as Record<string, unknown>
+  const enabled = typeof section.enabled === 'boolean' ? section.enabled : base.enabled
+  const dbPath = typeof section.dbPath === 'string' && section.dbPath.trim().length > 0
+    ? section.dbPath
+    : base.dbPath
+  return { enabled, dbPath }
+}
+
 /** 把任意部分对象叠到默认状态上(容错:缺键用默认,未知键丢弃)。 */
 export function normalizeState(value: unknown): RorokoToolState {
   const base = structuredClone(RorokoToolStateDefault)
@@ -114,6 +139,10 @@ export function normalizeState(value: unknown): RorokoToolState {
     if (typeof section !== 'object' || section === null) continue
     if (key === 'preinject') {
       base.preinject = normalizePreinjectState(section)
+      continue
+    }
+    if (key === 'data') {
+      base.data = normalizeDataState(section)
       continue
     }
     const enabled = (section as { enabled?: unknown }).enabled
