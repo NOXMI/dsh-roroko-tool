@@ -31,7 +31,7 @@ export interface RorokoToolState {
 }
 /** 四工具键的稳定序(渲染/校验共用)。 */
 export declare const ROROKO_TOOL_KEYS: readonly ["preinject", "data", "warn", "mark"];
-/** 默认状态:全开(接线即触发;用户可在设置页关闸)。 */
+/** 默认状态:全关(安装即熄火;用户按需在设置页逐个开)。 */
 export declare const RorokoToolStateDefault: RorokoToolState;
 /** 窄化未知值为工具键。 */
 export declare function isRorokoToolKey(value: unknown): value is RorokoToolKey;

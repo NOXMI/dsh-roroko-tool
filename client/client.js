@@ -131,7 +131,7 @@ window.__ModuleLoader__.load({
 					setBusyTool(null);
 				}
 			};
-			const enabledOf = (tool) => state?.[tool.id]?.enabled ?? true;
+			const enabledOf = (tool) => state?.[tool.id]?.enabled ?? false;
 			return (0, react.createElement)("div", { style: { padding: "6px 0" } }, (0, react.createElement)("div", { style: {
 				color: "var(--dsw-text-secondary, #888)",
 				fontSize: "0.9em",

@@ -134,7 +134,7 @@ export function RorokoToolSection(): ReturnType<typeof h> {
   }
 
   const enabledOf = (tool: (typeof TOOLS)[number]): boolean =>
-    state?.[tool.id as keyof RorokoToolState]?.enabled ?? true
+    state?.[tool.id as keyof RorokoToolState]?.enabled ?? false
 
   return h('div', { style: { padding: '6px 0' } },
     h('div', {
