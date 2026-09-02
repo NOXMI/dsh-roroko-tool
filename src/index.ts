@@ -1,37 +1,42 @@
 /**
  * @roroko-tool/dsh-roroko-tool — 洛洛可全家桶插件大包。
  *
- * 设计:agent 侧 roroko 系列插件统一收编,exports 子路径多入口;
- * host 默认入口提供 profile bundle 骨架(client 设置页的宿主面),
- * client 子入口(client/client.js)在 WebGUI 设置侧边栏注册
- * 「Roroko Tool」导航项。
+ * host 默认入口提供 profile bundle 骨架:挂载电箱状态 HTTP route
+ * (GET/POST /roroko-tool/state),client 设置页经同源 fetch 读写四工具
+ * enabled 开关。
  *
- * 子插件入口:
- *   ./preinject — 一次性工作区指令注入器(自 dsh-roroko-preinject 迁入)
- *   ./data      — 洛洛可素材库查询工具集(自 dsh-roroko-data 迁入)
- *   ./warn      — 超量收敛警告(新写,agent 侧)
+ * 设计沿革(2026-09-02):原"纯电箱"设计经 settings 服务把 schema register
+ * 到 DSH settings namespace、client 用 settingsScope 双向同步——被官方
+ * loopback 写限制证伪(远程浏览器 settings 写 memory no-op)。现改为
+ * dshmarket 同款范式:状态自存 profile 目录 state 文件 + webServer HTTP
+ * route,域名/隧道访问都能拨开关。
  *
- * 现状:host 默认入口为空骨架插件,不含任何实际逻辑;client 设置页为
- * 最小验证壳。子插件逐步迁入。
+ * 子插件入口(未迁入,占位):
+ *   ./preinject / ./data / ./warn — agent 侧,未来读本电箱 state。
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { installRorokoToolSettings } from './settings.js'
+import { registerStateRoutes, type WebServerLike } from './routes.js'
 
 export const name = 'roroko-tool'
 
 export const pkgName = '@roroko-tool/dsh-roroko-tool'
 export const version = '0.0.0'
 
+/** host ctx 最小面:webServer 注入 + effect 生命周期。 */
+interface HostContextSurface {
+  inject?(services: string[], callback: (scoped: { webServer: WebServerLike }) => void): void
+  effect?(callback: () => unknown, label?: string): void
+}
+
 /**
  * roroko-tool 电箱宿主(profile 层)。
  *
- * 职责:注册 settings 命名空间,存四工具(preinject/data/warn/mark)的
- * enabled 开关。不做调度、不动态挂子插件——各子插件在 agent 层各跑各的,
- * 动手前读本电箱,`enabled === false` 即熄火。
- *
- * 子插件作为本包的 exports 子入口(./preinject 等)提供;agent preset 里
- * insert 声明即接线,没声明不触发。
+ * 挂载 state HTTP route;webServer 服务不可用(非 web profile)时静默跳过。
  */
 export function apply(ctx: Context): void {
-  installRorokoToolSettings(ctx)
+  const host = ctx as unknown as HostContextSurface
+  host.inject?.(['webServer'], (scoped) => {
+    const dispose = registerStateRoutes(scoped.webServer)
+    host.effect?.(() => dispose, 'roroko-tool: state routes')
+  })
 }

@@ -1,18 +1,21 @@
 /**
- * roroko-tool 电箱设置:注册四工具 enabled 开关。
+ * roroko-tool 电箱状态:四工具 enabled 的类型与默认值。
  *
- * 设计(阿一拍板 2026-09-02):roroko-tool 是「纯电箱」——不做调度、不挂
- * 子插件,只在 profile 层注册 settings 命名空间,存四个工具的 enabled 布尔。
- * 各子插件(preinject/data/warn/mark)在 agent 层各跑各的,动手前自己读
- * 这份 settings,`enabled === false` 就熄火。接线(preset 里 insert 声明)
- * 决定工具在不在 agent 层跑,电箱决定通不通电。
+ * 2026-09-02 晚修订:原设计经 ctx.inject(['settings']) 把 schema register 到
+ * DSH settings namespace、client 用 settingsScope 双向同步——被官方 loopback
+ * 写限制卡死(远程浏览器 persistence='memory',开关点击 no-op;dshmarket 源码
+ * 注释亲证 "settings scope is host-mode only")。按 dshmarket 范式退役:
+ * 开关状态改由 host 自存 state 文件 + webServer HTTP route 读写(GET/POST
+ * /roroko-tool/state),client 纯 fetch。本文件只留类型/默认值/工具键,
+ * register 与 schemastery schema 逻辑全部删除。
+ *
+ * 未来 agent 侧子插件(preinject/data/warn/mark)读本电箱状态,可经
+ * roroko-tool host 的 state(文件或服务)取,不再走 settings namespace。
  */
-import z from '@deepseek-ai/schemastery';
-import type { Context } from '@deepseek-ai/cordis';
-/** settings 命名空间(须匹配 /^[a-z][a-z0-9-]*$/) */
-export declare const ROROKO_TOOL_SETTINGS_NS = "roroko-tool";
-/** roroko-tool 电箱设置:四工具独立开关。 */
-export interface RorokoToolSettings {
+/** 四工具的稳定键(与 state 文件 / HTTP payload 一致)。 */
+export type RorokoToolKey = 'preinject' | 'data' | 'warn' | 'mark';
+/** 电箱状态:每工具一个 enabled 布尔。 */
+export interface RorokoToolState {
     preinject: {
         enabled: boolean;
     };
@@ -26,11 +29,11 @@ export interface RorokoToolSettings {
         enabled: boolean;
     };
 }
-export declare const RorokoToolSettings: z<RorokoToolSettings>;
-/** 默认值:全开(接线即触发;用户可在设置面板关闸)。 */
-export declare const RorokoToolSettingsDefault: RorokoToolSettings;
-/**
- * 电箱接线入口:在 roroko-tool host(profile 层)注册四工具开关。
- * settings 服务不可用时静默跳过(插件照常挂载,闸门缺失按默认全开)。
- */
-export declare function installRorokoToolSettings(ctx: Context): void;
+/** 四工具键的稳定序(渲染/校验共用)。 */
+export declare const ROROKO_TOOL_KEYS: readonly ["preinject", "data", "warn", "mark"];
+/** 默认状态:全开(接线即触发;用户可在设置页关闸)。 */
+export declare const RorokoToolStateDefault: RorokoToolState;
+/** 窄化未知值为工具键。 */
+export declare function isRorokoToolKey(value: unknown): value is RorokoToolKey;
+/** 把任意部分对象叠到默认状态上(容错:缺键用默认,未知键丢弃)。 */
+export declare function normalizeState(value: unknown): RorokoToolState;

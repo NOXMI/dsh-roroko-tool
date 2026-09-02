@@ -10,41 +10,31 @@ window.__ModuleLoader__.load({
 		const zh = {
 			nav: "Roroko Tool",
 			title: "Roroko Tool",
-			desc: "洛洛可全家桶插件设置。子插件(preinject / data / warn)面板将在此聚合。",
-			placeholder: "version 0.0.0 — 骨架占位，子插件面板待接入"
+			desc: "洛洛可全家桶插件电箱:四工具的独立 enabled 开关。"
 		};
 		const en = {
 			nav: "Roroko Tool",
 			title: "Roroko Tool",
-			desc: "Roroko family plugin settings. Sub-plugin panels (preinject / data / warn) will aggregate here.",
-			placeholder: "version 0.0.0 — skeleton stub, sub-plugin panels pending"
+			desc: "Roroko family plugin switchboard: per-tool enabled toggles."
 		};
 		const NS = "roroko-tool";
 		//#endregion
 		//#region src/client/index.ts
 		/**
-		* dsh-roroko-tool client — 洛洛可全家桶设置页(纯电箱)。
+		* dsh-roroko-tool client — 洛洛可全家桶设置页(纯 UI 壳 + 四持久化开关)。
 		*
 		* 在 WebGUI 设置侧边栏注册「Roroko Tool」导航项,页内渲染四个工具的
-		* enabled 开关:preinject / data / warn / mark。
+		* enabled 开关(preinject / data / warn / mark)。
 		*
-		* 值与 host 侧 settings 命名空间 `roroko-tool`(settings.ts 注册)双向同步:
-		*   - 读:scope.getSnapshot().value?.[tool]?.enabled(默认 true)
-		*   - 写:scope.mutate([{ op:'set', path:[tool,'enabled'], value }])
-		* 走深路径写,不整段覆盖——未来某工具在 enabled 旁扩展自己的参数时,
-		* 别的开关不受影响。
-		*
-		* 参照范式:官方 ui-conversation RorokoSection.tsx(settingsScope.bind +
-		* useSyncExternalStore + 原生 checkbox)。类型全部本地结构声明,零外部
-		* 类型依赖(loader 只认 react / ui-primitives 两个 external)。
+		* 读写不走官方 settingsScope(远程浏览器写 memory no-op),改经同源 fetch
+		* 打 host 挂的 HTTP route:
+		*   GET  /roroko-tool/state  → 读四开关
+		*   POST /roroko-tool/state  → { tool, enabled } 写单开关,以 server 返回为准
+		* UI 状态本地 useState。参照 dshmarket client 范式(api() 锚定 baseURI)。
 		*/
 		const name = "roroko-tool";
-		const inject = [
-			"slots",
-			"locale",
-			"settingsScope"
-		];
-		/** 四个工具的静态元数据:id 须匹配 host schema 键。 */
+		const inject = ["slots", "locale"];
+		/** 四工具元数据:id 须匹配 host 工具键。 */
 		const TOOLS = [
 			{
 				id: "preinject",
@@ -67,19 +57,15 @@ window.__ModuleLoader__.load({
 				desc: "-呻吟_X- 标记的渲染与处理 (mark)"
 			}
 		];
-		/** 单行开关:读 scope 对应工具的 enabled,拨动时写深路径。 */
+		/** 解析路由路径,锚定 document.baseURI(反代带 prefix 也能命中)。 */
+		function api(path) {
+			const relative = path.replace(/^\/+/, "");
+			if (typeof document === "undefined") return `/${relative}`;
+			return new URL(relative, document.baseURI).pathname;
+		}
+		/** 单行开关:值来自 host state,拨动 POST 回写。 */
 		function ToolRow(props) {
-			const { tool, scope } = props;
-			const enabled = (0, react.useSyncExternalStore)((onStoreChange) => scope === void 0 ? () => {} : scope.subscribe(onStoreChange), () => scope?.getSnapshot().value?.[tool.id]?.enabled ?? true);
-			const disabled = scope === void 0;
-			const toggle = () => {
-				if (scope === void 0) return;
-				scope.mutate([{
-					op: "set",
-					path: [tool.id, "enabled"],
-					value: !enabled
-				}]);
-			};
+			const { tool, enabled, busy, onToggle } = props;
 			return (0, react.createElement)("div", { style: {
 				display: "flex",
 				alignItems: "center",
@@ -92,31 +78,85 @@ window.__ModuleLoader__.load({
 			} }, tool.desc)), (0, react.createElement)("label", {}, (0, react.createElement)("input", {
 				type: "checkbox",
 				checked: enabled,
-				disabled,
-				onChange: toggle
+				disabled: busy,
+				onChange: () => {
+					onToggle(!enabled);
+				}
 			})));
 		}
-		/** 设置页内容:四工具开关纵列。 */
-		function RorokoToolSection(props) {
-			const { scope } = props;
+		/** 设置页内容:加载 host state,渲染四开关。 */
+		function RorokoToolSection() {
+			const [state, setState] = (0, react.useState)(null);
+			const [error, setError] = (0, react.useState)(null);
+			const [busy, setBusy] = (0, react.useState)(false);
+			const [busyTool, setBusyTool] = (0, react.useState)(null);
+			(0, react.useEffect)(() => {
+				let live = true;
+				(async () => {
+					try {
+						const body = await (await fetch(api("/roroko-tool/state"), { cache: "no-store" })).json();
+						if (live) setState(body);
+					} catch (cause) {
+						if (live) setError(cause instanceof Error ? cause.message : String(cause));
+					}
+				})();
+				return () => {
+					live = false;
+				};
+			}, []);
+			const toggle = async (tool, next) => {
+				if (busy) return;
+				setBusy(true);
+				setBusyTool(tool);
+				setError(null);
+				try {
+					const response = await fetch(api("/roroko-tool/state"), {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({
+							tool,
+							enabled: next
+						})
+					});
+					const body = await response.json();
+					if (!response.ok || body.ok !== true || body.state === void 0) {
+						setError(body.error ?? `failed to toggle ${tool} (HTTP ${response.status})`);
+						return;
+					}
+					setState(body.state);
+				} catch (cause) {
+					setError(cause instanceof Error ? cause.message : String(cause));
+				} finally {
+					setBusy(false);
+					setBusyTool(null);
+				}
+			};
+			const enabledOf = (tool) => state?.[tool.id]?.enabled ?? true;
 			return (0, react.createElement)("div", { style: { padding: "6px 0" } }, (0, react.createElement)("div", { style: {
 				color: "var(--dsw-text-secondary, #888)",
 				fontSize: "0.9em",
 				marginBottom: 12
-			} }, "洛洛可全家桶插件电箱 — 关闭某工具即熄火,接线(preset 声明)照常。"), ...TOOLS.map((tool) => (0, react.createElement)("div", {
+			} }, "洛洛可全家桶插件电箱 — 关闭某工具即熄火;状态存服务器 profile。"), state === null ? (0, react.createElement)("div", { style: {
+				color: "var(--dsw-text-secondary, #888)",
+				fontSize: "0.9em"
+			} }, error === null ? "加载中…" : `加载失败: ${error}`) : (0, react.createElement)("div", {}, ...TOOLS.map((tool) => (0, react.createElement)("div", {
 				key: tool.id,
 				style: { marginTop: 6 }
 			}, (0, react.createElement)(ToolRow, {
 				tool,
-				scope
-			}))), scope === void 0 ? (0, react.createElement)("div", { style: {
+				enabled: enabledOf(tool),
+				busy: busy && busyTool === tool.id,
+				onToggle: (next) => {
+					toggle(tool.id, next);
+				}
+			}))), error !== null ? (0, react.createElement)("div", { style: {
 				marginTop: 12,
 				padding: "10px 12px",
 				background: "var(--dsw-surface-secondary, rgba(128,128,128,.08))",
 				borderRadius: 6,
 				fontSize: "0.85em",
-				color: "var(--dsw-text-secondary, #888)"
-			} }, "settings 服务不可用,开关暂被禁用。") : null);
+				color: "var(--dsw-text-danger, #e5484d)"
+			} }, error) : null));
 		}
 		function apply(ctx) {
 			ctx.effect(() => ctx.locale.register(NS, {
@@ -124,17 +164,16 @@ window.__ModuleLoader__.load({
 				en
 			}), "roroko-tool: dictionaries");
 			const t = ctx.locale.bind(NS);
-			const scope = ctx.settingsScope.bind({ namespace: "roroko-tool" });
 			ctx.slots.inject("settings.section", () => ctx.slots.register({
 				name: "settings.section",
 				id: "roroko-tool",
 				order: 30,
 				label: () => t("nav"),
-				locale: NS,
-				inject: () => ({ scope })
+				locale: NS
 			}, RorokoToolSection));
 		}
 		//#endregion
+		exports.RorokoToolSection = RorokoToolSection;
 		exports.apply = apply;
 		exports.inject = inject;
 		exports.name = name;
