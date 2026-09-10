@@ -18,7 +18,11 @@
  * enabled 开关,state 只存参数覆盖。settings.ts 现在只留类型/默认值/工具键,
  * register 与 schemastery schema 逻辑早已删除。
  */
-/** 预注入默认文件清单:roroko-workspace / 工作区根下的人格与纪律文件。 */
+/** 系统段默认文件清单:进系统提示词 section,常驻、不算消息、不被 compaction 折叠。 */
+export declare const RorokoPreinjectDefaultSystemFiles: string[];
+/** 系统段基准 order:清单里第 N 个文件(0 起)的 section order = 基准 + N。 */
+export declare const RorokoPreinjectDefaultSystemOrder = 100;
+/** 消息段默认文件清单(user 消息,会话首次进入时注入一次)。 */
 export declare const RorokoPreinjectDefaultFiles: string[];
 /** 预注入默认包裹壳(与旧 preset 接线草案一致,生成 <roroko-reminder> 注释块)。 */
 export declare const RorokoPreinjectDefaultHeader: string;
@@ -30,13 +34,21 @@ export declare const RorokoDataDefaultDbPath = "/var/www/api/database/soul.db";
  * enabled 已退役:preset 声明本插件即启用;这里只存注入参数覆盖。
  */
 export interface RorokoPreinjectState {
-    /** 会话 cwd 下待注入的文件名(注入顺序)。 */
+    /** 系统段:会话 cwd 下待注入系统提示词的文件名(注入顺序)。 */
+    systemFiles: string[];
+    /** 系统段基准 order:清单里第 N 个文件(0 起)的 section order = 基准 + N。 */
+    systemOrder: number;
+    /** 系统段包裹壳:内容前插入的文本。 */
+    systemHeader: string;
+    /** 系统段包裹壳:内容后插入的文本。 */
+    systemFooter: string;
+    /** 消息段:会话 cwd 下待注入 user 消息的文件名(注入顺序)。 */
     files: string[];
-    /** 包裹壳:内容前插入的文本。 */
+    /** 消息段包裹壳:内容前插入的文本。 */
     header: string;
-    /** 包裹壳:内容后插入的文本。 */
+    /** 消息段包裹壳:内容后插入的文本。 */
     footer: string;
-    /** 是否再整体包一层 <system-reminder>…</system-reminder>。 */
+    /** 消息段是否再整体包一层 <system-reminder>…</system-reminder>。 */
     wrapInSystemReminder: boolean;
 }
 /**

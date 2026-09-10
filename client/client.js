@@ -975,13 +975,14 @@ window.__ModuleLoader__.load({
 		* 在 WebGUI 设置侧边栏注册「Roroko Tool」导航项。页面不再有工具启用开关
 		* (2026-09-03 三改:四工具 enabled 运行级开关退役——preset 声明即启用,
 		* agent preset 在 agent.cordis.yml 里引用哪个子插件,装配就带哪个功能)。
-		* 页面只编辑各子插件的参数覆盖:preinject 的注入文件清单/包裹壳/是否
-		* system-reminder 包裹,roroko-data 的数据库路径。
+		* 页面只编辑各子插件的参数覆盖:preinject 的两组注入参数(系统段文件清单/
+		* 基准 order/包裹壳,消息段文件清单/包裹壳/system-reminder 包裹),
+		* roroko-data 的数据库路径。
 		*
 		* 读写不走官方 settingsScope(远程浏览器写 memory no-op),改经同源 fetch
 		* 打 host 挂的 HTTP route:
 		*   GET  /roroko-tool/state  → 读各节参数(state 文件内容)
-		*   POST /roroko-tool/state  → { tool:'preinject', files/header/footer/... } 写参数
+		*   POST /roroko-tool/state  → { tool:'preinject', systemFiles/systemOrder/… } 写参数
 		*                             → { tool:'data', dbPath } 写参数
 		* UI 状态本地 useState。参照 dshmarket client 范式(api() 锚定 baseURI)。
 		*/
@@ -1033,9 +1034,97 @@ window.__ModuleLoader__.load({
 				padding: "10px 12px"
 			} }, ...props.children);
 		}
-		/** preinject 注入参数编辑器:文件清单 + header/footer + wrap 包裹。 */
+		/** 参数面板内的分组小标题:区分系统段与消息段。 */
+		function GroupTitle(props) {
+			return (0, react.createElement)("div", { style: {
+				marginTop: 4,
+				marginBottom: 6
+			} }, (0, react.createElement)("div", { style: {
+				fontWeight: 600,
+				fontSize: "0.9em"
+			} }, props.text), (0, react.createElement)("div", { style: {
+				color: "var(--dsw-text-secondary, #888)",
+				fontSize: "0.82em",
+				marginTop: 2
+			} }, props.hint));
+		}
+		/** 文件清单编辑器:若干行文本框 + 增删。系统段与消息段共用一份。 */
+		function FileListEditor(props) {
+			const { files, busy, placeholder, onChange } = props;
+			return (0, react.createElement)("div", {}, ...files.map((file, index) => (0, react.createElement)("div", {
+				key: `file-${index}`,
+				style: {
+					display: "flex",
+					gap: 6,
+					marginBottom: 4,
+					alignItems: "center"
+				}
+			}, (0, react.createElement)("input", {
+				type: "text",
+				value: file,
+				disabled: busy,
+				placeholder,
+				style: inputStyle,
+				onChange: (event) => {
+					const value = event.target.value;
+					onChange(files.map((item, i) => i === index ? value : item));
+				}
+			}), (0, react.createElement)("button", {
+				type: "button",
+				disabled: busy,
+				title: "删除此行",
+				style: {
+					...buttonStyle,
+					flexShrink: 0
+				},
+				onClick: () => {
+					onChange(files.filter((_, i) => i !== index));
+				}
+			}, "✕"))), (0, react.createElement)("div", { style: { marginTop: 4 } }, (0, react.createElement)("button", {
+				type: "button",
+				disabled: busy,
+				style: buttonStyle,
+				onClick: () => {
+					onChange([...files, ""]);
+				}
+			}, "+ 添加文件")));
+		}
+		/** 面板内行标签样式。 */
+		const groupLabelStyle = {
+			display: "block",
+			fontSize: "0.85em",
+			marginBottom: 2,
+			marginTop: 8,
+			color: "var(--dsw-text-secondary, #888)"
+		};
+		/** 面板内提示文字样式。 */
+		const hintStyle = {
+			fontSize: "0.8em",
+			color: "var(--dsw-text-secondary, #888)",
+			marginTop: 2
+		};
+		const textareaStyle = {
+			...inputStyle,
+			minHeight: 56,
+			resize: "vertical"
+		};
+		/** 清单落盘前清洗:去首尾空白、去空行、去重。 */
+		function cleanList(list) {
+			return list.map((item) => item.trim()).filter((item) => item.length > 0).filter((item, index, self) => self.indexOf(item) === index);
+		}
+		/**
+		* preinject 参数编辑器:系统段(system section)+ 消息段(user 消息)。
+		*
+		* 两段落点机制不同,参数因此不对称:系统段进系统提示词,常驻、不折叠、内容
+		* 每步现读,所以只有基准 order 与 header/footer;消息段是 user 消息,注入一次
+		* 落日志,所以另有 system-reminder 包裹开关。
+		*/
 		function PreinjectPanel(props) {
 			const { config, busy, onSave } = props;
+			const [systemFiles, setSystemFiles] = (0, react.useState)(config.systemFiles);
+			const [systemOrder, setSystemOrder] = (0, react.useState)(config.systemOrder);
+			const [systemHeader, setSystemHeader] = (0, react.useState)(config.systemHeader);
+			const [systemFooter, setSystemFooter] = (0, react.useState)(config.systemFooter);
 			const [files, setFiles] = (0, react.useState)(config.files);
 			const [header, setHeader] = (0, react.useState)(config.header);
 			const [footer, setFooter] = (0, react.useState)(config.footer);
@@ -1046,87 +1135,94 @@ window.__ModuleLoader__.load({
 				setDirty(true);
 				setSaved(false);
 			};
-			const updateFile = (index, value) => {
-				setFiles((prev) => prev.map((item, i) => i === index ? value : item));
-				markDirty();
-			};
-			const addFile = () => {
-				setFiles((prev) => [...prev, ""]);
-				markDirty();
-			};
-			const removeFile = (index) => {
-				setFiles((prev) => prev.filter((_, i) => i !== index));
-				markDirty();
-			};
 			const save = () => {
-				const next = {
-					files: files.map((item) => item.trim()).filter((item) => item.length > 0).filter((item, index, self) => self.indexOf(item) === index),
+				onSave({
+					systemFiles: cleanList(systemFiles),
+					systemOrder,
+					systemHeader: systemHeader.trim(),
+					systemFooter: systemFooter.trim(),
+					files: cleanList(files),
 					header: header.trim(),
 					footer: footer.trim(),
 					wrapInSystemReminder: wrap
-				};
-				onSave(next);
+				});
 				setDirty(false);
 				setSaved(true);
-			};
-			const textareaStyle = {
-				...inputStyle,
-				minHeight: 56,
-				resize: "vertical"
 			};
 			return (0, react.createElement)(PanelShell, { children: [
 				(0, react.createElement)("div", { style: {
 					fontWeight: 600,
 					marginBottom: 8,
 					fontSize: "0.9em"
-				} }, "注入参数(存 state,会话开始注入时读取)"),
+				} }, "注入参数(存 state,注入时读取)"),
 				(0, react.createElement)("div", { style: {
 					fontSize: "0.85em",
 					color: "var(--dsw-text-secondary, #888)",
-					marginBottom: 8
+					marginBottom: 10
 				} }, "文件路径相对会话 cwd;缺失文件静默跳过。"),
-				...files.map((file, index) => (0, react.createElement)("div", {
-					key: `file-${index}`,
-					style: {
-						display: "flex",
-						gap: 6,
-						marginBottom: 4,
-						alignItems: "center"
-					}
-				}, (0, react.createElement)("input", {
-					type: "text",
-					value: file,
-					disabled: busy,
+				(0, react.createElement)(GroupTitle, {
+					text: "系统段 — 进系统提示词",
+					hint: "常驻、不占消息位、不被压缩折叠;每次装配现读文件,改动立刻生效。"
+				}),
+				(0, react.createElement)(FileListEditor, {
+					files: systemFiles,
+					busy,
 					placeholder: "如 AGENTS.md",
-					style: inputStyle,
-					onChange: (event) => {
-						updateFile(index, event.target.value);
+					onChange: (next) => {
+						setSystemFiles(next);
+						markDirty();
 					}
-				}), (0, react.createElement)("button", {
-					type: "button",
+				}),
+				(0, react.createElement)("label", { style: groupLabelStyle }, "基准 order(清单里第 N 个文件 order = 基准 + N)"),
+				(0, react.createElement)("input", {
+					type: "number",
+					value: `${systemOrder}`,
 					disabled: busy,
-					title: "删除此行",
 					style: {
-						...buttonStyle,
-						flexShrink: 0
+						...inputStyle,
+						maxWidth: 120
 					},
-					onClick: () => {
-						removeFile(index);
+					onChange: (event) => {
+						const parsed = Number(event.target.value);
+						setSystemOrder(Number.isFinite(parsed) ? parsed : 0);
+						markDirty();
 					}
-				}, "✕"))),
-				(0, react.createElement)("div", { style: { marginTop: 4 } }, (0, react.createElement)("button", {
-					type: "button",
+				}),
+				(0, react.createElement)("div", { style: hintStyle }, "order 改动需重新挂载 preset(重开会话或重启 DSH)才生效。"),
+				(0, react.createElement)("label", { style: groupLabelStyle }, "header(内容前插入,可留空)"),
+				(0, react.createElement)("textarea", {
+					value: systemHeader,
 					disabled: busy,
-					style: buttonStyle,
-					onClick: addFile
-				}, "+ 添加文件")),
-				(0, react.createElement)("label", { style: {
-					display: "block",
-					fontSize: "0.85em",
-					marginBottom: 2,
-					marginTop: 10,
-					color: "var(--dsw-text-secondary, #888)"
-				} }, "header(内容前插入)"),
+					style: textareaStyle,
+					onChange: (event) => {
+						setSystemHeader(event.target.value);
+						markDirty();
+					}
+				}),
+				(0, react.createElement)("label", { style: groupLabelStyle }, "footer(内容后插入,可留空)"),
+				(0, react.createElement)("textarea", {
+					value: systemFooter,
+					disabled: busy,
+					style: textareaStyle,
+					onChange: (event) => {
+						setSystemFooter(event.target.value);
+						markDirty();
+					}
+				}),
+				(0, react.createElement)(GroupTitle, {
+					text: "消息段 — 进 user 消息",
+					hint: "会话开始注入一次并落日志;被压缩折叠掉会重新注入。"
+				}),
+				(0, react.createElement)(FileListEditor, {
+					files,
+					busy,
+					placeholder: "如 PLAYER.md",
+					onChange: (next) => {
+						setFiles(next);
+						markDirty();
+					}
+				}),
+				(0, react.createElement)("label", { style: groupLabelStyle }, "header(内容前插入)"),
 				(0, react.createElement)("textarea", {
 					value: header,
 					disabled: busy,
@@ -1137,13 +1233,7 @@ window.__ModuleLoader__.load({
 						markDirty();
 					}
 				}),
-				(0, react.createElement)("label", { style: {
-					display: "block",
-					fontSize: "0.85em",
-					marginBottom: 2,
-					marginTop: 8,
-					color: "var(--dsw-text-secondary, #888)"
-				} }, "footer(内容后插入)"),
+				(0, react.createElement)("label", { style: groupLabelStyle }, "footer(内容后插入)"),
 				(0, react.createElement)("textarea", {
 					value: footer,
 					disabled: busy,
@@ -1306,6 +1396,10 @@ window.__ModuleLoader__.load({
 						headers: { "content-type": "application/json" },
 						body: JSON.stringify({
 							tool: "preinject",
+							systemFiles: next.systemFiles,
+							systemOrder: next.systemOrder,
+							systemHeader: next.systemHeader,
+							systemFooter: next.systemFooter,
 							files: next.files,
 							header: next.header,
 							footer: next.footer,
@@ -1380,7 +1474,7 @@ window.__ModuleLoader__.load({
 				fontSize: "0.9em"
 			} }, error === null ? "加载中…" : `加载失败: ${error}`) : (0, react.createElement)("div", {}, (0, react.createElement)(ToolHeader, {
 				title: "指令预注入 (roroko-preinject)",
-				desc: "会话开始一次性注入工作区指令;preset 声明即启用。"
+				desc: "系统段进系统提示词(常驻),消息段进 user 消息(会话一次);preset 声明即启用。"
 			}), (0, react.createElement)(PreinjectPanel, {
 				config: state.preinject,
 				busy: busy && busyTool === "preinject",

@@ -26,6 +26,10 @@ export declare function loadStateSync(): RorokoToolState;
 export declare function saveState(state: RorokoToolState): Promise<void>;
 /** 可由 HTTP body 部分提供的 preinject 配置字段(宽松 unknown,内部收窄)。 */
 export interface RorokoPreinjectConfigInput {
+    systemFiles?: unknown;
+    systemOrder?: unknown;
+    systemHeader?: unknown;
+    systemFooter?: unknown;
     files?: unknown;
     header?: unknown;
     footer?: unknown;

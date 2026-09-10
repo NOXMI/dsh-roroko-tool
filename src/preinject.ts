@@ -1,24 +1,40 @@
 /**
- * roroko-preinject — 一次性工作区指令注入器(roroko-tool 电箱子功能)。
+ * roroko-preinject — 工作区指令双段落点注入器(roroko-tool 电箱子功能)。
  *
- * 自独立旧插件 dsh-roroko-preinject 收编迁入 roroko-tool 大包(2026-09-02)。
+ * 自独立旧插件 dsh-roroko-preinject 收编迁入 roroko-tool 大包(2026-09-02),
+ * 2026-09-04 拆成两条腿:系统段进系统提示词,消息段进 user 消息。
  *
- * Reads a fixed list of files from the agent's session cwd and injects them
- * once as a single user message on the first entering agent step.
+ * ── 系统段(system section)──────────────────────────────────────────────
  *
- * Unlike `@deepseek-ai/dsh-agent-instructions`, this plugin does NOT watch for
- * file changes and never re-injects updated instructions.
+ * 文件内容进系统提示词:常驻、不占消息位、不被 compaction 折叠、每步现读。
+ * 实现是「变量承载 + section 引用宏」两件套 —— 内容由 systemPrompt.variable
+ * 提供(provider 每次装配按当前 agent 的会话 cwd 现读文件),section 的 text
+ * 只写一个字面宏 `{{roroko_preinject_system}}`。
+ *
+ * 为什么绕这一道:renderPrompt 的 `{{}}` 插值是严格的,未知变量/空值/畸形
+ * 引用一律抛错,文件正文里但凡有一个成组的 `{{xxx}}` 就直接打崩装配。而
+ * "替换进去的值不会被二次扫描"是 renderPrompt 的明文语义 —— 内容走变量就
+ * 天然免疫,文件正文里写什么花括号都安全。
+ *
+ * provider 三条硬规矩,缺一条都会打崩整个 turn:
+ *   1. 内部 try/catch 兜底:provider 抛错会冒到 assemble();
+ *   2. 读不到内容返回 `''` 而非 `undefined`:后者被判定「变量无值」同样抛错;
+ *   3. header/footer 一并拼进变量值:留在 section 文本里就仍在插值扫描路径上。
+ * 空串会让 renderPrompt 把该 section 整个 filter 掉 —— 未配置即零污染。
+ *
+ * 已知限制:section 的 order 在 apply(preset 挂载)时读一次,改 order 需要
+ * 重新挂载 preset;文件清单则由 provider 每次装配现读 state,改了立刻生效。
+ *
+ * ── 消息段(user message)────────────────────────────────────────────────
+ *
+ * 文件合并成一条 user 消息,首个 entering step 注入一次,落库 `user/message`。
  *
  * The one-shot guard is durable-log-driven: once the injected message is
  * appended to the session log (agent.ts appends `decision.messages` as
  * `user/message` on step/start), every later pre-step — including a resumed
- * session after a process restart — finds it in `session.events` and skips
+ * session after a process restart — finds it in `session.log` and skips
  * re-injection. Compaction folding the injection away naturally re-injects.
- *
- * 电箱闸门(roroko-tool 设置):agent 层动手前读 host 的 state 文件(roroko-tool-
- * state.json,同进程共享文件系统),`preinject.enabled === false` 即熄火、不注入。
- * 注入参数(files/header/footer/wrapInSystemReminder)同样读自 state,由 webgui
- * 设置页编辑。
+ * 系统段不落 log,不参与判重。
  *
  * 判重实现说明(2026-09-03 修复):曾尝试扫 `session.surface.nodes` 和
  * `session.events` 均失败——surface 是依赖 sessionProjections 的增量投影,
@@ -27,44 +43,54 @@
  * 找带本插件 source 签名的 user/message,有则说明已注入过。实测:同一会话
  * 连续多 turn + 进程重启恢复后均不再重复注入。
  *
- * 参数(2026-09-03 三改):enabled 运行级开关退役——preset 声明本插件即启用
- * 注入。files/header/footer/wrapInSystemReminder 两层:preset 接线
- * `config`(声明即配)兜底,host state 文件 preinject 节覆盖优先(设置页编辑)。
- * 参数只影响注入内容,不改工具目录,不破坏 request-cache。
+ * 参数两层:preset 接线 `config` 兜底,host state 文件 preinject 节覆盖优先
+ * (设置页编辑)。参数只影响注入内容,不改工具目录,不破坏 request-cache。
  */
 
+import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
-import { loadState } from './state.js'
-import type { RorokoPreinjectState } from './settings.js'
+import type { AssembleContext } from '@deepseek-ai/dsh-system-prompt'
+import { loadState, loadStateSync } from './state.js'
+import { RorokoPreinjectDefaultSystemOrder } from './settings.js'
+import type { RorokoPreinjectState, RorokoToolState } from './settings.js'
 
 export const name = 'roroko-preinject'
 
-/** 接线 config(2026-09-03 三改:成为注入参数的 preset 声明源)。 */
+/** 系统段 section 名(同层唯一;scoped 注册会 shadow 同名全局段)。 */
+const SYSTEM_SECTION = 'roroko:preinject'
+
+/** 系统段内容承载变量名(必须匹配 ^[a-z][a-z0-9_]*$)。 */
+const SYSTEM_VARIABLE = 'roroko_preinject_system'
+
+/** 系统提示词注册表必须就绪,才能注册 section 与变量。 */
+export const inject = ['systemPrompt']
+
+/** 接线 config(系统段 + 消息段的 preset 声明源,state 覆盖优先)。 */
 export interface RorokoPreinjectConfig {
+  /** 系统段:待注入系统提示词的文件名(注入顺序)。 */
+  systemFiles?: string[]
+  /** 系统段基准 order(state 未覆盖时生效)。 */
+  systemOrder?: number
+  /** 系统段:内容前插入的文本。 */
+  systemHeader?: string
+  /** 系统段:内容后插入的文本。 */
+  systemFooter?: string
+  /** 消息段:待注入 user 消息的文件名(注入顺序)。 */
   files?: string[]
+  /** 消息段:是否整体包一层 <system-reminder>…</system-reminder>。 */
   wrapInSystemReminder?: boolean
+  /** 消息段:内容前插入的文本。 */
   header?: string
+  /** 消息段:内容后插入的文本。 */
   footer?: string
 }
 
-async function loadMergedText(baseDir: string, files: readonly string[]): Promise<string> {
-  const parts: string[] = []
-  for (const file of files) {
-    try {
-      const text = await readFile(resolve(baseDir, file), 'utf8')
-      if (text.trim().length > 0) parts.push(text.trim())
-    } catch {
-      // Missing or unreadable files are skipped; the rest still inject.
-    }
-  }
-  return parts.join('\n\n')
-}
-
+/** 合并 header + 内容 + footer(两段共用同一套拼接语义)。 */
 function buildInjectionText(
   content: string,
   config: {
@@ -79,6 +105,97 @@ function buildInjectionText(
   return config.wrapInSystemReminder === true
     ? `<system-reminder>\n${body}\n</system-reminder>`
     : body
+}
+
+/** 同步读并合并文件(系统段用;section/变量 provider 都是同步函数,不能 await)。 */
+function loadMergedTextSync(baseDir: string, files: readonly string[]): string {
+  const parts: string[] = []
+  for (const file of files) {
+    try {
+      const text = readFileSync(resolve(baseDir, file), 'utf8')
+      if (text.trim().length > 0) parts.push(text.trim())
+    } catch {
+      // Missing or unreadable files are skipped; the rest still inject.
+    }
+  }
+  return parts.join('\n\n')
+}
+
+/** 异步读并合并文件(消息段用,跑在 pre-step 里)。 */
+async function loadMergedText(baseDir: string, files: readonly string[]): Promise<string> {
+  const parts: string[] = []
+  for (const file of files) {
+    try {
+      const text = await readFile(resolve(baseDir, file), 'utf8')
+      if (text.trim().length > 0) parts.push(text.trim())
+    } catch {
+      // Missing or unreadable files are skipped; the rest still inject.
+    }
+  }
+  return parts.join('\n\n')
+}
+
+/**
+ * 合并系统段参数:preset config 兜底,state preinject 节覆盖优先。
+ * 空清单/空文本视为「未覆盖」(与消息段 files 同一条约定)。
+ */
+function resolveSystemParams(
+  config: RorokoPreinjectConfig,
+  state: RorokoToolState,
+): { files: string[]; header: string; footer: string } {
+  const override: RorokoPreinjectState = state.preinject
+  const files = override.systemFiles.length > 0 ? override.systemFiles : (config.systemFiles ?? [])
+  const header = override.systemHeader.length > 0 ? override.systemHeader : (config.systemHeader ?? '')
+  const footer = override.systemFooter.length > 0 ? override.systemFooter : (config.systemFooter ?? '')
+  return { files, header, footer }
+}
+
+/**
+ * 解析系统段 section 的 order。
+ *
+ * normalizePreinjectState 保证 state.systemOrder 恒为数字,所以「用户没改过」
+ * 只能靠与默认值相等来判断;相等时让 preset config 有话语权,否则 state 赢。
+ */
+function resolveSystemOrder(config: RorokoPreinjectConfig, state: RorokoToolState): number {
+  const fromState = state.preinject.systemOrder
+  if (fromState !== RorokoPreinjectDefaultSystemOrder) return fromState
+  return config.systemOrder ?? fromState
+}
+
+/**
+ * 系统段内容 provider:按当前装配的 agent 现读会话 cwd 下的文件。
+ *
+ * 三条兜底见文件头:整段 try/catch、失败返回空串、header/footer 拼进值。
+ */
+function systemTextProvider(config: RorokoPreinjectConfig, context: AssembleContext): string {
+  try {
+    // 诊断场合的装配没有 agent;此时不注入。
+    const cwd = context.agent?.session.header.cwd
+    if (cwd === undefined) return ''
+    const params = resolveSystemParams(config, loadStateSync())
+    const content = loadMergedTextSync(cwd, params.files)
+    if (content.length === 0) return ''
+    return buildInjectionText(content, params)
+  } catch {
+    // provider 抛错会冒到 assemble 打崩整个 turn;兜底成空串(该 section 被丢弃)。
+    return ''
+  }
+}
+
+/**
+ * 合并消息段参数:preset config 兜底,state preinject 节覆盖优先。
+ * state 缺失/损坏时纯用 config。返回最终 files/header/footer/wrap。
+ */
+async function resolveInjectParams(
+  config: RorokoPreinjectConfig,
+): Promise<{ files: string[]; wrap: boolean; header: string; footer: string }> {
+  const state = await loadState()
+  const override: RorokoPreinjectState = state.preinject
+  const files = override.files.length > 0 ? override.files : (config.files ?? [])
+  const wrap = override.wrapInSystemReminder ?? config.wrapInSystemReminder ?? false
+  const header = override.header.length > 0 ? override.header : (config.header ?? '')
+  const footer = override.footer.length > 0 ? override.footer : (config.footer ?? '')
+  return { files, wrap, header, footer }
 }
 
 /**
@@ -104,23 +221,24 @@ function hasInjected(session: Session): boolean {
   return false
 }
 
-/**
- * 合并注入参数:preset config 兜底,state preinject 节覆盖优先。
- * state 缺失/损坏时纯用 config。返回最终 files/header/footer/wrap。
- */
-async function resolveInjectParams(
-  config: RorokoPreinjectConfig,
-): Promise<{ files: string[]; wrap: boolean; header: string; footer: string }> {
-  const state = await loadState()
-  const override: RorokoPreinjectState = state.preinject
-  const files = override.files.length > 0 ? override.files : (config.files ?? [])
-  const wrap = override.wrapInSystemReminder ?? config.wrapInSystemReminder ?? false
-  const header = override.header.length > 0 ? override.header : (config.header ?? '')
-  const footer = override.footer.length > 0 ? override.footer : (config.footer ?? '')
-  return { files, wrap, header, footer }
-}
-
 export function apply(ctx: Context, config: RorokoPreinjectConfig = {}): void {
+  // ── 系统段:变量承载内容 + section 引用宏 ──
+  // 变量先注册;求值发生在装配时,注册先后不影响结果,但先有值再有引用更直白。
+  ctx.effect(
+    () => ctx.systemPrompt.variable(SYSTEM_VARIABLE, context => systemTextProvider(config, context)),
+    'roroko-preinject.variable()',
+  )
+  const initialOrder = resolveSystemOrder(config, loadStateSync())
+  ctx.effect(
+    () => ctx.systemPrompt.section({
+      name: SYSTEM_SECTION,
+      order: initialOrder,
+      text: `{{${SYSTEM_VARIABLE}}}`,
+    }),
+    'roroko-preinject.section()',
+  )
+
+  // ── 消息段:原一次性注入逻辑 ──
   ctx.on('agent/pre-step', async ({ agent, messages }, next): Promise<PreStepDecision> => {
     const decision = await next()
     if (decision.kind !== 'enter') return decision

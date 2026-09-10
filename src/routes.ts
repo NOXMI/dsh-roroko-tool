@@ -80,6 +80,10 @@ export function registerStateRoutes(webServer: WebServerLike): () => void {
           }
           const body = (await readJsonBody(request)) as {
             tool?: unknown
+            systemFiles?: unknown
+            systemOrder?: unknown
+            systemHeader?: unknown
+            systemFooter?: unknown
             files?: unknown
             header?: unknown
             footer?: unknown
@@ -94,6 +98,10 @@ export function registerStateRoutes(webServer: WebServerLike): () => void {
           // preinject 参数节保存(部分覆盖:仅 body 提供的字段覆盖)。
           if (body.tool === 'preinject') {
             const state = await setPreinjectConfig({
+              ...body.systemFiles !== undefined ? { systemFiles: body.systemFiles } : {},
+              ...body.systemOrder !== undefined ? { systemOrder: body.systemOrder } : {},
+              ...body.systemHeader !== undefined ? { systemHeader: body.systemHeader } : {},
+              ...body.systemFooter !== undefined ? { systemFooter: body.systemFooter } : {},
               ...body.files !== undefined ? { files: body.files } : {},
               ...body.header !== undefined ? { header: body.header } : {},
               ...body.footer !== undefined ? { footer: body.footer } : {},

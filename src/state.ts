@@ -75,6 +75,10 @@ export async function saveState(state: RorokoToolState): Promise<void> {
 
 /** 可由 HTTP body 部分提供的 preinject 配置字段(宽松 unknown,内部收窄)。 */
 export interface RorokoPreinjectConfigInput {
+  systemFiles?: unknown
+  systemOrder?: unknown
+  systemHeader?: unknown
+  systemFooter?: unknown
   files?: unknown
   header?: unknown
   footer?: unknown
@@ -91,6 +95,18 @@ export async function setPreinjectConfig(
   const current = await loadState()
   const existing = current.preinject
   const merged: RorokoPreinjectState = {
+    systemFiles: Array.isArray(config.systemFiles)
+      ? config.systemFiles.filter((item): item is string => typeof item === 'string')
+      : existing.systemFiles,
+    systemOrder: typeof config.systemOrder === 'number' && Number.isFinite(config.systemOrder)
+      ? config.systemOrder
+      : existing.systemOrder,
+    systemHeader: typeof config.systemHeader === 'string'
+      ? config.systemHeader
+      : existing.systemHeader,
+    systemFooter: typeof config.systemFooter === 'string'
+      ? config.systemFooter
+      : existing.systemFooter,
     files: Array.isArray(config.files)
       ? config.files.filter((item): item is string => typeof item === 'string')
       : existing.files,

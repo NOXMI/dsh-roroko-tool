@@ -27,6 +27,9 @@ importers:
       '@deepseek-ai/dsh-session':
         specifier: link:E:/DSH/deepseek-harness/packages/core/session
         version: link:../../../DSH/deepseek-harness/packages/core/session
+      '@deepseek-ai/dsh-system-prompt':
+        specifier: link:E:/DSH/deepseek-harness/packages/core/system-prompt
+        version: link:../../../DSH/deepseek-harness/packages/core/system-prompt
       '@deepseek-ai/dsh-tools':
         specifier: link:E:/DSH/deepseek-harness/packages/core/tools
         version: link:../../../DSH/deepseek-harness/packages/core/tools

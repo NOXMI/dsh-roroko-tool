@@ -19,10 +19,17 @@
  * register 与 schemastery schema 逻辑早已删除。
  */
 
-/** 预注入默认文件清单:roroko-workspace / 工作区根下的人格与纪律文件。 */
-export const RorokoPreinjectDefaultFiles = [
+/** 系统段默认文件清单:进系统提示词 section,常驻、不算消息、不被 compaction 折叠。 */
+export const RorokoPreinjectDefaultSystemFiles = [
   'AGENTS.md',
   'IDENTITY.md',
+]
+
+/** 系统段基准 order:清单里第 N 个文件(0 起)的 section order = 基准 + N。 */
+export const RorokoPreinjectDefaultSystemOrder = 100
+
+/** 消息段默认文件清单(user 消息,会话首次进入时注入一次)。 */
+export const RorokoPreinjectDefaultFiles = [
   'PLAYER.md',
   'MEMORY.md',
   'EVOLVE.md',
@@ -50,13 +57,21 @@ export const RorokoDataDefaultDbPath = '/var/www/api/database/soul.db'
  * enabled 已退役:preset 声明本插件即启用;这里只存注入参数覆盖。
  */
 export interface RorokoPreinjectState {
-  /** 会话 cwd 下待注入的文件名(注入顺序)。 */
+  /** 系统段:会话 cwd 下待注入系统提示词的文件名(注入顺序)。 */
+  systemFiles: string[]
+  /** 系统段基准 order:清单里第 N 个文件(0 起)的 section order = 基准 + N。 */
+  systemOrder: number
+  /** 系统段包裹壳:内容前插入的文本。 */
+  systemHeader: string
+  /** 系统段包裹壳:内容后插入的文本。 */
+  systemFooter: string
+  /** 消息段:会话 cwd 下待注入 user 消息的文件名(注入顺序)。 */
   files: string[]
-  /** 包裹壳:内容前插入的文本。 */
+  /** 消息段包裹壳:内容前插入的文本。 */
   header: string
-  /** 包裹壳:内容后插入的文本。 */
+  /** 消息段包裹壳:内容后插入的文本。 */
   footer: string
-  /** 是否再整体包一层 <system-reminder>…</system-reminder>。 */
+  /** 消息段是否再整体包一层 <system-reminder>…</system-reminder>。 */
   wrapInSystemReminder: boolean
 }
 
@@ -92,6 +107,10 @@ export const ROROKO_TOOL_KEYS = ['preinject', 'data', 'warn', 'mark'] as const
 /** 默认参数(空参数节即「未覆盖」;子插件回落 preset config)。 */
 export const RorokoToolStateDefault: RorokoToolState = {
   preinject: {
+    systemFiles: [...RorokoPreinjectDefaultSystemFiles],
+    systemOrder: RorokoPreinjectDefaultSystemOrder,
+    systemHeader: '',
+    systemFooter: '',
     files: [...RorokoPreinjectDefaultFiles],
     header: RorokoPreinjectDefaultHeader,
     footer: RorokoPreinjectDefaultFooter,
@@ -109,20 +128,40 @@ export function isRorokoToolKey(value: unknown): value is RorokoToolKey {
   return typeof value === 'string' && (ROROKO_TOOL_KEYS as readonly string[]).includes(value)
 }
 
+/** 窄化字符串清单:非数组回落默认,数组内只留字符串项。 */
+function normalizeFiles(value: unknown, fallback: readonly string[]): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [...fallback]
+}
+
 /** preinject 一节的窄化与默认。 */
 export function normalizePreinjectState(value: unknown): RorokoPreinjectState {
   const base = RorokoToolStateDefault.preinject
-  if (typeof value !== 'object' || value === null) return { ...base, files: [...base.files] }
+  if (typeof value !== 'object' || value === null) {
+    return {
+      ...base,
+      systemFiles: [...base.systemFiles],
+      files: [...base.files],
+    }
+  }
   const section = value as Record<string, unknown>
-  const files = Array.isArray(section.files)
-    ? section.files.filter((item): item is string => typeof item === 'string')
-    : [...base.files]
+  const systemFiles = normalizeFiles(section.systemFiles, base.systemFiles)
+  const systemOrder = typeof section.systemOrder === 'number' && Number.isFinite(section.systemOrder)
+    ? section.systemOrder
+    : base.systemOrder
+  const systemHeader = typeof section.systemHeader === 'string' ? section.systemHeader : base.systemHeader
+  const systemFooter = typeof section.systemFooter === 'string' ? section.systemFooter : base.systemFooter
+  const files = normalizeFiles(section.files, base.files)
   const header = typeof section.header === 'string' ? section.header : base.header
   const footer = typeof section.footer === 'string' ? section.footer : base.footer
   const wrapInSystemReminder = typeof section.wrapInSystemReminder === 'boolean'
     ? section.wrapInSystemReminder
     : base.wrapInSystemReminder
-  return { files, header, footer, wrapInSystemReminder }
+  return {
+    systemFiles, systemOrder, systemHeader, systemFooter,
+    files, header, footer, wrapInSystemReminder,
+  }
 }
 
 /** data 一节的窄化与默认。 */
