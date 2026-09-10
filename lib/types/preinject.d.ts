@@ -52,9 +52,24 @@ export declare const name = "roroko-preinject";
 export declare const inject: string[];
 /** 接线 config(系统段 + 消息段的 preset 声明源,state 覆盖优先)。 */
 export interface RorokoPreinjectConfig {
+    /**
+     * 接管 `deployment:persona` 槽位(带 complete,独占整个系统提示词),而非注册
+     * 独立段。默认 false —— 未配置时用独立段名,即便被既有 complete 段压掉也不冲突。
+     * 开启前必须先从 preset 删掉 `dsh-persona` 那行:同一 scope 内注册同名 section
+     * 会直接抛错,agent 装配失败。
+     */
+    personaSection?: boolean;
+    /**
+     * 系统段文本的头部引子。字面拼进 section 文本,因此会走 renderPrompt 的严格
+     * 插值 —— 可以写 `{{cwd}}` / `{{model}}` / `{{provider}}` 这类已注册宏,但写错
+     * 一个未注册名就会当场抛错打崩装配。留空则整段只有正文。
+     */
+    personaHead?: string;
+    /** 接管 persona 槽位时是否保留动态运行时上下文快照(默认保留;对应 dsh-persona 的 includeRuntimeContext)。 */
+    includeRuntimeContext?: boolean;
     /** 系统段:待注入系统提示词的文件名(注入顺序)。 */
     systemFiles?: string[];
-    /** 系统段基准 order(state 未覆盖时生效)。 */
+    /** 系统段基准 order(state 未覆盖时生效;接管 persona 槽位时固定用 DEPLOYMENT_PERSONA 的序位)。 */
     systemOrder?: number;
     /** 系统段:内容前插入的文本。 */
     systemHeader?: string;

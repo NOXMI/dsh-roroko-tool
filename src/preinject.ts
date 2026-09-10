@@ -55,6 +55,7 @@ import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { AssembleContext } from '@deepseek-ai/dsh-system-prompt'
+import { PERSONA_SECTION } from '@deepseek-ai/dsh-system-prompt'
 import { loadState, loadStateSync } from './state.js'
 import { RorokoPreinjectDefaultSystemOrder } from './settings.js'
 import type { RorokoPreinjectState, RorokoToolState } from './settings.js'
@@ -72,9 +73,24 @@ export const inject = ['systemPrompt']
 
 /** 接线 config(系统段 + 消息段的 preset 声明源,state 覆盖优先)。 */
 export interface RorokoPreinjectConfig {
+  /**
+   * 接管 `deployment:persona` 槽位(带 complete,独占整个系统提示词),而非注册
+   * 独立段。默认 false —— 未配置时用独立段名,即便被既有 complete 段压掉也不冲突。
+   * 开启前必须先从 preset 删掉 `dsh-persona` 那行:同一 scope 内注册同名 section
+   * 会直接抛错,agent 装配失败。
+   */
+  personaSection?: boolean
+  /**
+   * 系统段文本的头部引子。字面拼进 section 文本,因此会走 renderPrompt 的严格
+   * 插值 —— 可以写 `{{cwd}}` / `{{model}}` / `{{provider}}` 这类已注册宏,但写错
+   * 一个未注册名就会当场抛错打崩装配。留空则整段只有正文。
+   */
+  personaHead?: string
+  /** 接管 persona 槽位时是否保留动态运行时上下文快照(默认保留;对应 dsh-persona 的 includeRuntimeContext)。 */
+  includeRuntimeContext?: boolean
   /** 系统段:待注入系统提示词的文件名(注入顺序)。 */
   systemFiles?: string[]
-  /** 系统段基准 order(state 未覆盖时生效)。 */
+  /** 系统段基准 order(state 未覆盖时生效;接管 persona 槽位时固定用 DEPLOYMENT_PERSONA 的序位)。 */
   systemOrder?: number
   /** 系统段:内容前插入的文本。 */
   systemHeader?: string
@@ -221,22 +237,42 @@ function hasInjected(session: Session): boolean {
   return false
 }
 
+/**
+ * section 文本组装:personaHead 字面拼入(因此走 renderPrompt 的严格插值,
+ * 可写 {{cwd}} 这类已注册宏),正文则用变量宏引用(走变量承载,文件里的
+ * {{}} 不会被二次扫描)。head 为空则整段只剩正文宏。
+ */
+function buildSectionText(config: RorokoPreinjectConfig): string {
+  const head = config.personaHead?.trim() ?? ''
+  return head.length > 0 ? `${head}\n\n{{${SYSTEM_VARIABLE}}}` : `{{${SYSTEM_VARIABLE}}}`
+}
+
 export function apply(ctx: Context, config: RorokoPreinjectConfig = {}): void {
-  // ── 系统段:变量承载内容 + section 引用宏 ──
+  // ── 系统段:变量承载正文 + section 引用宏 ──
   // 变量先注册;求值发生在装配时,注册先后不影响结果,但先有值再有引用更直白。
   ctx.effect(
     () => ctx.systemPrompt.variable(SYSTEM_VARIABLE, context => systemTextProvider(config, context)),
     'roroko-preinject.variable()',
   )
-  const initialOrder = resolveSystemOrder(config, loadStateSync())
+
+  // 接管 persona 槽位时与 dsh-persona 同层同名,注册会抛错 —— 所以开启前
+  // 必须先从 preset 删掉那行。接管后带 complete,独占整个系统提示词。
+  const personaSection = config.personaSection === true
+  const order = personaSection
+    ? ctx.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA')
+    : resolveSystemOrder(config, loadStateSync())
   ctx.effect(
     () => ctx.systemPrompt.section({
-      name: SYSTEM_SECTION,
-      order: initialOrder,
-      text: `{{${SYSTEM_VARIABLE}}}`,
+      name: personaSection ? PERSONA_SECTION : SYSTEM_SECTION,
+      order,
+      text: buildSectionText(config),
+      ...personaSection ? { complete: true } : {},
     }),
     'roroko-preinject.section()',
   )
+  if (personaSection && config.includeRuntimeContext === false) {
+    ctx.systemPrompt.suppressRuntimeContext()
+  }
 
   // ── 消息段:原一次性注入逻辑 ──
   ctx.on('agent/pre-step', async ({ agent, messages }, next): Promise<PreStepDecision> => {
