@@ -27,6 +27,7 @@ import { join } from 'node:path'
 import {
   isRorokoToolKey, preinjectView, resolvePresetOverride, ROROKO_COMMON_SCOPE,
 } from './settings.js'
+import type { RorokoPreinjectState, RorokoToolState } from './settings.js'
 import {
   clearPreinjectConfig, dshHomeDirectory, loadState, setDataConfig, setMarkConfig, setPreinjectConfig,
 } from './state.js'
@@ -148,6 +149,20 @@ async function listUserPresets(): Promise<RorokoPresetRow[]> {
   return rows.sort((a, b) => a.id.localeCompare(b.id))
 }
 
+/**
+ * 响应体里的 state:补上兼容视图 preinject,与 GET 的形状完全一致。
+ *
+ * 这一步是必需的 —— client 拿 `state.preinject` 当"继承基线";POST 回执若少了
+ * 这个字段,baseline 变 undefined,面板会立刻卡回「加载中…」(2026-09-11 在
+ * 服务器上实测踩到:数据明明存对了,界面却像没保存成功)。
+ */
+function statePayload(state: RorokoToolState): RorokoToolState & { preinject: RorokoPreinjectState } {
+  return {
+    ...state,
+    preinject: preinjectView(resolvePresetOverride(state, undefined)),
+  }
+}
+
 /** 挂载 state 路由,返回卸载函数。 */
 export function registerStateRoutes(webServer: WebServerLike): () => void {
   const disposeState = webServer.register({
@@ -160,13 +175,9 @@ export function registerStateRoutes(webServer: WebServerLike): () => void {
         `origin=${request.headers.origin ?? '-'} host=${request.headers.host ?? '-'}`)
       try {
         if (request.method === 'GET') {
-          const state = await loadState()
-          // 兼容视图:第 3 步换 UI 之前,设置页读的是扁平 preinject 节。
-          // 这里给"公共桶 + 内置默认"合成的完整参数,读法与四改前一致。
-          sendJson(response, 200, {
-            ...state,
-            preinject: preinjectView(resolvePresetOverride(state, undefined)),
-          })
+          // 兼容视图(公共桶 + 内置默认)随 state 一起返回:client 读的
+          // `state.preinject` 就是它,旧设置页也照读不误。
+          sendJson(response, 200, statePayload(await loadState()))
           return
         }
         if (request.method === 'POST') {
@@ -205,13 +216,7 @@ export function registerStateRoutes(webServer: WebServerLike): () => void {
             // reset:整桶删掉,该 preset 回到 preset config / 内置默认兜底。
             if (body.reset === true) {
               const state = await clearPreinjectConfig(scope)
-              sendJson(response, 200, {
-                ok: true,
-                scope,
-                reset: true,
-                state,
-                preinject: preinjectView(resolvePresetOverride(state, undefined)),
-              })
+              sendJson(response, 200, { ok: true, scope, reset: true, state: statePayload(state) })
               return
             }
             const state = await setPreinjectConfig(scope, {
@@ -228,12 +233,7 @@ export function registerStateRoutes(webServer: WebServerLike): () => void {
               ...body.filesPlacement !== undefined ? { filesPlacement: body.filesPlacement } : {},
               ...body.splitFiles !== undefined ? { splitFiles: body.splitFiles } : {},
             })
-            sendJson(response, 200, {
-              ok: true,
-              scope,
-              state,
-              preinject: preinjectView(resolvePresetOverride(state, undefined)),
-            })
+            sendJson(response, 200, { ok: true, scope, state: statePayload(state) })
             return
           }
           // data 参数节保存:dbPath。
@@ -243,7 +243,7 @@ export function registerStateRoutes(webServer: WebServerLike): () => void {
               return
             }
             const state = await setDataConfig({ dbPath: body.dbPath })
-            sendJson(response, 200, { ok: true, state })
+            sendJson(response, 200, { ok: true, state: statePayload(state) })
             return
           }
           // mark 参数节保存:渲染展开总开关 enabled。
@@ -253,7 +253,7 @@ export function registerStateRoutes(webServer: WebServerLike): () => void {
               return
             }
             const state = await setMarkConfig({ enabled: body.enabled })
-            sendJson(response, 200, { ok: true, state })
+            sendJson(response, 200, { ok: true, state: statePayload(state) })
             return
           }
           // warn 无参数可保存。
