@@ -10,6 +10,11 @@
  * config 兜底。本文件仍提供 loadState/loadStateSync(子插件读取覆盖)与
  * setPreinjectConfig/setDataConfig(设置页写覆盖)。
  *
+ * 语义(2026-09-11 四改):preinject 覆盖层按 agent preset id 分桶
+ * (`state.presets[<id>].preinject`),未指定 preset 时写公共桶 common。
+ * 具体桶叠在公共桶之上,字段缺失即未覆盖。data / mark 仍是全局节。
+ * 旧版扁平 state 由 normalizeState 迁进 common 桶,既有配置不丢。
+ *
  * 读写全部原子化(写先落临时文件再 rename),避免并发/中断写坏文件。
  */
 
@@ -18,8 +23,8 @@ import { dirname, join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { readFile, rename, mkdir, writeFile } from 'node:fs/promises'
 import {
-  normalizeDataState, normalizeMarkState, normalizePreinjectState, normalizeState,
-  RorokoDataState, RorokoMarkState, RorokoPreinjectState, RorokoToolState,
+  normalizeDataState, normalizeMarkState, normalizeState,
+  RorokoDataState, RorokoMarkState, RorokoPreinjectOverride, RorokoToolState,
   RorokoToolStateDefault,
 } from './settings.js'
 
@@ -33,10 +38,14 @@ function runningProfile(): string {
   return 'web'
 }
 
+/** DSH 家目录($DSH_HOME,缺省 `~/.dsh`)。preinject 解析 ${dshHome} 宏时用。 */
+export function dshHomeDirectory(): string {
+  return process.env.DSH_HOME ?? join(homedir(), '.dsh')
+}
+
 /** state 文件绝对路径。 */
 export function rorokoToolStatePath(): string {
-  const home = process.env.DSH_HOME ?? join(homedir(), '.dsh')
-  return join(home, 'profiles', runningProfile(), 'roroko-tool-state.json')
+  return join(dshHomeDirectory(), 'profiles', runningProfile(), 'roroko-tool-state.json')
 }
 
 /** 读 state;文件缺失/损坏时回落到默认(不抛)。 */
@@ -73,7 +82,7 @@ export async function saveState(state: RorokoToolState): Promise<void> {
   await rename(tmp, file)
 }
 
-/** 可由 HTTP body 部分提供的 preinject 配置字段(宽松 unknown,内部收窄)。 */
+/** 可由 HTTP body 部分提供的 preinject 覆盖字段(宽松 unknown,内部收窄)。 */
 export interface RorokoPreinjectConfigInput {
   systemFiles?: unknown
   systemOrder?: unknown
@@ -82,48 +91,67 @@ export interface RorokoPreinjectConfigInput {
   files?: unknown
   header?: unknown
   footer?: unknown
-  wrapInSystemReminder?: boolean
+  wrapInSystemReminder?: unknown
+  filesPlacement?: unknown
+  splitFiles?: unknown
+}
+
+/** 从 input 收窄出合法覆盖字段:只取 body 真正提供的,非法值一律不认。 */
+function pickPreinjectOverride(config: RorokoPreinjectConfigInput): RorokoPreinjectOverride {
+  const out: RorokoPreinjectOverride = {}
+  if (Array.isArray(config.systemFiles)) {
+    out.systemFiles = config.systemFiles.filter((item): item is string => typeof item === 'string')
+  }
+  if (typeof config.systemOrder === 'number' && Number.isFinite(config.systemOrder)) {
+    out.systemOrder = config.systemOrder
+  }
+  if (typeof config.systemHeader === 'string') out.systemHeader = config.systemHeader
+  if (typeof config.systemFooter === 'string') out.systemFooter = config.systemFooter
+  if (Array.isArray(config.files)) {
+    out.files = config.files.filter((item): item is string => typeof item === 'string')
+  }
+  if (typeof config.header === 'string') out.header = config.header
+  if (typeof config.footer === 'string') out.footer = config.footer
+  if (typeof config.wrapInSystemReminder === 'boolean') {
+    out.wrapInSystemReminder = config.wrapInSystemReminder
+  }
+  if (config.filesPlacement === 'after-user' || config.filesPlacement === 'before-user') {
+    out.filesPlacement = config.filesPlacement
+  }
+  if (typeof config.splitFiles === 'boolean') out.splitFiles = config.splitFiles
+  return out
 }
 
 /**
- * 覆盖保存 preinject 参数节。body 中提供的字段(非 undefined)覆盖当前值,
- * 未提供的保留现有值(部分保存语义)。落盘后返回新状态。
+ * 覆盖保存某个 preset 的 preinject 参数节:body 提供的字段覆盖当前值,
+ * 未提供的保留(部分保存语义)。合并后为空的桶直接移除,回到 preset config
+ * 兜底(而不是把空桶留在 state 里把 config 压住)。落盘后返回新状态。
  */
 export async function setPreinjectConfig(
+  scope: string,
   config: RorokoPreinjectConfigInput,
 ): Promise<RorokoToolState> {
   const current = await loadState()
-  const existing = current.preinject
-  const merged: RorokoPreinjectState = {
-    systemFiles: Array.isArray(config.systemFiles)
-      ? config.systemFiles.filter((item): item is string => typeof item === 'string')
-      : existing.systemFiles,
-    systemOrder: typeof config.systemOrder === 'number' && Number.isFinite(config.systemOrder)
-      ? config.systemOrder
-      : existing.systemOrder,
-    systemHeader: typeof config.systemHeader === 'string'
-      ? config.systemHeader
-      : existing.systemHeader,
-    systemFooter: typeof config.systemFooter === 'string'
-      ? config.systemFooter
-      : existing.systemFooter,
-    files: Array.isArray(config.files)
-      ? config.files.filter((item): item is string => typeof item === 'string')
-      : existing.files,
-    header: typeof config.header === 'string'
-      ? config.header
-      : existing.header,
-    footer: typeof config.footer === 'string'
-      ? config.footer
-      : existing.footer,
-    wrapInSystemReminder: typeof config.wrapInSystemReminder === 'boolean'
-      ? config.wrapInSystemReminder
-      : existing.wrapInSystemReminder,
-  }
-  const next: RorokoToolState = {
-    ...current,
-    preinject: normalizePreinjectState(merged),
-  }
+  const existing: RorokoPreinjectOverride = current.presets[scope]?.preinject ?? {}
+  // pick 里不会出现 undefined 值,展开不会把既有字段冲掉。
+  const merged: RorokoPreinjectOverride = { ...existing, ...pickPreinjectOverride(config) }
+  const presets = { ...current.presets }
+  if (Object.keys(merged).length > 0) presets[scope] = { preinject: merged }
+  else delete presets[scope]
+  const next: RorokoToolState = { ...current, presets }
+  await saveState(next)
+  return next
+}
+
+/**
+ * 删除某个 preset 的 preinject 覆盖桶:该 preset 回到 preset config / 内置默认兜底。
+ * 桶本来就不存在时是 no-op(照样落盘,状态幂等)。落盘后返回新状态。
+ */
+export async function clearPreinjectConfig(scope: string): Promise<RorokoToolState> {
+  const current = await loadState()
+  const presets = { ...current.presets }
+  delete presets[scope]
+  const next: RorokoToolState = { ...current, presets }
   await saveState(next)
   return next
 }

@@ -36,11 +36,11 @@ interface RorokoToolClientContext {
   slots: SlotsService
 }
 
-/** preinject 参数 wire 形状(与 host src/settings.ts 一致,无 enabled)。 */
+/** preinject 全量参数 wire(host preinjectView 的输出:补全后的有效值)。 */
 interface PreinjectWire {
   /** 系统段:进系统提示词的文件的清单。 */
   systemFiles: string[]
-  /** 系统段基准 order(第 N 个文件 order = 基准 + N)。 */
+  /** 系统段 section order。 */
   systemOrder: number
   systemHeader: string
   systemFooter: string
@@ -49,6 +49,33 @@ interface PreinjectWire {
   header: string
   footer: string
   wrapInSystemReminder: boolean
+  /** 消息段落点:本批用户消息之后(默认)还是之前。 */
+  filesPlacement: 'after-user' | 'before-user'
+  /** 消息段是否每个文件各注入一条。 */
+  splitFiles: boolean
+}
+
+/**
+ * preinject 覆盖层 wire:字段**缺失** = 跟随继承(公共桶 → preset config →
+ * 内置默认);字段存在(含空值) = 该 preset 显式设定。设置页只发用户勾选了
+ * "覆盖"的那一组字段,所以留空的输入框不会偷偷变成"显式清空"。
+ */
+interface PreinjectOverrideWire {
+  systemFiles?: string[]
+  systemOrder?: number
+  systemHeader?: string
+  systemFooter?: string
+  files?: string[]
+  header?: string
+  footer?: string
+  wrapInSystemReminder?: boolean
+  filesPlacement?: 'after-user' | 'before-user'
+  splitFiles?: boolean
+}
+
+/** 一个 preset 的覆盖节。 */
+interface PresetOverrideWire {
+  preinject?: PreinjectOverrideWire
 }
 
 /** data 参数 wire 形状(与 host settings.ts 一致,无 enabled)。 */
@@ -58,10 +85,27 @@ interface DataWire {
 
 /** state 文件参数 wire(host 返回;warn 无参数为空节,mark 有渲染开关)。 */
 interface RorokoToolState {
+  /** 按 preset 分桶的覆盖(空对象 = 全部走继承)。 */
+  presets: Record<string, PresetOverrideWire>
+  /** 兼容视图:公共桶 + 内置默认合成的有效参数,当"继承基线"用。 */
   preinject: PreinjectWire
   data: DataWire
   warn: Record<string, never>
   mark: { enabled: boolean }
+}
+
+/** preset 列表 wire(host 扫 $DSH_HOME/.agent-presets 得到)。 */
+interface PresetRowWire {
+  id: string
+  /** preset.yml 里的展示名,取不到为空串。 */
+  name: string
+  /** composition 文件是否存在(不存在则这个 preset 挂不起来)。 */
+  composition: boolean
+}
+
+interface PresetsWire {
+  presets: PresetRowWire[]
+  commonScope: string
 }
 
 export const name = 'roroko-tool'
@@ -127,16 +171,6 @@ function PanelShell(props: { children: ReturnType<typeof h>[] }): ReturnType<typ
       padding: '10px 12px',
     },
   }, ...props.children)
-}
-
-/** 参数面板内的分组小标题:区分系统段与消息段。 */
-function GroupTitle(props: { text: string; hint: string }): ReturnType<typeof h> {
-  return h('div', { style: { marginTop: 4, marginBottom: 6 } },
-    h('div', { style: { fontWeight: 600, fontSize: '0.9em' } }, props.text),
-    h('div', {
-      style: { color: 'var(--dsw-text-secondary, #888)', fontSize: '0.82em', marginTop: 2 },
-    }, props.hint),
-  )
 }
 
 /** 文件清单编辑器:若干行文本框 + 增删。系统段与消息段共用一份。 */
@@ -229,185 +263,330 @@ function toNum(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
-/**
- * preinject 参数编辑器:系统段(system section)+ 消息段(user 消息)。
- *
- * 两段落点机制不同,参数因此不对称:系统段进系统提示词,常驻、不折叠、内容
- * 每步现读,所以只有基准 order 与 header/footer;消息段是 user 消息,注入一次
- * 落日志,所以另有 system-reminder 包裹开关。
- *
- * 所有字段都经 toList/toStr/toNum 兜底:旧版 state 没有系统段那四个字段,
- * 直接取用会得到 undefined,后续 .map/.trim 当场抛错 —— 而抛出点在 save()
- * 内、onSave() 之前,症状就是"点了保存什么也没发生,请求根本没发出去"。
- */
-function PreinjectPanel(props: {
-  config: PreinjectWire
-  busy: boolean
-  onSave: (next: PreinjectWire) => Promise<boolean>
+/** 覆盖层里有没有系统段那组字段。 */
+function hasSystemOverride(override: PreinjectOverrideWire): boolean {
+  return override.systemFiles !== undefined
+    || override.systemOrder !== undefined
+    || override.systemHeader !== undefined
+    || override.systemFooter !== undefined
+}
+
+/** 覆盖层里有没有消息段那组字段。 */
+function hasMessageOverride(override: PreinjectOverrideWire): boolean {
+  return override.files !== undefined
+    || override.header !== undefined
+    || override.footer !== undefined
+    || override.wrapInSystemReminder !== undefined
+    || override.filesPlacement !== undefined
+    || override.splitFiles !== undefined
+}
+
+/** 卡片外壳样式。 */
+const cardStyle: CssDict = {
+  border: '1px solid var(--dsw-text-secondary, #444)',
+  borderRadius: 6,
+  margin: '8px 0',
+  padding: '8px 10px',
+}
+
+/** 卡片标题按钮样式(整行可点、左对齐)。 */
+const cardHeadStyle: CssDict = {
+  alignItems: 'center',
+  background: 'none',
+  border: 'none',
+  color: 'inherit',
+  cursor: 'pointer',
+  display: 'flex',
+  fontFamily: 'inherit',
+  fontSize: '0.95em',
+  gap: 8,
+  padding: 0,
+  textAlign: 'left',
+  width: '100%',
+}
+
+/** 卡片状态徽标样式。 */
+const badgeStyle: CssDict = {
+  border: '1px solid var(--dsw-text-secondary, #666)',
+  borderRadius: 4,
+  color: 'var(--dsw-text-secondary, #888)',
+  fontSize: '0.78em',
+  padding: '1px 6px',
+}
+
+/** "覆盖这一组"复选框所在行样式。 */
+const coverLabelStyle: CssDict = {
+  alignItems: 'center',
+  cursor: 'pointer',
+  display: 'flex',
+  fontSize: '0.88em',
+  gap: 6,
+  marginTop: 8,
+}
+
+/** 可折叠卡片:标题一行,点开才渲染内容(设置页一个 preset 一张卡)。 */
+function PresetCard(props: {
+  title: string
+  hint: string
+  badge?: string
+  defaultOpen?: boolean
+  children: ReturnType<typeof h>[]
 }): ReturnType<typeof h> {
-  const { config, busy, onSave } = props
-  const [systemFiles, setSystemFiles] = useState<string[]>(() => toList(config.systemFiles))
-  const [systemOrder, setSystemOrder] = useState<number>(() => toNum(config.systemOrder, 0))
-  const [systemHeader, setSystemHeader] = useState<string>(() => toStr(config.systemHeader))
-  const [systemFooter, setSystemFooter] = useState<string>(() => toStr(config.systemFooter))
-  const [files, setFiles] = useState<string[]>(() => toList(config.files))
-  const [header, setHeader] = useState<string>(() => toStr(config.header))
-  const [footer, setFooter] = useState<string>(() => toStr(config.footer))
-  const [wrap, setWrap] = useState<boolean>(() => config.wrapInSystemReminder === true)
-  const [dirty, setDirty] = useState(false)
+  const { title, hint, badge, defaultOpen = false, children } = props
+  const [open, setOpen] = useState(defaultOpen)
+  return h('div', { style: cardStyle },
+    h('button', {
+      type: 'button',
+      style: cardHeadStyle,
+      onClick: () => { setOpen(value => !value) },
+    },
+      h('span', { style: { fontWeight: 600 } }, `${open ? '▾' : '▸'} ${title}`),
+      badge === undefined ? null : h('span', { style: badgeStyle }, badge),
+    ),
+    h('div', { style: { color: 'var(--dsw-text-secondary, #888)', fontSize: '0.82em', marginTop: 2 } }, hint),
+    open === true ? h('div', { style: { marginTop: 8 } }, ...children) : null,
+  )
+}
+
+/**
+ * 单个 preset 的注入参数编辑器(一张卡片的内容)。
+ *
+ * 两组参数各有独立"覆盖"开关,默认关闭即跟随继承:
+ *   关闭 → 该组字段一个都不发,注入时读 公共桶 → preset config → 内置默认;
+ *   打开 → 该组字段整组落盘,空清单/空串就是"显式清空"。
+ * 两组都不覆盖时保存 = 清除该 preset 的覆盖,不留空桶把 preset config 压住。
+ *
+ * 字段一律经 toList/toStr/toNum 兜底:覆盖层本身就允许缺字段,直接取用会拿到
+ * undefined,后续 .map/.trim 当场抛错,症状就是"点了保存什么也没发生"。
+ */
+function PreinjectScopePanel(props: {
+  override: PreinjectOverrideWire
+  baseline: PreinjectWire
+  busy: boolean
+  onSave: (payload: Record<string, unknown>) => Promise<boolean>
+  onReset: () => Promise<boolean>
+}): ReturnType<typeof h> {
+  const { override, baseline, busy, onSave, onReset } = props
+  const [coverSystem, setCoverSystem] = useState(() => hasSystemOverride(override))
+  const [coverMessage, setCoverMessage] = useState(() => hasMessageOverride(override))
+  const [systemFiles, setSystemFiles] = useState<string[]>(
+    () => toList(override.systemFiles ?? baseline.systemFiles),
+  )
+  const [systemOrder, setSystemOrder] = useState<number>(
+    () => toNum(override.systemOrder, baseline.systemOrder),
+  )
+  const [systemHeader, setSystemHeader] = useState<string>(
+    () => toStr(override.systemHeader ?? baseline.systemHeader),
+  )
+  const [systemFooter, setSystemFooter] = useState<string>(
+    () => toStr(override.systemFooter ?? baseline.systemFooter),
+  )
+  const [files, setFiles] = useState<string[]>(() => toList(override.files ?? baseline.files))
+  const [header, setHeader] = useState<string>(() => toStr(override.header ?? baseline.header))
+  const [footer, setFooter] = useState<string>(() => toStr(override.footer ?? baseline.footer))
+  const [wrap, setWrap] = useState<boolean>(
+    () => (override.wrapInSystemReminder ?? baseline.wrapInSystemReminder) === true,
+  )
+  const [placement, setPlacement] = useState<'after-user' | 'before-user'>(
+    () => override.filesPlacement ?? baseline.filesPlacement,
+  )
+  const [split, setSplit] = useState<boolean>(
+    () => (override.splitFiles ?? baseline.splitFiles) === true,
+  )
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
 
-  const markDirty = (): void => {
-    setDirty(true)
-    setSaved(false)
+  const save = (): void => {
     setSaveError(null)
+    setSaved(false)
+    setSaving(true)
+    const payload: Record<string, unknown> = {}
+    if (coverSystem) {
+      payload.systemFiles = cleanList(systemFiles)
+      payload.systemOrder = systemOrder
+      payload.systemHeader = systemHeader.trim()
+      payload.systemFooter = systemFooter.trim()
+    }
+    if (coverMessage) {
+      payload.files = cleanList(files)
+      payload.header = header.trim()
+      payload.footer = footer.trim()
+      payload.wrapInSystemReminder = wrap
+      payload.filesPlacement = placement
+      payload.splitFiles = split
+    }
+    console.log('[roroko-tool] save preinject scope →', payload)
+    // 两组都不覆盖 = 这个 preset 没有覆盖层,直接清桶(与"重置"同义)。
+    const action = coverSystem || coverMessage ? onSave(payload) : onReset()
+    void action
+      .then((ok: boolean) => {
+        if (ok) setSaved(true)
+        else setSaveError('服务端未接受本次写入')
+      })
+      .catch((cause: unknown) => { setSaveError(cause instanceof Error ? cause.message : String(cause)) })
+      .finally(() => { setSaving(false) })
   }
 
-  // 2026-09-11 白箱化:按钮不再被 dirty 锁死。disabled 的按钮会把点击
-  // 整个吞掉,连 JS 都不进 —— 界面既没有"已保存"也没有报错,日志里也没有
-  // 请求,根本无从自证。现在改成:按钮任何时候都能点,点了就打日志、
-  // 发请求,成功与否由服务端回答决定,失败原因就地写在按钮旁边。
-  const save = (): void => {
-    const next: PreinjectWire = {
-      systemFiles: cleanList(systemFiles),
-      systemOrder,
-      systemHeader: systemHeader.trim(),
-      systemFooter: systemFooter.trim(),
-      files: cleanList(files),
-      header: header.trim(),
-      footer: footer.trim(),
-      wrapInSystemReminder: wrap,
-    }
-    console.log('[roroko-tool] save preinject →', next)
+  const reset = (): void => {
     setSaveError(null)
+    setSaved(false)
     setSaving(true)
-    void onSave(next)
+    void onReset()
       .then((ok: boolean) => {
-        if (ok) {
-          setDirty(false)
-          setSaved(true)
-        } else {
-          setSaveError('服务端未接受本次写入(细节见下方面板错误行)')
-        }
+        if (ok) setSaved(true)
+        else setSaveError('服务端未接受本次重置')
       })
-      .catch((cause: unknown) => {
-        setSaveError(cause instanceof Error ? cause.message : String(cause))
-      })
+      .catch((cause: unknown) => { setSaveError(cause instanceof Error ? cause.message : String(cause)) })
       .finally(() => { setSaving(false) })
   }
 
   return h(PanelShell, {
     children: [
-      h('div', { style: { fontWeight: 600, marginBottom: 8, fontSize: '0.9em' } },
-        '注入参数(存 state,注入时读取)'),
-      h('div', { style: { fontSize: '0.85em', color: 'var(--dsw-text-secondary, #888)', marginBottom: 10 } },
-        '文件路径相对会话 cwd;缺失文件静默跳过。'),
-
-      h(GroupTitle, {
-        text: '系统段 — 进系统提示词',
-        hint: '常驻、不占消息位、不被压缩折叠;每次装配现读文件,改动立刻生效。',
-      }),
-      h(FileListEditor, {
-        files: systemFiles,
-        busy,
-        placeholder: '如 AGENTS.md',
-        onChange: (next: string[]) => { setSystemFiles(next); markDirty() },
-      }),
-      h('label', { style: groupLabelStyle }, '基准 order(清单里第 N 个文件 order = 基准 + N)'),
-      h('input', {
-        type: 'number',
-        value: `${systemOrder}`,
-        disabled: busy,
-        style: { ...inputStyle, maxWidth: 120 },
-        onChange: (event: { target: { value: string } }) => {
-          const parsed = Number(event.target.value)
-          setSystemOrder(Number.isFinite(parsed) ? parsed : 0)
-          markDirty()
-        },
-      }),
-      h('div', { style: hintStyle }, 'order 改动需重新挂载 preset(重开会话或重启 DSH)才生效。'),
-      h('label', { style: groupLabelStyle }, 'header(内容前插入,可留空)'),
-      h('textarea', {
-        value: systemHeader,
-        disabled: busy,
-        style: textareaStyle,
-        onChange: (event: { target: { value: string } }) => { setSystemHeader(event.target.value); markDirty() },
-      }),
-      h('label', { style: groupLabelStyle }, 'footer(内容后插入,可留空)'),
-      h('textarea', {
-        value: systemFooter,
-        disabled: busy,
-        style: textareaStyle,
-        onChange: (event: { target: { value: string } }) => { setSystemFooter(event.target.value); markDirty() },
-      }),
-
-      h(GroupTitle, {
-        text: '消息段 — 进 user 消息',
-        hint: '会话开始注入一次并落日志;被压缩折叠掉会重新注入。',
-      }),
-      h(FileListEditor, {
-        files,
-        busy,
-        placeholder: '如 PLAYER.md',
-        onChange: (next: string[]) => { setFiles(next); markDirty() },
-      }),
-      h('label', { style: groupLabelStyle }, 'header(内容前插入)'),
-      h('textarea', {
-        value: header,
-        disabled: busy,
-        placeholder: '<roroko-reminder> …',
-        style: textareaStyle,
-        onChange: (event: { target: { value: string } }) => { setHeader(event.target.value); markDirty() },
-      }),
-      h('label', { style: groupLabelStyle }, 'footer(内容后插入)'),
-      h('textarea', {
-        value: footer,
-        disabled: busy,
-        placeholder: '… </roroko-reminder>',
-        style: textareaStyle,
-        onChange: (event: { target: { value: string } }) => { setFooter(event.target.value); markDirty() },
-      }),
-      h('label', {
-        style: {
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          fontSize: '0.85em',
-          marginTop: 10,
-          color: 'var(--dsw-text-secondary, #888)',
-          cursor: 'pointer',
-        },
-      },
+      h('label', { style: coverLabelStyle },
         h('input', {
           type: 'checkbox',
-          checked: wrap,
+          checked: coverSystem,
           disabled: busy,
-          onChange: () => { setWrap(!wrap); markDirty() },
+          onChange: () => { setCoverSystem(value => !value); setSaved(false) },
         }),
-        '整体包一层 &lt;system-reminder&gt;…&lt;/system-reminder&gt;',
+        '覆盖系统段(进 system 提示词;不勾选 = 跟随继承)',
       ),
+      coverSystem
+        ? h('div', {},
+            h(FileListEditor, {
+              files: systemFiles,
+              busy,
+              placeholder: '如 AGENTS.md 或 ${presetDir}/IDENTITY.md',
+              onChange: (next: string[]) => { setSystemFiles(next); setSaved(false) },
+            }),
+            h('label', { style: groupLabelStyle }, 'section order(改动需重挂载 preset)'),
+            h('input', {
+              type: 'number',
+              value: `${systemOrder}`,
+              disabled: busy,
+              style: { ...inputStyle, maxWidth: 120 },
+              onChange: (event: { target: { value: string } }) => {
+                const parsed = Number(event.target.value)
+                setSystemOrder(Number.isFinite(parsed) ? parsed : 0)
+                setSaved(false)
+              },
+            }),
+            h('label', { style: groupLabelStyle }, 'systemHeader / systemFooter(内容前后插入)'),
+            h('textarea', {
+              value: systemHeader,
+              disabled: busy,
+              style: textareaStyle,
+              onChange: (event: { target: { value: string } }) => { setSystemHeader(event.target.value); setSaved(false) },
+            }),
+            h('textarea', {
+              value: systemFooter,
+              disabled: busy,
+              style: { ...textareaStyle, marginTop: 4 },
+              onChange: (event: { target: { value: string } }) => { setSystemFooter(event.target.value); setSaved(false) },
+            }),
+          )
+        : h('div', { style: hintStyle },
+            `跟随继承:${baseline.systemFiles.join(' / ') || '(空)'}(order ${baseline.systemOrder})`),
+
+      h('label', { style: coverLabelStyle },
+        h('input', {
+          type: 'checkbox',
+          checked: coverMessage,
+          disabled: busy,
+          onChange: () => { setCoverMessage(value => !value); setSaved(false) },
+        }),
+        '覆盖消息段(进 user 消息;不勾选 = 跟随继承)',
+      ),
+      coverMessage
+        ? h('div', {},
+            h(FileListEditor, {
+              files,
+              busy,
+              placeholder: '如 PLAYER.md 或 ${presetDir}/PLAYER.md',
+              onChange: (next: string[]) => { setFiles(next); setSaved(false) },
+            }),
+            h('label', { style: groupLabelStyle }, 'header / footer(内容前后插入)'),
+            h('textarea', {
+              value: header,
+              disabled: busy,
+              placeholder: '<roroko-reminder> …',
+              style: textareaStyle,
+              onChange: (event: { target: { value: string } }) => { setHeader(event.target.value); setSaved(false) },
+            }),
+            h('textarea', {
+              value: footer,
+              disabled: busy,
+              placeholder: '… </roroko-reminder>',
+              style: { ...textareaStyle, marginTop: 4 },
+              onChange: (event: { target: { value: string } }) => { setFooter(event.target.value); setSaved(false) },
+            }),
+            h('label', { style: coverLabelStyle },
+              h('input', {
+                type: 'checkbox',
+                checked: wrap,
+                disabled: busy,
+                onChange: () => { setWrap(value => !value); setSaved(false) },
+              }),
+              '整体包一层 <system-reminder>…</system-reminder>',
+            ),
+            h('label', { style: groupLabelStyle }, '落点(相对本批用户消息)'),
+            h('div', { style: { display: 'flex', fontSize: '0.86em', gap: 14 } },
+              ...[
+                ['after-user', '之后(默认)'],
+                ['before-user', '之前'],
+              ].map(([value, label]) => h('label', {
+                key: value,
+                style: { alignItems: 'center', cursor: 'pointer', display: 'flex', gap: 4 },
+              },
+                h('input', {
+                  type: 'radio',
+                  checked: placement === value,
+                  disabled: busy,
+                  onChange: () => {
+                    setPlacement(value as 'after-user' | 'before-user')
+                    setSaved(false)
+                  },
+                }),
+                label,
+              )),
+            ),
+            h('label', { style: coverLabelStyle },
+              h('input', {
+                type: 'checkbox',
+                checked: split,
+                disabled: busy,
+                onChange: () => { setSplit(value => !value); setSaved(false) },
+              }),
+              '每个文件各注入一条(不勾选 = 全部合并成一条)',
+            ),
+          )
+        : h('div', { style: hintStyle },
+            `跟随继承:${baseline.files.join(' / ') || '(空)'}`
+            + `(${baseline.filesPlacement === 'before-user' ? '本批之前' : '本批之后'}`
+            + `${baseline.splitFiles ? ',每文件一条' : ',合并一条'})`),
 
       h('div', {
-        style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' },
+        style: { alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 },
       },
         h('button', {
           type: 'button',
           disabled: busy || saving,
-          style: {
-            ...buttonStyle,
-            borderColor: dirty ? 'var(--dsw-text-primary, #eee)' : undefined,
-            color: dirty ? 'var(--dsw-text-primary, #eee)' : undefined,
-          },
+          style: buttonStyle,
           onClick: save,
-        }, saving ? '保存中…' : '保存注入参数'),
-        saved && !dirty
-          ? h('span', { style: { fontSize: '0.8em', color: 'var(--dsw-text-success, #46a758)' } }, '已保存')
+        }, saving ? '保存中…' : '保存'),
+        h('button', {
+          type: 'button',
+          disabled: busy || saving,
+          style: buttonStyle,
+          onClick: reset,
+        }, '重置为继承'),
+        saved
+          ? h('span', { style: { color: 'var(--dsw-text-success, #46a758)', fontSize: '0.8em' } }, '已保存')
           : null,
         saveError !== null
           ? h('span', {
-            style: { fontSize: '0.8em', color: 'var(--dsw-text-danger, #e5484d)' },
+            style: { color: 'var(--dsw-text-danger, #e5484d)', fontSize: '0.8em' },
           }, `保存失败: ${saveError}`)
           : null,
       ),
@@ -521,22 +700,44 @@ function MarkPanel(props: {
   })
 }
 
-/** 设置页内容:加载 host state,渲染各子插件参数编辑器。 */
+/** 设置页内容:按 preset 分卡片编辑注入参数,data/mark 仍是全局参数。 */
 export function RorokoToolSection(): ReturnType<typeof h> {
   const [state, setState] = useState<RorokoToolState | null>(null)
+  const [presets, setPresets] = useState<PresetRowWire[]>([])
+  const [commonScope, setCommonScope] = useState('common')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [busyTool, setBusyTool] = useState<string | null>(null)
 
   useEffect(() => {
     let live = true
-    console.log('[roroko-tool] settings section mounted, fetching state')
+    console.log('[roroko-tool] settings section mounted, fetching state + presets')
     void (async () => {
       try {
-        const response = await fetch(api('/roroko-tool/state'), { cache: 'no-store' })
-        const body = (await response.json()) as RorokoToolState
-        console.log('[roroko-tool] state loaded:', body)
-        if (live) setState(body)
+        const [stateResponse, presetsResponse] = await Promise.all([
+          fetch(api('/roroko-tool/state'), { cache: 'no-store' }),
+          fetch(api('/roroko-tool/presets'), { cache: 'no-store' }),
+        ])
+        const stateBody = (await stateResponse.json()) as RorokoToolState
+        // preset 列表拉不到(旧 host / 路由未挂)时降级为"只有公共卡片",整页照常可用。
+        let presetsBody: PresetsWire = { presets: [], commonScope: 'common' }
+        if (presetsResponse.ok) {
+          const raw = (await presetsResponse.json()) as Partial<PresetsWire>
+          presetsBody = {
+            presets: Array.isArray(raw.presets) ? raw.presets : [],
+            commonScope: typeof raw.commonScope === 'string' && raw.commonScope.length > 0
+              ? raw.commonScope
+              : 'common',
+          }
+        } else {
+          console.log('[roroko-tool] presets route unavailable, HTTP', presetsResponse.status)
+        }
+        console.log('[roroko-tool] state loaded:', stateBody)
+        console.log('[roroko-tool] presets loaded:', presetsBody)
+        if (!live) return
+        setState(stateBody)
+        setPresets(presetsBody.presets)
+        setCommonScope(presetsBody.commonScope)
       } catch (cause) {
         if (live) setError(cause instanceof Error ? cause.message : String(cause))
       }
@@ -544,33 +745,26 @@ export function RorokoToolSection(): ReturnType<typeof h> {
     return () => { live = false }
   }, [])
 
-  // 2026-09-11:这三个 save 原先开头是 `if (busy) return` —— 一旦 busy 被别的
-  // 保存卡住,点击就被静默吞掉:面板照样亮"已保存",日志里却没有请求。
-  // 现在一律返回 Promise<boolean>,不发请求或失败都必须让调用方知道。
-  const savePreinject = async (next: PreinjectWire): Promise<boolean> => {
+  // 统一写入口:任何失败都必须让调用方知道(旧版 `if (busy) return` 会把点击
+  // 静默吞掉,面板照样亮"已保存"而日志里没有请求)。成功后用服务端回执覆盖界面。
+  const post = async (
+    tool: string,
+    payload: Record<string, unknown>,
+    label: string,
+  ): Promise<boolean> => {
     setBusy(true)
-    setBusyTool('preinject')
+    setBusyTool(label)
     setError(null)
     try {
       const response = await fetch(api('/roroko-tool/state'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          tool: 'preinject',
-          systemFiles: next.systemFiles,
-          systemOrder: next.systemOrder,
-          systemHeader: next.systemHeader,
-          systemFooter: next.systemFooter,
-          files: next.files,
-          header: next.header,
-          footer: next.footer,
-          wrapInSystemReminder: next.wrapInSystemReminder,
-        }),
+        body: JSON.stringify({ tool, ...payload }),
       })
       const body = (await response.json()) as { ok?: boolean; error?: string; state?: RorokoToolState }
       if (!response.ok || body.ok !== true || body.state === undefined) {
-        const message = body.error ?? `failed to save preinject config (HTTP ${response.status})`
-        console.log('[roroko-tool] save preinject rejected:', message)
+        const message = body.error ?? `failed to save ${label} (HTTP ${response.status})`
+        console.log('[roroko-tool] save rejected:', label, message)
         setError(message)
         return false
       }
@@ -578,40 +772,7 @@ export function RorokoToolSection(): ReturnType<typeof h> {
       return true
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause)
-      console.log('[roroko-tool] save preinject threw:', message)
-      setError(message)
-      return false
-    } finally {
-      setBusy(false)
-      setBusyTool(null)
-    }
-  }
-
-  const saveData = async (next: DataWire): Promise<boolean> => {
-    setBusy(true)
-    setBusyTool('data')
-    setError(null)
-    try {
-      const response = await fetch(api('/roroko-tool/state'), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          tool: 'data',
-          dbPath: next.dbPath,
-        }),
-      })
-      const body = (await response.json()) as { ok?: boolean; error?: string; state?: RorokoToolState }
-      if (!response.ok || body.ok !== true || body.state === undefined) {
-        const message = body.error ?? `failed to save data config (HTTP ${response.status})`
-        console.log('[roroko-tool] save data rejected:', message)
-        setError(message)
-        return false
-      }
-      setState(body.state)
-      return true
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause)
-      console.log('[roroko-tool] save data threw:', message)
+      console.log('[roroko-tool] save threw:', label, message)
       setError(message)
       return false
     } finally {
@@ -644,6 +805,50 @@ export function RorokoToolSection(): ReturnType<typeof h> {
     }
   }
 
+  const baseline = state?.preinject
+  const scopeCards: ReturnType<typeof h>[] = []
+  if (state !== null && baseline !== undefined) {
+    // 公共层:不指定 preset 时生效,也是每个 preset 没覆盖时的兜底。
+    scopeCards.push(h(PresetCard, {
+      key: `scope-${commonScope}`,
+      title: `公共默认(${commonScope})`,
+      hint: '没写 preset、或某个 preset 没覆盖时生效的那一层。',
+      badge: state.presets[commonScope]?.preinject === undefined ? '跟随 config' : '已覆盖',
+      defaultOpen: true,
+      children: [h(PreinjectScopePanel, {
+        override: state.presets[commonScope]?.preinject ?? {},
+        baseline,
+        busy: busy && busyTool === `preinject:${commonScope}`,
+        onSave: (payload: Record<string, unknown>) =>
+          post('preinject', { preset: commonScope, ...payload }, `preinject:${commonScope}`),
+        onReset: () => post('preinject', { preset: commonScope, reset: true }, `preinject:${commonScope}`),
+      })],
+    }))
+
+    // 每个 preset 一张卡:覆盖层叠在公共层之上,字段缺省即跟随继承。
+    for (const preset of presets) {
+      const override = state.presets[preset.id]?.preinject
+      const badge = preset.composition !== true
+        ? '缺 agent.cordis.yml'
+        : override === undefined ? '跟随继承' : '已覆盖'
+      scopeCards.push(h(PresetCard, {
+        key: `scope-${preset.id}`,
+        title: preset.name.length > 0 ? `${preset.id} · ${preset.name}` : preset.id,
+        hint: `session.header.agentPreset === '${preset.id}' 的会话注入这一层。`,
+        badge,
+        defaultOpen: false,
+        children: [h(PreinjectScopePanel, {
+          override: override ?? {},
+          baseline,
+          busy: busy && busyTool === `preinject:${preset.id}`,
+          onSave: (payload: Record<string, unknown>) =>
+            post('preinject', { preset: preset.id, ...payload }, `preinject:${preset.id}`),
+          onReset: () => post('preinject', { preset: preset.id, reset: true }, `preinject:${preset.id}`),
+        })],
+      }))
+    }
+  }
+
   return h('div', { style: { padding: '6px 0' } },
     h('div', {
       style: {
@@ -652,21 +857,20 @@ export function RorokoToolSection(): ReturnType<typeof h> {
         marginBottom: 12,
       },
     }, '洛洛可全家桶插件参数 — 功能由 agent preset 声明启用,这里只调参数;状态存服务器 profile。'),
-    state === null
+    state === null || baseline === undefined
       ? h('div', { style: { color: 'var(--dsw-text-secondary, #888)', fontSize: '0.9em' } },
           error === null ? '加载中…' : `加载失败: ${error}`)
       : h('div', {},
-          h(ToolHeader, { title: '指令预注入 (roroko-preinject)', desc: '系统段进系统提示词(常驻),消息段进 user 消息(会话一次);preset 声明即启用。' }),
-          h(PreinjectPanel, {
-            config: state.preinject,
-            busy: busy && busyTool === 'preinject',
-            onSave: (next: PreinjectWire) => savePreinject(next),
+          h(ToolHeader, {
+            title: '指令预注入 (roroko-preinject)',
+            desc: '系统段进 system 提示词(常驻不折叠),消息段进 user 消息(会话一次);注入文件与落点按 preset 一卡一层。',
           }),
+          ...scopeCards,
           h(ToolHeader, { title: '素材库工具 (roroko-data)', desc: '洛洛可素材库查询/注册 + soul_state 读写;preset 声明即启用。' }),
           h(DataPanel, {
             config: state.data,
             busy: busy && busyTool === 'data',
-            onSave: (next: DataWire) => saveData(next),
+            onSave: (next: DataWire) => post('data', { dbPath: next.dbPath }, 'data'),
           }),
           h(ToolHeader, { title: '呻吟标记渲染 (roroko-mark)', desc: '-呻吟_X- 标记在 web / Telegram 显示层展开;preset 声明即启用。' }),
           h(MarkPanel, {

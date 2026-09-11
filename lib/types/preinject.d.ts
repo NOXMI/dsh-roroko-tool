@@ -43,10 +43,13 @@
  * 找带本插件 source 签名的 user/message,有则说明已注入过。实测:同一会话
  * 连续多 turn + 进程重启恢复后均不再重复注入。
  *
- * 参数两层:preset 接线 `config` 兜底,host state 文件 preinject 节覆盖优先
- * (设置页编辑)。参数只影响注入内容,不改工具目录,不破坏 request-cache。
+ * 参数三层(2026-09-11 四改):内置默认 ← preset 接线 `config` ← host state
+ * 覆盖。覆盖层按会话的 agent preset id 取桶(state.presets[<id>]),具体桶叠在
+ * 公共桶(common)之上;只有字段「缺失」才算未覆盖,空清单/空串都是显式设定。
+ * 参数只影响注入内容,不改工具目录,不破坏 request-cache。
  */
 import type { Context } from '@deepseek-ai/cordis';
+import type { RorokoFilesPlacement } from './settings.js';
 export declare const name = "roroko-preinject";
 /** 系统提示词注册表必须就绪,才能注册 section 与变量。 */
 export declare const inject: string[];
@@ -83,5 +86,35 @@ export interface RorokoPreinjectConfig {
     header?: string;
     /** 消息段:内容后插入的文本。 */
     footer?: string;
+    /**
+     * 消息段落点:本批用户消息之后(默认,与官方 agent-instructions 同位)还是之前。
+     * 想要"进 system 提示词"就把文件写进 `systemFiles` —— 那是另一条清单。
+     */
+    filesPlacement?: RorokoFilesPlacement;
+    /** 消息段是否每个文件各注入一条(默认 false = 全部合并成一条)。 */
+    splitFiles?: boolean;
 }
+/**
+ * 解析单条注入路径;返回 undefined 表示这条跳过(空串,或宏拿不到值)。
+ *
+ * 支持写法:
+ *   ${presetDir}/IDENTITY.md  → <dshHome>/.agent-presets/<会话 preset id>/
+ *   ${dshHome}/roroko/X.md    → $DSH_HOME(缺省 ~/.dsh)
+ *   ~/shared/X.md             → 用户主目录
+ *   其他相对路径               → 相对会话 cwd(与旧行为一致)
+ *   绝对路径                   → path.resolve 原样返回(天然支持)
+ *
+ * 限制:${presetDir} 用的是推导路径 —— 官方 shipped root 或自定义 root 下的
+ * preset 不在此列,那类 preset 请直接写绝对路径。
+ */
+export declare function resolveInjectionPath(raw: string, cwd: string, presetId: string | undefined): string | undefined;
+/**
+ * 计算注入位置:紧跟本插件"认领"的那批用户消息之后(默认,与官方
+ * agent-instructions 同位),或之前。
+ *
+ * claimedIndex<0(本步没有认领到任何用户消息)时一律落到数组开头 —— 此刻
+ * "之后"没有可依附的对象,而且 toSpliced 收负数会从尾部倒数,不夹住就会把
+ * 注入插到消息流中间。
+ */
+export declare function injectionIndex(claimedIndex: number, placement: RorokoFilesPlacement): number;
 export declare function apply(ctx: Context, config?: RorokoPreinjectConfig): void;
