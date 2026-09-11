@@ -1108,9 +1108,22 @@ window.__ModuleLoader__.load({
 			minHeight: 56,
 			resize: "vertical"
 		};
-		/** 清单落盘前清洗:去首尾空白、去空行、去重。 */
+		/** 清单落盘前清洗:去首尾空白、去空行、去重。非数组一律当空单,不抛。 */
 		function cleanList(list) {
-			return list.map((item) => item.trim()).filter((item) => item.length > 0).filter((item, index, self) => self.indexOf(item) === index);
+			if (!Array.isArray(list)) return [];
+			return list.filter((item) => typeof item === "string").map((item) => item.trim()).filter((item) => item.length > 0).filter((item, index, self) => self.indexOf(item) === index);
+		}
+		/** 列表字段兜底:非数组当空单(host 首启或旧版 state 可能缺字段)。 */
+		function toList(value) {
+			return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+		}
+		/** 字符串字段兜底:非字符串当空串。 */
+		function toStr(value) {
+			return typeof value === "string" ? value : "";
+		}
+		/** 数值字段兜底:非有限数当兜底值。 */
+		function toNum(value, fallback) {
+			return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 		}
 		/**
 		* preinject 参数编辑器:系统段(system section)+ 消息段(user 消息)。
@@ -1118,36 +1131,47 @@ window.__ModuleLoader__.load({
 		* 两段落点机制不同,参数因此不对称:系统段进系统提示词,常驻、不折叠、内容
 		* 每步现读,所以只有基准 order 与 header/footer;消息段是 user 消息,注入一次
 		* 落日志,所以另有 system-reminder 包裹开关。
+		*
+		* 所有字段都经 toList/toStr/toNum 兜底:旧版 state 没有系统段那四个字段,
+		* 直接取用会得到 undefined,后续 .map/.trim 当场抛错 —— 而抛出点在 save()
+		* 内、onSave() 之前,症状就是"点了保存什么也没发生,请求根本没发出去"。
 		*/
 		function PreinjectPanel(props) {
 			const { config, busy, onSave } = props;
-			const [systemFiles, setSystemFiles] = (0, react.useState)(config.systemFiles);
-			const [systemOrder, setSystemOrder] = (0, react.useState)(config.systemOrder);
-			const [systemHeader, setSystemHeader] = (0, react.useState)(config.systemHeader);
-			const [systemFooter, setSystemFooter] = (0, react.useState)(config.systemFooter);
-			const [files, setFiles] = (0, react.useState)(config.files);
-			const [header, setHeader] = (0, react.useState)(config.header);
-			const [footer, setFooter] = (0, react.useState)(config.footer);
-			const [wrap, setWrap] = (0, react.useState)(config.wrapInSystemReminder);
+			const [systemFiles, setSystemFiles] = (0, react.useState)(() => toList(config.systemFiles));
+			const [systemOrder, setSystemOrder] = (0, react.useState)(() => toNum(config.systemOrder, 0));
+			const [systemHeader, setSystemHeader] = (0, react.useState)(() => toStr(config.systemHeader));
+			const [systemFooter, setSystemFooter] = (0, react.useState)(() => toStr(config.systemFooter));
+			const [files, setFiles] = (0, react.useState)(() => toList(config.files));
+			const [header, setHeader] = (0, react.useState)(() => toStr(config.header));
+			const [footer, setFooter] = (0, react.useState)(() => toStr(config.footer));
+			const [wrap, setWrap] = (0, react.useState)(() => config.wrapInSystemReminder === true);
 			const [dirty, setDirty] = (0, react.useState)(false);
 			const [saved, setSaved] = (0, react.useState)(false);
+			const [saveError, setSaveError] = (0, react.useState)(null);
 			const markDirty = () => {
 				setDirty(true);
 				setSaved(false);
+				setSaveError(null);
 			};
 			const save = () => {
-				onSave({
-					systemFiles: cleanList(systemFiles),
-					systemOrder,
-					systemHeader: systemHeader.trim(),
-					systemFooter: systemFooter.trim(),
-					files: cleanList(files),
-					header: header.trim(),
-					footer: footer.trim(),
-					wrapInSystemReminder: wrap
-				});
-				setDirty(false);
-				setSaved(true);
+				try {
+					onSave({
+						systemFiles: cleanList(systemFiles),
+						systemOrder,
+						systemHeader: systemHeader.trim(),
+						systemFooter: systemFooter.trim(),
+						files: cleanList(files),
+						header: header.trim(),
+						footer: footer.trim(),
+						wrapInSystemReminder: wrap
+					});
+					setSaveError(null);
+					setDirty(false);
+					setSaved(true);
+				} catch (cause) {
+					setSaveError(cause instanceof Error ? cause.message : String(cause));
+				}
 			};
 			return (0, react.createElement)(PanelShell, { children: [
 				(0, react.createElement)("div", { style: {
