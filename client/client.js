@@ -1148,6 +1148,7 @@ window.__ModuleLoader__.load({
 			const [wrap, setWrap] = (0, react.useState)(() => config.wrapInSystemReminder === true);
 			const [dirty, setDirty] = (0, react.useState)(false);
 			const [saved, setSaved] = (0, react.useState)(false);
+			const [saving, setSaving] = (0, react.useState)(false);
 			const [saveError, setSaveError] = (0, react.useState)(null);
 			const markDirty = () => {
 				setDirty(true);
@@ -1155,23 +1156,29 @@ window.__ModuleLoader__.load({
 				setSaveError(null);
 			};
 			const save = () => {
-				try {
-					onSave({
-						systemFiles: cleanList(systemFiles),
-						systemOrder,
-						systemHeader: systemHeader.trim(),
-						systemFooter: systemFooter.trim(),
-						files: cleanList(files),
-						header: header.trim(),
-						footer: footer.trim(),
-						wrapInSystemReminder: wrap
-					});
-					setSaveError(null);
-					setDirty(false);
-					setSaved(true);
-				} catch (cause) {
+				const next = {
+					systemFiles: cleanList(systemFiles),
+					systemOrder,
+					systemHeader: systemHeader.trim(),
+					systemFooter: systemFooter.trim(),
+					files: cleanList(files),
+					header: header.trim(),
+					footer: footer.trim(),
+					wrapInSystemReminder: wrap
+				};
+				console.log("[roroko-tool] save preinject →", next);
+				setSaveError(null);
+				setSaving(true);
+				onSave(next).then((ok) => {
+					if (ok) {
+						setDirty(false);
+						setSaved(true);
+					} else setSaveError("服务端未接受本次写入(细节见下方面板错误行)");
+				}).catch((cause) => {
 					setSaveError(cause instanceof Error ? cause.message : String(cause));
-				}
+				}).finally(() => {
+					setSaving(false);
+				});
 			};
 			return (0, react.createElement)(PanelShell, { children: [
 				(0, react.createElement)("div", { style: {
@@ -1289,32 +1296,49 @@ window.__ModuleLoader__.load({
 					display: "flex",
 					gap: 8,
 					alignItems: "center",
-					marginTop: 10
+					marginTop: 10,
+					flexWrap: "wrap"
 				} }, (0, react.createElement)("button", {
 					type: "button",
-					disabled: busy || !dirty,
+					disabled: busy || saving,
 					style: {
 						...buttonStyle,
 						borderColor: dirty ? "var(--dsw-text-primary, #eee)" : void 0,
 						color: dirty ? "var(--dsw-text-primary, #eee)" : void 0
 					},
 					onClick: save
-				}, "保存注入参数"), saved && !dirty ? (0, react.createElement)("span", { style: {
+				}, saving ? "保存中…" : "保存注入参数"), saved && !dirty ? (0, react.createElement)("span", { style: {
 					fontSize: "0.8em",
 					color: "var(--dsw-text-success, #46a758)"
-				} }, "已保存") : null)
+				} }, "已保存") : null, saveError !== null ? (0, react.createElement)("span", { style: {
+					fontSize: "0.8em",
+					color: "var(--dsw-text-danger, #e5484d)"
+				} }, `保存失败: ${saveError}`) : null)
 			] });
 		}
 		/** data 参数面板:数据库路径编辑。 */
 		function DataPanel(props) {
 			const { config, busy, onSave } = props;
-			const [dbPath, setDbPath] = (0, react.useState)(config.dbPath);
+			const [dbPath, setDbPath] = (0, react.useState)(() => toStr(config.dbPath));
 			const [dirty, setDirty] = (0, react.useState)(false);
 			const [saved, setSaved] = (0, react.useState)(false);
+			const [saving, setSaving] = (0, react.useState)(false);
+			const [saveError, setSaveError] = (0, react.useState)(null);
 			const save = () => {
-				onSave({ dbPath: dbPath.trim() });
-				setDirty(false);
-				setSaved(true);
+				const next = { dbPath: dbPath.trim() };
+				console.log("[roroko-tool] save data →", next);
+				setSaveError(null);
+				setSaving(true);
+				onSave(next).then((ok) => {
+					if (ok) {
+						setDirty(false);
+						setSaved(true);
+					} else setSaveError("服务端未接受本次写入(细节见下方面板错误行)");
+				}).catch((cause) => {
+					setSaveError(cause instanceof Error ? cause.message : String(cause));
+				}).finally(() => {
+					setSaving(false);
+				});
 			};
 			return (0, react.createElement)(PanelShell, { children: [
 				(0, react.createElement)("div", { style: {
@@ -1343,20 +1367,24 @@ window.__ModuleLoader__.load({
 					display: "flex",
 					gap: 8,
 					alignItems: "center",
-					marginTop: 10
+					marginTop: 10,
+					flexWrap: "wrap"
 				} }, (0, react.createElement)("button", {
 					type: "button",
-					disabled: busy || !dirty,
+					disabled: busy || saving,
 					style: {
 						...buttonStyle,
 						borderColor: dirty ? "var(--dsw-text-primary, #eee)" : void 0,
 						color: dirty ? "var(--dsw-text-primary, #eee)" : void 0
 					},
 					onClick: save
-				}, "保存路径"), saved && !dirty ? (0, react.createElement)("span", { style: {
+				}, saving ? "保存中…" : "保存路径"), saved && !dirty ? (0, react.createElement)("span", { style: {
 					fontSize: "0.8em",
 					color: "var(--dsw-text-success, #46a758)"
-				} }, "已保存") : null)
+				} }, "已保存") : null, saveError !== null ? (0, react.createElement)("span", { style: {
+					fontSize: "0.8em",
+					color: "var(--dsw-text-danger, #e5484d)"
+				} }, `保存失败: ${saveError}`) : null)
 			] });
 		}
 		/** mark 渲染开关面板:展开总开关(web 渲染 / Telegram 出站共用)。 */
@@ -1397,9 +1425,11 @@ window.__ModuleLoader__.load({
 			const [busyTool, setBusyTool] = (0, react.useState)(null);
 			(0, react.useEffect)(() => {
 				let live = true;
+				console.log("[roroko-tool] settings section mounted, fetching state");
 				(async () => {
 					try {
 						const body = await (await fetch(api("/roroko-tool/state"), { cache: "no-store" })).json();
+						console.log("[roroko-tool] state loaded:", body);
 						if (live) setState(body);
 					} catch (cause) {
 						if (live) setError(cause instanceof Error ? cause.message : String(cause));
@@ -1410,7 +1440,6 @@ window.__ModuleLoader__.load({
 				};
 			}, []);
 			const savePreinject = async (next) => {
-				if (busy) return;
 				setBusy(true);
 				setBusyTool("preinject");
 				setError(null);
@@ -1432,19 +1461,24 @@ window.__ModuleLoader__.load({
 					});
 					const body = await response.json();
 					if (!response.ok || body.ok !== true || body.state === void 0) {
-						setError(body.error ?? `failed to save preinject config (HTTP ${response.status})`);
-						return;
+						const message = body.error ?? `failed to save preinject config (HTTP ${response.status})`;
+						console.log("[roroko-tool] save preinject rejected:", message);
+						setError(message);
+						return false;
 					}
 					setState(body.state);
+					return true;
 				} catch (cause) {
-					setError(cause instanceof Error ? cause.message : String(cause));
+					const message = cause instanceof Error ? cause.message : String(cause);
+					console.log("[roroko-tool] save preinject threw:", message);
+					setError(message);
+					return false;
 				} finally {
 					setBusy(false);
 					setBusyTool(null);
 				}
 			};
 			const saveData = async (next) => {
-				if (busy) return;
 				setBusy(true);
 				setBusyTool("data");
 				setError(null);
@@ -1459,31 +1493,41 @@ window.__ModuleLoader__.load({
 					});
 					const body = await response.json();
 					if (!response.ok || body.ok !== true || body.state === void 0) {
-						setError(body.error ?? `failed to save data config (HTTP ${response.status})`);
-						return;
+						const message = body.error ?? `failed to save data config (HTTP ${response.status})`;
+						console.log("[roroko-tool] save data rejected:", message);
+						setError(message);
+						return false;
 					}
 					setState(body.state);
+					return true;
 				} catch (cause) {
-					setError(cause instanceof Error ? cause.message : String(cause));
+					const message = cause instanceof Error ? cause.message : String(cause);
+					console.log("[roroko-tool] save data threw:", message);
+					setError(message);
+					return false;
 				} finally {
 					setBusy(false);
 					setBusyTool(null);
 				}
 			};
 			const saveMark = async (enabled) => {
-				if (busy) return;
 				setBusy(true);
 				setBusyTool("mark");
 				setError(null);
 				try {
 					const next = await setRorokoMarkEnabled(enabled);
 					if (next === null) {
+						console.log("[roroko-tool] save mark rejected");
 						setError("failed to save mark config");
-						return;
+						return false;
 					}
 					setState(next);
+					return true;
 				} catch (cause) {
-					setError(cause instanceof Error ? cause.message : String(cause));
+					const message = cause instanceof Error ? cause.message : String(cause);
+					console.log("[roroko-tool] save mark threw:", message);
+					setError(message);
+					return false;
 				} finally {
 					setBusy(false);
 					setBusyTool(null);
@@ -1502,18 +1546,14 @@ window.__ModuleLoader__.load({
 			}), (0, react.createElement)(PreinjectPanel, {
 				config: state.preinject,
 				busy: busy && busyTool === "preinject",
-				onSave: (next) => {
-					savePreinject(next);
-				}
+				onSave: (next) => savePreinject(next)
 			}), (0, react.createElement)(ToolHeader, {
 				title: "素材库工具 (roroko-data)",
 				desc: "洛洛可素材库查询/注册 + soul_state 读写;preset 声明即启用。"
 			}), (0, react.createElement)(DataPanel, {
 				config: state.data,
 				busy: busy && busyTool === "data",
-				onSave: (next) => {
-					saveData(next);
-				}
+				onSave: (next) => saveData(next)
 			}), (0, react.createElement)(ToolHeader, {
 				title: "呻吟标记渲染 (roroko-mark)",
 				desc: "-呻吟_X- 标记在 web / Telegram 显示层展开;preset 声明即启用。"

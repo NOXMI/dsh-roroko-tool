@@ -243,7 +243,7 @@ function toNum(value: unknown, fallback: number): number {
 function PreinjectPanel(props: {
   config: PreinjectWire
   busy: boolean
-  onSave: (next: PreinjectWire) => void
+  onSave: (next: PreinjectWire) => Promise<boolean>
 }): ReturnType<typeof h> {
   const { config, busy, onSave } = props
   const [systemFiles, setSystemFiles] = useState<string[]>(() => toList(config.systemFiles))
@@ -256,6 +256,7 @@ function PreinjectPanel(props: {
   const [wrap, setWrap] = useState<boolean>(() => config.wrapInSystemReminder === true)
   const [dirty, setDirty] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
 
   const markDirty = (): void => {
@@ -264,25 +265,37 @@ function PreinjectPanel(props: {
     setSaveError(null)
   }
 
+  // 2026-09-11 白箱化:按钮不再被 dirty 锁死。disabled 的按钮会把点击
+  // 整个吞掉,连 JS 都不进 —— 界面既没有"已保存"也没有报错,日志里也没有
+  // 请求,根本无从自证。现在改成:按钮任何时候都能点,点了就打日志、
+  // 发请求,成功与否由服务端回答决定,失败原因就地写在按钮旁边。
   const save = (): void => {
-    try {
-      onSave({
-        systemFiles: cleanList(systemFiles),
-        systemOrder,
-        systemHeader: systemHeader.trim(),
-        systemFooter: systemFooter.trim(),
-        files: cleanList(files),
-        header: header.trim(),
-        footer: footer.trim(),
-        wrapInSystemReminder: wrap,
-      })
-      setSaveError(null)
-      setDirty(false)
-      setSaved(true)
-    } catch (cause) {
-      // 这里抛错过去会静默冒泡到 React 边界,界面上什么都看不见。
-      setSaveError(cause instanceof Error ? cause.message : String(cause))
+    const next: PreinjectWire = {
+      systemFiles: cleanList(systemFiles),
+      systemOrder,
+      systemHeader: systemHeader.trim(),
+      systemFooter: systemFooter.trim(),
+      files: cleanList(files),
+      header: header.trim(),
+      footer: footer.trim(),
+      wrapInSystemReminder: wrap,
     }
+    console.log('[roroko-tool] save preinject →', next)
+    setSaveError(null)
+    setSaving(true)
+    void onSave(next)
+      .then((ok: boolean) => {
+        if (ok) {
+          setDirty(false)
+          setSaved(true)
+        } else {
+          setSaveError('服务端未接受本次写入(细节见下方面板错误行)')
+        }
+      })
+      .catch((cause: unknown) => {
+        setSaveError(cause instanceof Error ? cause.message : String(cause))
+      })
+      .finally(() => { setSaving(false) })
   }
 
   return h(PanelShell, {
@@ -376,19 +389,26 @@ function PreinjectPanel(props: {
         '整体包一层 &lt;system-reminder&gt;…&lt;/system-reminder&gt;',
       ),
 
-      h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 10 } },
+      h('div', {
+        style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' },
+      },
         h('button', {
           type: 'button',
-          disabled: busy || !dirty,
+          disabled: busy || saving,
           style: {
             ...buttonStyle,
             borderColor: dirty ? 'var(--dsw-text-primary, #eee)' : undefined,
             color: dirty ? 'var(--dsw-text-primary, #eee)' : undefined,
           },
           onClick: save,
-        }, '保存注入参数'),
+        }, saving ? '保存中…' : '保存注入参数'),
         saved && !dirty
           ? h('span', { style: { fontSize: '0.8em', color: 'var(--dsw-text-success, #46a758)' } }, '已保存')
+          : null,
+        saveError !== null
+          ? h('span', {
+            style: { fontSize: '0.8em', color: 'var(--dsw-text-danger, #e5484d)' },
+          }, `保存失败: ${saveError}`)
           : null,
       ),
     ],
@@ -399,17 +419,33 @@ function PreinjectPanel(props: {
 function DataPanel(props: {
   config: DataWire
   busy: boolean
-  onSave: (next: DataWire) => void
+  onSave: (next: DataWire) => Promise<boolean>
 }): ReturnType<typeof h> {
   const { config, busy, onSave } = props
-  const [dbPath, setDbPath] = useState(config.dbPath)
+  const [dbPath, setDbPath] = useState<string>(() => toStr(config.dbPath))
   const [dirty, setDirty] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   const save = (): void => {
-    onSave({ dbPath: dbPath.trim() })
-    setDirty(false)
-    setSaved(true)
+    const next: DataWire = { dbPath: dbPath.trim() }
+    console.log('[roroko-tool] save data →', next)
+    setSaveError(null)
+    setSaving(true)
+    void onSave(next)
+      .then((ok: boolean) => {
+        if (ok) {
+          setDirty(false)
+          setSaved(true)
+        } else {
+          setSaveError('服务端未接受本次写入(细节见下方面板错误行)')
+        }
+      })
+      .catch((cause: unknown) => {
+        setSaveError(cause instanceof Error ? cause.message : String(cause))
+      })
+      .finally(() => { setSaving(false) })
   }
 
   return h(PanelShell, {
@@ -426,19 +462,26 @@ function DataPanel(props: {
         style: inputStyle,
         onChange: (event: { target: { value: string } }) => { setDbPath(event.target.value); setDirty(true); setSaved(false) },
       }),
-      h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 10 } },
+      h('div', {
+        style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' },
+      },
         h('button', {
           type: 'button',
-          disabled: busy || !dirty,
+          disabled: busy || saving,
           style: {
             ...buttonStyle,
             borderColor: dirty ? 'var(--dsw-text-primary, #eee)' : undefined,
             color: dirty ? 'var(--dsw-text-primary, #eee)' : undefined,
           },
           onClick: save,
-        }, '保存路径'),
+        }, saving ? '保存中…' : '保存路径'),
         saved && !dirty
           ? h('span', { style: { fontSize: '0.8em', color: 'var(--dsw-text-success, #46a758)' } }, '已保存')
+          : null,
+        saveError !== null
+          ? h('span', {
+            style: { fontSize: '0.8em', color: 'var(--dsw-text-danger, #e5484d)' },
+          }, `保存失败: ${saveError}`)
           : null,
       ),
     ],
@@ -487,10 +530,12 @@ export function RorokoToolSection(): ReturnType<typeof h> {
 
   useEffect(() => {
     let live = true
+    console.log('[roroko-tool] settings section mounted, fetching state')
     void (async () => {
       try {
         const response = await fetch(api('/roroko-tool/state'), { cache: 'no-store' })
         const body = (await response.json()) as RorokoToolState
+        console.log('[roroko-tool] state loaded:', body)
         if (live) setState(body)
       } catch (cause) {
         if (live) setError(cause instanceof Error ? cause.message : String(cause))
@@ -499,8 +544,10 @@ export function RorokoToolSection(): ReturnType<typeof h> {
     return () => { live = false }
   }, [])
 
-  const savePreinject = async (next: PreinjectWire): Promise<void> => {
-    if (busy) return
+  // 2026-09-11:这三个 save 原先开头是 `if (busy) return` —— 一旦 busy 被别的
+  // 保存卡住,点击就被静默吞掉:面板照样亮"已保存",日志里却没有请求。
+  // 现在一律返回 Promise<boolean>,不发请求或失败都必须让调用方知道。
+  const savePreinject = async (next: PreinjectWire): Promise<boolean> => {
     setBusy(true)
     setBusyTool('preinject')
     setError(null)
@@ -522,20 +569,25 @@ export function RorokoToolSection(): ReturnType<typeof h> {
       })
       const body = (await response.json()) as { ok?: boolean; error?: string; state?: RorokoToolState }
       if (!response.ok || body.ok !== true || body.state === undefined) {
-        setError(body.error ?? `failed to save preinject config (HTTP ${response.status})`)
-        return
+        const message = body.error ?? `failed to save preinject config (HTTP ${response.status})`
+        console.log('[roroko-tool] save preinject rejected:', message)
+        setError(message)
+        return false
       }
       setState(body.state)
+      return true
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      const message = cause instanceof Error ? cause.message : String(cause)
+      console.log('[roroko-tool] save preinject threw:', message)
+      setError(message)
+      return false
     } finally {
       setBusy(false)
       setBusyTool(null)
     }
   }
 
-  const saveData = async (next: DataWire): Promise<void> => {
-    if (busy) return
+  const saveData = async (next: DataWire): Promise<boolean> => {
     setBusy(true)
     setBusyTool('data')
     setError(null)
@@ -550,32 +602,42 @@ export function RorokoToolSection(): ReturnType<typeof h> {
       })
       const body = (await response.json()) as { ok?: boolean; error?: string; state?: RorokoToolState }
       if (!response.ok || body.ok !== true || body.state === undefined) {
-        setError(body.error ?? `failed to save data config (HTTP ${response.status})`)
-        return
+        const message = body.error ?? `failed to save data config (HTTP ${response.status})`
+        console.log('[roroko-tool] save data rejected:', message)
+        setError(message)
+        return false
       }
       setState(body.state)
+      return true
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      const message = cause instanceof Error ? cause.message : String(cause)
+      console.log('[roroko-tool] save data threw:', message)
+      setError(message)
+      return false
     } finally {
       setBusy(false)
       setBusyTool(null)
     }
   }
 
-  const saveMark = async (enabled: boolean): Promise<void> => {
-    if (busy) return
+  const saveMark = async (enabled: boolean): Promise<boolean> => {
     setBusy(true)
     setBusyTool('mark')
     setError(null)
     try {
       const next = await setRorokoMarkEnabled(enabled)
       if (next === null) {
+        console.log('[roroko-tool] save mark rejected')
         setError('failed to save mark config')
-        return
+        return false
       }
       setState(next as unknown as RorokoToolState)
+      return true
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      const message = cause instanceof Error ? cause.message : String(cause)
+      console.log('[roroko-tool] save mark threw:', message)
+      setError(message)
+      return false
     } finally {
       setBusy(false)
       setBusyTool(null)
@@ -598,19 +660,19 @@ export function RorokoToolSection(): ReturnType<typeof h> {
           h(PreinjectPanel, {
             config: state.preinject,
             busy: busy && busyTool === 'preinject',
-            onSave: (next) => { void savePreinject(next) },
+            onSave: (next: PreinjectWire) => savePreinject(next),
           }),
           h(ToolHeader, { title: '素材库工具 (roroko-data)', desc: '洛洛可素材库查询/注册 + soul_state 读写;preset 声明即启用。' }),
           h(DataPanel, {
             config: state.data,
             busy: busy && busyTool === 'data',
-            onSave: (next) => { void saveData(next) },
+            onSave: (next: DataWire) => saveData(next),
           }),
           h(ToolHeader, { title: '呻吟标记渲染 (roroko-mark)', desc: '-呻吟_X- 标记在 web / Telegram 显示层展开;preset 声明即启用。' }),
           h(MarkPanel, {
             enabled: state.mark.enabled,
             busy: busy && busyTool === 'mark',
-            onToggle: (next) => { void saveMark(next) },
+            onToggle: (next: boolean) => { void saveMark(next) },
           }),
           h(ToolHeader, { title: '超量收敛警告 (roroko-warn)', desc: '工具调用/思考超量时注入收敛警告(未实现)。' }),
           error !== null
