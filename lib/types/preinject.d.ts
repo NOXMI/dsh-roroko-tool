@@ -47,6 +47,11 @@
  * 覆盖。覆盖层按会话的 agent preset id 取桶(state.presets[<id>]),具体桶叠在
  * 公共桶(common)之上;只有字段「缺失」才算未覆盖,空清单/空串都是显式设定。
  * 参数只影响注入内容,不改工具目录,不破坏 request-cache。
+ *
+ * preset id 取「当前生效」而非「创建时」(2026-09-14 修):`header.agentPreset`
+ * 是创建事实,页面切 preset 只追加 `agent-preset/selected` 事件、header 不动,
+ * 于是"先建后切"的会话里 `${presetDir}` 与参数分桶双双指向错的 preset。现改为
+ * 读 log(见 resolveSessionPresetId),与官方 `agentPreset` Session 投影同一套语义。
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { RorokoFilesPlacement } from './settings.js';
@@ -94,6 +99,20 @@ export interface RorokoPreinjectConfig {
     /** 消息段是否每个文件各注入一条(默认 false = 全部合并成一条)。 */
     splitFiles?: boolean;
 }
+/**
+ * 取会话**当前生效**的 preset id,而不是「创建时」那个。
+ *
+ * `header.agentPreset` 是创建事实 —— 点"新建会话"就写死,此后在页面切 preset 只
+ * 往 log 追加一条 `agent-preset/selected`,header 不更新(2026-09-14 本机实测:
+ * header `roroko-gamedev`,4 秒后切 `roroko-dsh`,只有事件记着)。用 header 的后果
+ * 是"先建后切"会话里 `${presetDir}` 指向不存在的目录 → 文件静默跳过、零报错,
+ * 参数也静默回落公共桶。
+ *
+ * 语义与官方 `agentPreset` Session 投影一致(header 起手 + 最新一条选择事件,
+ * 见 packages/preset/agent-presets/src/session.ts)。这里复刻而非声明
+ * `sessionProjections` 服务依赖:服务缺席时插件整个不加载,为一个 id 不值。
+ */
+export declare function resolveSessionPresetId(log: readonly unknown[] | null | undefined, headerPreset: string | undefined): string | undefined;
 /**
  * 解析单条注入路径;返回 undefined 表示这条跳过(空串,或宏拿不到值)。
  *

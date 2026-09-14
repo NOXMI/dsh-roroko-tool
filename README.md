@@ -127,11 +127,13 @@ GET  /roroko-tool/presets  → 扫 $DSH_HOME/.agent-presets 列出 preset 卡片
 | 写法 | 解析到 |
 |---|---|
 | `AGENTS.md` | 会话工作区（cwd） |
-| `${presetDir}/AGENTS.md` | `$DSH_HOME/.agent-presets/<本会话 preset id>/` |
+| `${presetDir}/AGENTS.md` | `$DSH_HOME/.agent-presets/<本会话当前 preset id>/` |
 | `${dshHome}/x.md` | `$DSH_HOME`（缺省 `~/.dsh`） |
 | `${cwd}/x.md` | 会话工作区路径 |
 | `~/x.md` | 用户主目录 |
 | `/abs/path/x.md` | 绝对路径原样 |
+
+「当前 preset」= 会话 log 里最新一条 `agent-preset/selected`（页面切 preset 后立刻生效），不是创建会话时写进 header 的那个。
 
 文件不存在则**静默跳过**，其余照常注入。
 

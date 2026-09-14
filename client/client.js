@@ -1620,7 +1620,7 @@ window.__ModuleLoader__.load({
 					scopeCards.push((0, react.createElement)(PresetCard, {
 						key: `scope-${preset.id}`,
 						title: preset.name.length > 0 ? `${preset.id} · ${preset.name}` : preset.id,
-						hint: `session.header.agentPreset === '${preset.id}' 的会话注入这一层。`,
+						hint: `会话当前 preset 为 '${preset.id}' 时注入这一层(以会话 log 内最新一条 agent-preset/selected 为准,不是创建时的 header)。`,
 						badge,
 						defaultOpen: false,
 						children: [(0, react.createElement)(PreinjectScopePanel, {
