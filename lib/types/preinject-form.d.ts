@@ -1,0 +1,90 @@
+/**
+ * preinject 参数表单的纯逻辑:界面值 ↔ 落盘 payload ↔ 继承基线。
+ *
+ * host 与 client 共用(与 expander.ts 同一套做法),所以**不得 import 任何 node
+ * 内置模块或 DSH 运行时包** —— 本文件会进浏览器 bundle。
+ *
+ * 设置页靠它算「有没有未保存改动」并构造 POST 体;node 侧的测试直读编译产物,
+ * 不用点界面就能验(从前这类逻辑埋在组件里,只能靠手点,踩过"改了没保存"的坑)。
+ */
+/** 消息段落点档位(与 host settings.ts 的 RorokoFilesPlacement 同形)。 */
+export type PreinjectPlacement = 'after-user' | 'before-user';
+/** 覆盖层形状:字段缺失 = 跟随继承,字段存在(含空值) = 显式设定。 */
+export interface PreinjectOverride {
+    systemFiles?: string[];
+    systemOrder?: number;
+    systemHeader?: string;
+    systemFooter?: string;
+    files?: string[];
+    header?: string;
+    footer?: string;
+    wrapInSystemReminder?: boolean;
+    filesPlacement?: PreinjectPlacement;
+    splitFiles?: boolean;
+}
+/** 继承基线形状(公共桶 + 内置默认合成的有效参数,字段齐全)。 */
+export interface PreinjectBaseline {
+    systemFiles: string[];
+    systemOrder: number;
+    systemHeader: string;
+    systemFooter: string;
+    files: string[];
+    header: string;
+    footer: string;
+    wrapInSystemReminder: boolean;
+    filesPlacement: PreinjectPlacement;
+    splitFiles: boolean;
+}
+/** 界面表单快照:一行一个输入框的真身,与覆盖层开关合并后的完整状态。 */
+export interface PreinjectForm {
+    coverSystem: boolean;
+    systemFiles: string[];
+    systemOrder: number;
+    systemHeader: string;
+    systemFooter: string;
+    coverMessage: boolean;
+    files: string[];
+    header: string;
+    footer: string;
+    wrap: boolean;
+    placement: PreinjectPlacement;
+    split: boolean;
+}
+/** 列表字段兜底:非数组当空单(host 首启或旧版 state 可能缺字段)。 */
+export declare function toList(value: unknown): string[];
+/** 字符串字段兜底:非字符串当空串。 */
+export declare function toStr(value: unknown): string;
+/** 数值字段兜底:非有限数当兜底值。 */
+export declare function toNum(value: unknown, fallback: number): number;
+/** 落盘前清洗:去首尾空白、去空行、去重。非数组一律当空单,不抛。 */
+export declare function cleanList(list: unknown): string[];
+/** 覆盖层有没有系统段的显式设定(任取到字段即算已覆盖)。 */
+export declare function hasSystemOverride(override: PreinjectOverride): boolean;
+/** 覆盖层有没有消息段的显式设定。 */
+export declare function hasMessageOverride(override: PreinjectOverride): boolean;
+/**
+ * 由「覆盖层 + 继承基线」推出界面表单快照(设置页首次渲染/保存后同步都用它)。
+ *
+ * 语义与旧组件内联写法逐字一致:override 缺字段才回落 baseline;布尔严格
+ * `=== true`(旧 state 里可能是 undefined);数组经 toList 兜底。
+ */
+export declare function formFromState(override: PreinjectOverride | undefined, baseline: PreinjectBaseline): PreinjectForm;
+/**
+ * 由表单快照构造 POST 体。
+ *
+ * 不勾「覆盖」的那一组**一个字段都不发** —— 发空值会把 preset config 压住,
+ * 语义从"跟随继承"变成"显式清空"。两组都不勾 = 空 payload,调用方按"清桶"
+ * 处理(与「重置为继承」同义)。
+ */
+export declare function payloadFromForm(form: PreinjectForm): Record<string, unknown>;
+/** 两份表单快照是否等价(数组按内容逐个比,不看引用)。 */
+export declare function formEquals(a: PreinjectForm, b: PreinjectForm): boolean;
+/**
+ * 行身份牌对齐:长度对不上(外部整体替换,如切 preset / 重置)就整批换新,
+ * 否则原样返回。
+ *
+ * 为什么需要:React 用 key 认行,旧代码拿**数组下标**当 key —— 删掉中间一行
+ * 时后面每行的身份都被"顶替",输入框会被错误复用,症状是字跳行/被吃掉。
+ * 自己触发的增删在事件里先行同步(见设置页),所以这里只管外部替换。
+ */
+export declare function ensureRowIds(ids: readonly string[], count: number, mint: () => string): string[];

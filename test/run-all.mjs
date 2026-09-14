@@ -14,6 +14,7 @@ const suites = [
   { file: 'settings-unit.mjs', nodeArgs: [] },
   { file: 'state-io.mjs', nodeArgs: [] },
   { file: 'route-state.mjs', nodeArgs: [] },
+  { file: 'preinject-form.mjs', nodeArgs: [] },
   {
     file: 'preinject-unit.mjs',
     // preinject.js 顶层 import 了 DSH 运行时包,靠解析钩子换成本地替身。

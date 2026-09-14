@@ -15,7 +15,20 @@
  *                             → { tool:'data', dbPath } 写参数
  * UI 状态本地 useState。参照 dshmarket client 范式(api() 锚定 baseURI)。
  */
-import { createElement as h, useEffect, useState } from 'react'
+import { createElement as h, useEffect, useRef, useState } from 'react'
+import {
+  cleanList,
+  ensureRowIds,
+  formEquals,
+  formFromState,
+  hasMessageOverride,
+  hasSystemOverride,
+  payloadFromForm,
+  toList,
+  toNum,
+  toStr,
+} from '../preinject-form.js'
+import type { PreinjectForm } from '../preinject-form.js'
 import { NS, en, zh } from './locales.ts'
 import { setRorokoMarkEnabled } from './roroko-mark.ts'
 import { RorokoMarkAssistantNode } from './RorokoMarkAssistantNode.tsx'
@@ -181,9 +194,18 @@ function FileListEditor(props: {
   onChange: (next: string[]) => void
 }): ReturnType<typeof h> {
   const { files, busy, placeholder, onChange } = props
+  // 行身份牌:用序号当 React key 会让"删中间一行"时后面每行的 DOM 被顶替复用,
+  // 表现为字跳行/被吃掉。这里给每行发一个只增不减的 id,自己做增删时同步维护,
+  // 只有外部整体替换(长度对不上)才整批换新 —— 见 ensureRowIds。
+  const idsRef = useRef<string[]>([])
+  const seqRef = useRef(0)
+  const mint = (): string => { seqRef.current += 1; return `row-${seqRef.current}` }
+  idsRef.current = ensureRowIds(idsRef.current, files.length, mint)
+  const ids = idsRef.current
+
   return h('div', {},
     ...files.map((file, index) => h('div', {
-      key: `file-${index}`,
+      key: ids[index],
       style: { display: 'flex', gap: 6, marginBottom: 4, alignItems: 'center' },
     },
       h('input', {
@@ -202,7 +224,11 @@ function FileListEditor(props: {
         disabled: busy,
         title: '删除此行',
         style: { ...buttonStyle, flexShrink: 0 },
-        onClick: () => { onChange(files.filter((_, i) => i !== index)) },
+        onClick: () => {
+          // 身份牌先行同步,别等父组件回传的长度对齐(否则会错位顶替)。
+          idsRef.current = ids.filter((_, i) => i !== index)
+          onChange(files.filter((_, i) => i !== index))
+        },
       }, '✕'),
     )),
     h('div', { style: { marginTop: 4 } },
@@ -210,7 +236,10 @@ function FileListEditor(props: {
         type: 'button',
         disabled: busy,
         style: buttonStyle,
-        onClick: () => { onChange([...files, '']) },
+        onClick: () => {
+          idsRef.current = [...ids, mint()]
+          onChange([...files, ''])
+        },
       }, '+ 添加文件'),
     ),
   )
@@ -238,47 +267,23 @@ const textareaStyle: CssDict = {
   resize: 'vertical',
 }
 
-/** 清单落盘前清洗:去首尾空白、去空行、去重。非数组一律当空单,不抛。 */
-function cleanList(list: unknown): string[] {
-  if (!Array.isArray(list)) return []
-  return list
-    .filter((item): item is string => typeof item === 'string')
-    .map(item => item.trim())
-    .filter(item => item.length > 0)
-    .filter((item, index, self) => self.indexOf(item) === index)
-}
-
-/** 列表字段兜底:非数组当空单(host 首启或旧版 state 可能缺字段)。 */
-function toList(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
-}
-
-/** 字符串字段兜底:非字符串当空串。 */
-function toStr(value: unknown): string {
-  return typeof value === 'string' ? value : ''
-}
-
-/** 数值字段兜底:非有限数当兜底值。 */
-function toNum(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
-}
-
-/** 覆盖层里有没有系统段那组字段。 */
-function hasSystemOverride(override: PreinjectOverrideWire): boolean {
-  return override.systemFiles !== undefined
-    || override.systemOrder !== undefined
-    || override.systemHeader !== undefined
-    || override.systemFooter !== undefined
-}
-
-/** 覆盖层里有没有消息段那组字段。 */
-function hasMessageOverride(override: PreinjectOverrideWire): boolean {
-  return override.files !== undefined
-    || override.header !== undefined
-    || override.footer !== undefined
-    || override.wrapInSystemReminder !== undefined
-    || override.filesPlacement !== undefined
-    || override.splitFiles !== undefined
+/**
+ * 有未保存改动时,离开页面前拦一下(浏览器原生确认框)。
+ *
+ * 只拦"刷新/关标签"这类真离开;DSH 内部切页面不走这个事件 —— 那种丢改动由
+ * 界面上的「未保存」提示负责提醒,不做拦截(拦也拦不住,还显得像坏了)。
+ */
+function useUnsavedGuard(dirty: boolean): void {
+  useEffect(() => {
+    if (!dirty) return undefined
+    const warn = (event: BeforeUnloadEvent): void => {
+      event.preventDefault()
+      // 老浏览器只认 returnValue;传空串才弹框,传别的文案会被忽略。
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => { window.removeEventListener('beforeunload', warn) }
+  }, [dirty])
 }
 
 /** 卡片外壳样式。 */
@@ -367,78 +372,60 @@ function PreinjectScopePanel(props: {
   onReset: () => Promise<boolean>
 }): ReturnType<typeof h> {
   const { override, baseline, busy, onSave, onReset } = props
-  const [coverSystem, setCoverSystem] = useState(() => hasSystemOverride(override))
-  const [coverMessage, setCoverMessage] = useState(() => hasMessageOverride(override))
-  const [systemFiles, setSystemFiles] = useState<string[]>(
-    () => toList(override.systemFiles ?? baseline.systemFiles),
-  )
-  const [systemOrder, setSystemOrder] = useState<number>(
-    () => toNum(override.systemOrder, baseline.systemOrder),
-  )
-  const [systemHeader, setSystemHeader] = useState<string>(
-    () => toStr(override.systemHeader ?? baseline.systemHeader),
-  )
-  const [systemFooter, setSystemFooter] = useState<string>(
-    () => toStr(override.systemFooter ?? baseline.systemFooter),
-  )
-  const [files, setFiles] = useState<string[]>(() => toList(override.files ?? baseline.files))
-  const [header, setHeader] = useState<string>(() => toStr(override.header ?? baseline.header))
-  const [footer, setFooter] = useState<string>(() => toStr(override.footer ?? baseline.footer))
-  const [wrap, setWrap] = useState<boolean>(
-    () => (override.wrapInSystemReminder ?? baseline.wrapInSystemReminder) === true,
-  )
-  const [placement, setPlacement] = useState<'after-user' | 'before-user'>(
-    () => override.filesPlacement ?? baseline.filesPlacement,
-  )
-  const [split, setSplit] = useState<boolean>(
-    () => (override.splitFiles ?? baseline.splitFiles) === true,
-  )
+  // 整张表单一份 state(从前是 12 个 useState + 十几处手写 setSaved(false),脏
+  // 判定根本无从下手)。「界面值 → 落盘 payload → 脏判定」全在 preinject-form.ts,
+  // 那边有 72 项自动测试兜着。
+  const [form, setForm] = useState(() => formFromState(override, baseline))
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const savingRef = useRef(false)
+
+  const dirty = !formEquals(form, formFromState(override, baseline))
+  useUnsavedGuard(dirty)
+
+  // 服务端回执(或别的卡片保存)换了 props 后,把表单重同步到落盘值:既修掉
+  // "重置为继承后界面还显示旧值",也保证保存成功后「未保存」立刻熄。请求在飞
+  // 时不重同步 —— 此刻表单里的新改动还没落盘,不能被旧回执盖掉。
+  useEffect(() => {
+    if (savingRef.current) return
+    setForm(formFromState(override, baseline))
+  }, [override, baseline])
+
+  const patch = (part: Partial<PreinjectForm>): void => {
+    setForm(previous => ({ ...previous, ...part }))
+  }
 
   const save = (): void => {
     setSaveError(null)
     setSaved(false)
     setSaving(true)
-    const payload: Record<string, unknown> = {}
-    if (coverSystem) {
-      payload.systemFiles = cleanList(systemFiles)
-      payload.systemOrder = systemOrder
-      payload.systemHeader = systemHeader.trim()
-      payload.systemFooter = systemFooter.trim()
-    }
-    if (coverMessage) {
-      payload.files = cleanList(files)
-      payload.header = header.trim()
-      payload.footer = footer.trim()
-      payload.wrapInSystemReminder = wrap
-      payload.filesPlacement = placement
-      payload.splitFiles = split
-    }
+    savingRef.current = true
+    const payload = payloadFromForm(form)
     console.log('[roroko-tool] save preinject scope →', payload)
     // 两组都不覆盖 = 这个 preset 没有覆盖层,直接清桶(与"重置"同义)。
-    const action = coverSystem || coverMessage ? onSave(payload) : onReset()
+    const action = form.coverSystem || form.coverMessage ? onSave(payload) : onReset()
     void action
       .then((ok: boolean) => {
         if (ok) setSaved(true)
         else setSaveError('服务端未接受本次写入')
       })
       .catch((cause: unknown) => { setSaveError(cause instanceof Error ? cause.message : String(cause)) })
-      .finally(() => { setSaving(false) })
+      .finally(() => { savingRef.current = false; setSaving(false) })
   }
 
   const reset = (): void => {
     setSaveError(null)
     setSaved(false)
     setSaving(true)
+    savingRef.current = true
     void onReset()
       .then((ok: boolean) => {
         if (ok) setSaved(true)
         else setSaveError('服务端未接受本次重置')
       })
       .catch((cause: unknown) => { setSaveError(cause instanceof Error ? cause.message : String(cause)) })
-      .finally(() => { setSaving(false) })
+      .finally(() => { savingRef.current = false; setSaving(false) })
   }
 
   return h(PanelShell, {
@@ -446,44 +433,43 @@ function PreinjectScopePanel(props: {
       h('label', { style: coverLabelStyle },
         h('input', {
           type: 'checkbox',
-          checked: coverSystem,
+          checked: form.coverSystem,
           disabled: busy,
-          onChange: () => { setCoverSystem(value => !value); setSaved(false) },
+          onChange: () => { patch({ coverSystem: !form.coverSystem }) },
         }),
         '覆盖系统段(进 system 提示词;不勾选 = 跟随继承)',
       ),
-      coverSystem
+      form.coverSystem
         ? h('div', {},
             h(FileListEditor, {
-              files: systemFiles,
+              files: form.systemFiles,
               busy,
               placeholder: '如 AGENTS.md 或 ${presetDir}/IDENTITY.md',
-              onChange: (next: string[]) => { setSystemFiles(next); setSaved(false) },
+              onChange: (next: string[]) => { patch({ systemFiles: next }) },
             }),
             h('label', { style: groupLabelStyle }, 'section order(改动需重挂载 preset)'),
             h('input', {
               type: 'number',
-              value: `${systemOrder}`,
+              value: `${form.systemOrder}`,
               disabled: busy,
               style: { ...inputStyle, maxWidth: 120 },
               onChange: (event: { target: { value: string } }) => {
                 const parsed = Number(event.target.value)
-                setSystemOrder(Number.isFinite(parsed) ? parsed : 0)
-                setSaved(false)
+                patch({ systemOrder: Number.isFinite(parsed) ? parsed : 0 })
               },
             }),
             h('label', { style: groupLabelStyle }, 'systemHeader / systemFooter(内容前后插入)'),
             h('textarea', {
-              value: systemHeader,
+              value: form.systemHeader,
               disabled: busy,
               style: textareaStyle,
-              onChange: (event: { target: { value: string } }) => { setSystemHeader(event.target.value); setSaved(false) },
+              onChange: (event: { target: { value: string } }) => { patch({ systemHeader: event.target.value }) },
             }),
             h('textarea', {
-              value: systemFooter,
+              value: form.systemFooter,
               disabled: busy,
               style: { ...textareaStyle, marginTop: 4 },
-              onChange: (event: { target: { value: string } }) => { setSystemFooter(event.target.value); setSaved(false) },
+              onChange: (event: { target: { value: string } }) => { patch({ systemFooter: event.target.value }) },
             }),
           )
         : h('div', { style: hintStyle },
@@ -492,41 +478,41 @@ function PreinjectScopePanel(props: {
       h('label', { style: coverLabelStyle },
         h('input', {
           type: 'checkbox',
-          checked: coverMessage,
+          checked: form.coverMessage,
           disabled: busy,
-          onChange: () => { setCoverMessage(value => !value); setSaved(false) },
+          onChange: () => { patch({ coverMessage: !form.coverMessage }) },
         }),
         '覆盖消息段(进 user 消息;不勾选 = 跟随继承)',
       ),
-      coverMessage
+      form.coverMessage
         ? h('div', {},
             h(FileListEditor, {
-              files,
+              files: form.files,
               busy,
               placeholder: '如 PLAYER.md 或 ${presetDir}/PLAYER.md',
-              onChange: (next: string[]) => { setFiles(next); setSaved(false) },
+              onChange: (next: string[]) => { patch({ files: next }) },
             }),
             h('label', { style: groupLabelStyle }, 'header / footer(内容前后插入)'),
             h('textarea', {
-              value: header,
+              value: form.header,
               disabled: busy,
               placeholder: '<roroko-reminder> …',
               style: textareaStyle,
-              onChange: (event: { target: { value: string } }) => { setHeader(event.target.value); setSaved(false) },
+              onChange: (event: { target: { value: string } }) => { patch({ header: event.target.value }) },
             }),
             h('textarea', {
-              value: footer,
+              value: form.footer,
               disabled: busy,
               placeholder: '… </roroko-reminder>',
               style: { ...textareaStyle, marginTop: 4 },
-              onChange: (event: { target: { value: string } }) => { setFooter(event.target.value); setSaved(false) },
+              onChange: (event: { target: { value: string } }) => { patch({ footer: event.target.value }) },
             }),
             h('label', { style: coverLabelStyle },
               h('input', {
                 type: 'checkbox',
-                checked: wrap,
+                checked: form.wrap,
                 disabled: busy,
-                onChange: () => { setWrap(value => !value); setSaved(false) },
+                onChange: () => { patch({ wrap: !form.wrap }) },
               }),
               '整体包一层 <system-reminder>…</system-reminder>',
             ),
@@ -541,11 +527,10 @@ function PreinjectScopePanel(props: {
               },
                 h('input', {
                   type: 'radio',
-                  checked: placement === value,
+                  checked: form.placement === value,
                   disabled: busy,
                   onChange: () => {
-                    setPlacement(value as 'after-user' | 'before-user')
-                    setSaved(false)
+                    patch({ placement: value as 'after-user' | 'before-user' })
                   },
                 }),
                 label,
@@ -554,9 +539,9 @@ function PreinjectScopePanel(props: {
             h('label', { style: coverLabelStyle },
               h('input', {
                 type: 'checkbox',
-                checked: split,
+                checked: form.split,
                 disabled: busy,
-                onChange: () => { setSplit(value => !value); setSaved(false) },
+                onChange: () => { patch({ split: !form.split }) },
               }),
               '每个文件各注入一条(不勾选 = 全部合并成一条)',
             ),
@@ -572,7 +557,11 @@ function PreinjectScopePanel(props: {
         h('button', {
           type: 'button',
           disabled: busy || saving,
-          style: buttonStyle,
+          style: {
+            ...buttonStyle,
+            borderColor: dirty ? 'var(--dsw-text-primary, #eee)' : undefined,
+            color: dirty ? 'var(--dsw-text-primary, #eee)' : undefined,
+          },
           onClick: save,
         }, saving ? '保存中…' : '保存'),
         h('button', {
@@ -581,7 +570,10 @@ function PreinjectScopePanel(props: {
           style: buttonStyle,
           onClick: reset,
         }, '重置为继承'),
-        saved
+        dirty
+          ? h('span', { style: { color: 'var(--dsw-text-warning, #e5a00d)', fontSize: '0.8em' } }, '● 未保存(点「保存」才写盘)')
+          : null,
+        saved && !dirty
           ? h('span', { style: { color: 'var(--dsw-text-success, #46a758)', fontSize: '0.8em' } }, '已保存')
           : null,
         saveError !== null
@@ -606,6 +598,8 @@ function DataPanel(props: {
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  // 改了没保存就跑(刷新/关标签)会白改一场,同样拦一下。
+  useUnsavedGuard(dirty)
 
   const save = (): void => {
     const next: DataWire = { dbPath: dbPath.trim() }
@@ -654,6 +648,9 @@ function DataPanel(props: {
           },
           onClick: save,
         }, saving ? '保存中…' : '保存路径'),
+        dirty
+          ? h('span', { style: { fontSize: '0.8em', color: 'var(--dsw-text-warning, #e5a00d)' } }, '● 未保存(点「保存路径」才写盘)')
+          : null,
         saved && !dirty
           ? h('span', { style: { fontSize: '0.8em', color: 'var(--dsw-text-success, #46a758)' } }, '已保存')
           : null,

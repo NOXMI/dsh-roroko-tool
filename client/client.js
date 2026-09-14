@@ -7,6 +7,101 @@ window.__ModuleLoader__.load({
 		let react = require("react");
 		let _deepseek_ai_dsh_client_ui_primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 		let react_jsx_runtime = require("react/jsx-runtime");
+		//#region src/preinject-form.ts
+		/** 列表字段兜底:非数组当空单(host 首启或旧版 state 可能缺字段)。 */
+		function toList(value) {
+			return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+		}
+		/** 字符串字段兜底:非字符串当空串。 */
+		function toStr(value) {
+			return typeof value === "string" ? value : "";
+		}
+		/** 数值字段兜底:非有限数当兜底值。 */
+		function toNum(value, fallback) {
+			return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+		}
+		/** 落盘前清洗:去首尾空白、去空行、去重。非数组一律当空单,不抛。 */
+		function cleanList(list) {
+			if (!Array.isArray(list)) return [];
+			return list.filter((item) => typeof item === "string").map((item) => item.trim()).filter((item) => item.length > 0).filter((item, index, self) => self.indexOf(item) === index);
+		}
+		/** 覆盖层有没有系统段的显式设定(任取到字段即算已覆盖)。 */
+		function hasSystemOverride(override) {
+			return override.systemFiles !== void 0 || override.systemOrder !== void 0 || override.systemHeader !== void 0 || override.systemFooter !== void 0;
+		}
+		/** 覆盖层有没有消息段的显式设定。 */
+		function hasMessageOverride(override) {
+			return override.files !== void 0 || override.header !== void 0 || override.footer !== void 0 || override.wrapInSystemReminder !== void 0 || override.filesPlacement !== void 0 || override.splitFiles !== void 0;
+		}
+		/**
+		* 由「覆盖层 + 继承基线」推出界面表单快照(设置页首次渲染/保存后同步都用它)。
+		*
+		* 语义与旧组件内联写法逐字一致:override 缺字段才回落 baseline;布尔严格
+		* `=== true`(旧 state 里可能是 undefined);数组经 toList 兜底。
+		*/
+		function formFromState(override, baseline) {
+			const layer = override ?? {};
+			return {
+				coverSystem: hasSystemOverride(layer),
+				systemFiles: toList(layer.systemFiles ?? baseline.systemFiles),
+				systemOrder: toNum(layer.systemOrder, baseline.systemOrder),
+				systemHeader: toStr(layer.systemHeader ?? baseline.systemHeader),
+				systemFooter: toStr(layer.systemFooter ?? baseline.systemFooter),
+				coverMessage: hasMessageOverride(layer),
+				files: toList(layer.files ?? baseline.files),
+				header: toStr(layer.header ?? baseline.header),
+				footer: toStr(layer.footer ?? baseline.footer),
+				wrap: (layer.wrapInSystemReminder ?? baseline.wrapInSystemReminder) === true,
+				placement: layer.filesPlacement ?? baseline.filesPlacement,
+				split: (layer.splitFiles ?? baseline.splitFiles) === true
+			};
+		}
+		/**
+		* 由表单快照构造 POST 体。
+		*
+		* 不勾「覆盖」的那一组**一个字段都不发** —— 发空值会把 preset config 压住,
+		* 语义从"跟随继承"变成"显式清空"。两组都不勾 = 空 payload,调用方按"清桶"
+		* 处理(与「重置为继承」同义)。
+		*/
+		function payloadFromForm(form) {
+			const payload = {};
+			if (form.coverSystem) {
+				payload.systemFiles = cleanList(form.systemFiles);
+				payload.systemOrder = form.systemOrder;
+				payload.systemHeader = form.systemHeader.trim();
+				payload.systemFooter = form.systemFooter.trim();
+			}
+			if (form.coverMessage) {
+				payload.files = cleanList(form.files);
+				payload.header = form.header.trim();
+				payload.footer = form.footer.trim();
+				payload.wrapInSystemReminder = form.wrap;
+				payload.filesPlacement = form.placement;
+				payload.splitFiles = form.split;
+			}
+			return payload;
+		}
+		/** 两份表单快照是否等价(数组按内容逐个比,不看引用)。 */
+		function formEquals(a, b) {
+			return a.coverSystem === b.coverSystem && a.coverMessage === b.coverMessage && a.systemOrder === b.systemOrder && a.wrap === b.wrap && a.placement === b.placement && a.split === b.split && listEquals(a.systemFiles, b.systemFiles) && listEquals(a.files, b.files) && a.systemHeader === b.systemHeader && a.systemFooter === b.systemFooter && a.header === b.header && a.footer === b.footer;
+		}
+		/** 两个字符串清单逐项相等。 */
+		function listEquals(a, b) {
+			return a.length === b.length && a.every((item, index) => item === b[index]);
+		}
+		/**
+		* 行身份牌对齐:长度对不上(外部整体替换,如切 preset / 重置)就整批换新,
+		* 否则原样返回。
+		*
+		* 为什么需要:React 用 key 认行,旧代码拿**数组下标**当 key —— 删掉中间一行
+		* 时后面每行的身份都被"顶替",输入框会被错误复用,症状是字跳行/被吃掉。
+		* 自己触发的增删在事件里先行同步(见设置页),所以这里只管外部替换。
+		*/
+		function ensureRowIds(ids, count, mint) {
+			if (ids.length === count) return ids;
+			return Array.from({ length: count }, () => mint());
+		}
+		//#endregion
 		//#region src/client/locales.ts
 		/** dsh-roroko-tool client 词典:zh / en。结构对齐 dsh-market:src/client/locales.ts。 */
 		const zh = {
@@ -1037,8 +1132,16 @@ window.__ModuleLoader__.load({
 		/** 文件清单编辑器:若干行文本框 + 增删。系统段与消息段共用一份。 */
 		function FileListEditor(props) {
 			const { files, busy, placeholder, onChange } = props;
+			const idsRef = (0, react.useRef)([]);
+			const seqRef = (0, react.useRef)(0);
+			const mint = () => {
+				seqRef.current += 1;
+				return `row-${seqRef.current}`;
+			};
+			idsRef.current = ensureRowIds(idsRef.current, files.length, mint);
+			const ids = idsRef.current;
 			return (0, react.createElement)("div", {}, ...files.map((file, index) => (0, react.createElement)("div", {
-				key: `file-${index}`,
+				key: ids[index],
 				style: {
 					display: "flex",
 					gap: 6,
@@ -1064,6 +1167,7 @@ window.__ModuleLoader__.load({
 					flexShrink: 0
 				},
 				onClick: () => {
+					idsRef.current = ids.filter((_, i) => i !== index);
 					onChange(files.filter((_, i) => i !== index));
 				}
 			}, "✕"))), (0, react.createElement)("div", { style: { marginTop: 4 } }, (0, react.createElement)("button", {
@@ -1071,6 +1175,7 @@ window.__ModuleLoader__.load({
 				disabled: busy,
 				style: buttonStyle,
 				onClick: () => {
+					idsRef.current = [...ids, mint()];
 					onChange([...files, ""]);
 				}
 			}, "+ 添加文件")));
@@ -1094,30 +1199,24 @@ window.__ModuleLoader__.load({
 			minHeight: 56,
 			resize: "vertical"
 		};
-		/** 清单落盘前清洗:去首尾空白、去空行、去重。非数组一律当空单,不抛。 */
-		function cleanList(list) {
-			if (!Array.isArray(list)) return [];
-			return list.filter((item) => typeof item === "string").map((item) => item.trim()).filter((item) => item.length > 0).filter((item, index, self) => self.indexOf(item) === index);
-		}
-		/** 列表字段兜底:非数组当空单(host 首启或旧版 state 可能缺字段)。 */
-		function toList(value) {
-			return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
-		}
-		/** 字符串字段兜底:非字符串当空串。 */
-		function toStr(value) {
-			return typeof value === "string" ? value : "";
-		}
-		/** 数值字段兜底:非有限数当兜底值。 */
-		function toNum(value, fallback) {
-			return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-		}
-		/** 覆盖层里有没有系统段那组字段。 */
-		function hasSystemOverride(override) {
-			return override.systemFiles !== void 0 || override.systemOrder !== void 0 || override.systemHeader !== void 0 || override.systemFooter !== void 0;
-		}
-		/** 覆盖层里有没有消息段那组字段。 */
-		function hasMessageOverride(override) {
-			return override.files !== void 0 || override.header !== void 0 || override.footer !== void 0 || override.wrapInSystemReminder !== void 0 || override.filesPlacement !== void 0 || override.splitFiles !== void 0;
+		/**
+		* 有未保存改动时,离开页面前拦一下(浏览器原生确认框)。
+		*
+		* 只拦"刷新/关标签"这类真离开;DSH 内部切页面不走这个事件 —— 那种丢改动由
+		* 界面上的「未保存」提示负责提醒,不做拦截(拦也拦不住,还显得像坏了)。
+		*/
+		function useUnsavedGuard(dirty) {
+			(0, react.useEffect)(() => {
+				if (!dirty) return void 0;
+				const warn = (event) => {
+					event.preventDefault();
+					event.returnValue = "";
+				};
+				window.addEventListener("beforeunload", warn);
+				return () => {
+					window.removeEventListener("beforeunload", warn);
+				};
+			}, [dirty]);
 		}
 		/** 卡片外壳样式。 */
 		const cardStyle = {
@@ -1187,47 +1286,37 @@ window.__ModuleLoader__.load({
 		*/
 		function PreinjectScopePanel(props) {
 			const { override, baseline, busy, onSave, onReset } = props;
-			const [coverSystem, setCoverSystem] = (0, react.useState)(() => hasSystemOverride(override));
-			const [coverMessage, setCoverMessage] = (0, react.useState)(() => hasMessageOverride(override));
-			const [systemFiles, setSystemFiles] = (0, react.useState)(() => toList(override.systemFiles ?? baseline.systemFiles));
-			const [systemOrder, setSystemOrder] = (0, react.useState)(() => toNum(override.systemOrder, baseline.systemOrder));
-			const [systemHeader, setSystemHeader] = (0, react.useState)(() => toStr(override.systemHeader ?? baseline.systemHeader));
-			const [systemFooter, setSystemFooter] = (0, react.useState)(() => toStr(override.systemFooter ?? baseline.systemFooter));
-			const [files, setFiles] = (0, react.useState)(() => toList(override.files ?? baseline.files));
-			const [header, setHeader] = (0, react.useState)(() => toStr(override.header ?? baseline.header));
-			const [footer, setFooter] = (0, react.useState)(() => toStr(override.footer ?? baseline.footer));
-			const [wrap, setWrap] = (0, react.useState)(() => (override.wrapInSystemReminder ?? baseline.wrapInSystemReminder) === true);
-			const [placement, setPlacement] = (0, react.useState)(() => override.filesPlacement ?? baseline.filesPlacement);
-			const [split, setSplit] = (0, react.useState)(() => (override.splitFiles ?? baseline.splitFiles) === true);
+			const [form, setForm] = (0, react.useState)(() => formFromState(override, baseline));
 			const [saved, setSaved] = (0, react.useState)(false);
 			const [saving, setSaving] = (0, react.useState)(false);
 			const [saveError, setSaveError] = (0, react.useState)(null);
+			const savingRef = (0, react.useRef)(false);
+			const dirty = !formEquals(form, formFromState(override, baseline));
+			useUnsavedGuard(dirty);
+			(0, react.useEffect)(() => {
+				if (savingRef.current) return;
+				setForm(formFromState(override, baseline));
+			}, [override, baseline]);
+			const patch = (part) => {
+				setForm((previous) => ({
+					...previous,
+					...part
+				}));
+			};
 			const save = () => {
 				setSaveError(null);
 				setSaved(false);
 				setSaving(true);
-				const payload = {};
-				if (coverSystem) {
-					payload.systemFiles = cleanList(systemFiles);
-					payload.systemOrder = systemOrder;
-					payload.systemHeader = systemHeader.trim();
-					payload.systemFooter = systemFooter.trim();
-				}
-				if (coverMessage) {
-					payload.files = cleanList(files);
-					payload.header = header.trim();
-					payload.footer = footer.trim();
-					payload.wrapInSystemReminder = wrap;
-					payload.filesPlacement = placement;
-					payload.splitFiles = split;
-				}
+				savingRef.current = true;
+				const payload = payloadFromForm(form);
 				console.log("[roroko-tool] save preinject scope →", payload);
-				(coverSystem || coverMessage ? onSave(payload) : onReset()).then((ok) => {
+				(form.coverSystem || form.coverMessage ? onSave(payload) : onReset()).then((ok) => {
 					if (ok) setSaved(true);
 					else setSaveError("服务端未接受本次写入");
 				}).catch((cause) => {
 					setSaveError(cause instanceof Error ? cause.message : String(cause));
 				}).finally(() => {
+					savingRef.current = false;
 					setSaving(false);
 				});
 			};
@@ -1235,36 +1324,36 @@ window.__ModuleLoader__.load({
 				setSaveError(null);
 				setSaved(false);
 				setSaving(true);
+				savingRef.current = true;
 				onReset().then((ok) => {
 					if (ok) setSaved(true);
 					else setSaveError("服务端未接受本次重置");
 				}).catch((cause) => {
 					setSaveError(cause instanceof Error ? cause.message : String(cause));
 				}).finally(() => {
+					savingRef.current = false;
 					setSaving(false);
 				});
 			};
 			return (0, react.createElement)(PanelShell, { children: [
 				(0, react.createElement)("label", { style: coverLabelStyle }, (0, react.createElement)("input", {
 					type: "checkbox",
-					checked: coverSystem,
+					checked: form.coverSystem,
 					disabled: busy,
 					onChange: () => {
-						setCoverSystem((value) => !value);
-						setSaved(false);
+						patch({ coverSystem: !form.coverSystem });
 					}
 				}), "覆盖系统段(进 system 提示词;不勾选 = 跟随继承)"),
-				coverSystem ? (0, react.createElement)("div", {}, (0, react.createElement)(FileListEditor, {
-					files: systemFiles,
+				form.coverSystem ? (0, react.createElement)("div", {}, (0, react.createElement)(FileListEditor, {
+					files: form.systemFiles,
 					busy,
 					placeholder: "如 AGENTS.md 或 ${presetDir}/IDENTITY.md",
 					onChange: (next) => {
-						setSystemFiles(next);
-						setSaved(false);
+						patch({ systemFiles: next });
 					}
 				}), (0, react.createElement)("label", { style: groupLabelStyle }, "section order(改动需重挂载 preset)"), (0, react.createElement)("input", {
 					type: "number",
-					value: `${systemOrder}`,
+					value: `${form.systemOrder}`,
 					disabled: busy,
 					style: {
 						...inputStyle,
@@ -1272,57 +1361,51 @@ window.__ModuleLoader__.load({
 					},
 					onChange: (event) => {
 						const parsed = Number(event.target.value);
-						setSystemOrder(Number.isFinite(parsed) ? parsed : 0);
-						setSaved(false);
+						patch({ systemOrder: Number.isFinite(parsed) ? parsed : 0 });
 					}
 				}), (0, react.createElement)("label", { style: groupLabelStyle }, "systemHeader / systemFooter(内容前后插入)"), (0, react.createElement)("textarea", {
-					value: systemHeader,
+					value: form.systemHeader,
 					disabled: busy,
 					style: textareaStyle,
 					onChange: (event) => {
-						setSystemHeader(event.target.value);
-						setSaved(false);
+						patch({ systemHeader: event.target.value });
 					}
 				}), (0, react.createElement)("textarea", {
-					value: systemFooter,
+					value: form.systemFooter,
 					disabled: busy,
 					style: {
 						...textareaStyle,
 						marginTop: 4
 					},
 					onChange: (event) => {
-						setSystemFooter(event.target.value);
-						setSaved(false);
+						patch({ systemFooter: event.target.value });
 					}
 				})) : (0, react.createElement)("div", { style: hintStyle }, `跟随继承:${baseline.systemFiles.join(" / ") || "(空)"}(order ${baseline.systemOrder})`),
 				(0, react.createElement)("label", { style: coverLabelStyle }, (0, react.createElement)("input", {
 					type: "checkbox",
-					checked: coverMessage,
+					checked: form.coverMessage,
 					disabled: busy,
 					onChange: () => {
-						setCoverMessage((value) => !value);
-						setSaved(false);
+						patch({ coverMessage: !form.coverMessage });
 					}
 				}), "覆盖消息段(进 user 消息;不勾选 = 跟随继承)"),
-				coverMessage ? (0, react.createElement)("div", {}, (0, react.createElement)(FileListEditor, {
-					files,
+				form.coverMessage ? (0, react.createElement)("div", {}, (0, react.createElement)(FileListEditor, {
+					files: form.files,
 					busy,
 					placeholder: "如 PLAYER.md 或 ${presetDir}/PLAYER.md",
 					onChange: (next) => {
-						setFiles(next);
-						setSaved(false);
+						patch({ files: next });
 					}
 				}), (0, react.createElement)("label", { style: groupLabelStyle }, "header / footer(内容前后插入)"), (0, react.createElement)("textarea", {
-					value: header,
+					value: form.header,
 					disabled: busy,
 					placeholder: "<roroko-reminder> …",
 					style: textareaStyle,
 					onChange: (event) => {
-						setHeader(event.target.value);
-						setSaved(false);
+						patch({ header: event.target.value });
 					}
 				}), (0, react.createElement)("textarea", {
-					value: footer,
+					value: form.footer,
 					disabled: busy,
 					placeholder: "… </roroko-reminder>",
 					style: {
@@ -1330,16 +1413,14 @@ window.__ModuleLoader__.load({
 						marginTop: 4
 					},
 					onChange: (event) => {
-						setFooter(event.target.value);
-						setSaved(false);
+						patch({ footer: event.target.value });
 					}
 				}), (0, react.createElement)("label", { style: coverLabelStyle }, (0, react.createElement)("input", {
 					type: "checkbox",
-					checked: wrap,
+					checked: form.wrap,
 					disabled: busy,
 					onChange: () => {
-						setWrap((value) => !value);
-						setSaved(false);
+						patch({ wrap: !form.wrap });
 					}
 				}), "整体包一层 <system-reminder>…</system-reminder>"), (0, react.createElement)("label", { style: groupLabelStyle }, "落点(相对本批用户消息)"), (0, react.createElement)("div", { style: {
 					display: "flex",
@@ -1355,19 +1436,17 @@ window.__ModuleLoader__.load({
 					}
 				}, (0, react.createElement)("input", {
 					type: "radio",
-					checked: placement === value,
+					checked: form.placement === value,
 					disabled: busy,
 					onChange: () => {
-						setPlacement(value);
-						setSaved(false);
+						patch({ placement: value });
 					}
 				}), label))), (0, react.createElement)("label", { style: coverLabelStyle }, (0, react.createElement)("input", {
 					type: "checkbox",
-					checked: split,
+					checked: form.split,
 					disabled: busy,
 					onChange: () => {
-						setSplit((value) => !value);
-						setSaved(false);
+						patch({ split: !form.split });
 					}
 				}), "每个文件各注入一条(不勾选 = 全部合并成一条)")) : (0, react.createElement)("div", { style: hintStyle }, `跟随继承:${baseline.files.join(" / ") || "(空)"}(${baseline.filesPlacement === "before-user" ? "本批之前" : "本批之后"}${baseline.splitFiles ? ",每文件一条" : ",合并一条"})`),
 				(0, react.createElement)("div", { style: {
@@ -1379,14 +1458,21 @@ window.__ModuleLoader__.load({
 				} }, (0, react.createElement)("button", {
 					type: "button",
 					disabled: busy || saving,
-					style: buttonStyle,
+					style: {
+						...buttonStyle,
+						borderColor: dirty ? "var(--dsw-text-primary, #eee)" : void 0,
+						color: dirty ? "var(--dsw-text-primary, #eee)" : void 0
+					},
 					onClick: save
 				}, saving ? "保存中…" : "保存"), (0, react.createElement)("button", {
 					type: "button",
 					disabled: busy || saving,
 					style: buttonStyle,
 					onClick: reset
-				}, "重置为继承"), saved ? (0, react.createElement)("span", { style: {
+				}, "重置为继承"), dirty ? (0, react.createElement)("span", { style: {
+					color: "var(--dsw-text-warning, #e5a00d)",
+					fontSize: "0.8em"
+				} }, "● 未保存(点「保存」才写盘)") : null, saved && !dirty ? (0, react.createElement)("span", { style: {
 					color: "var(--dsw-text-success, #46a758)",
 					fontSize: "0.8em"
 				} }, "已保存") : null, saveError !== null ? (0, react.createElement)("span", { style: {
@@ -1403,6 +1489,7 @@ window.__ModuleLoader__.load({
 			const [saved, setSaved] = (0, react.useState)(false);
 			const [saving, setSaving] = (0, react.useState)(false);
 			const [saveError, setSaveError] = (0, react.useState)(null);
+			useUnsavedGuard(dirty);
 			const save = () => {
 				const next = { dbPath: dbPath.trim() };
 				console.log("[roroko-tool] save data →", next);
@@ -1457,7 +1544,10 @@ window.__ModuleLoader__.load({
 						color: dirty ? "var(--dsw-text-primary, #eee)" : void 0
 					},
 					onClick: save
-				}, saving ? "保存中…" : "保存路径"), saved && !dirty ? (0, react.createElement)("span", { style: {
+				}, saving ? "保存中…" : "保存路径"), dirty ? (0, react.createElement)("span", { style: {
+					fontSize: "0.8em",
+					color: "var(--dsw-text-warning, #e5a00d)"
+				} }, "● 未保存(点「保存路径」才写盘)") : null, saved && !dirty ? (0, react.createElement)("span", { style: {
 					fontSize: "0.8em",
 					color: "var(--dsw-text-success, #46a758)"
 				} }, "已保存") : null, saveError !== null ? (0, react.createElement)("span", { style: {
