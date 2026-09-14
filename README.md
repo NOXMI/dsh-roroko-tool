@@ -16,7 +16,7 @@ DSH 官方对「工作区指令」只有一条路：把 `AGENTS.md` 追加到**�
 |---|---|
 | 占消息位，每轮都在上下文里排队 | 进 system 字段，不占消息位 |
 | compaction 折叠后需要重新注入 | 常驻，不被折叠 |
-| 内容随消息落库，改动要等下一会话 | **每一步现读文件**，改了立刻生效 |
+| 内容随消息落库，改动要等下一会话 | **装配时现读文件**，新会话立刻生效 |
 
 所以本包把注入拆成**两条腿**：
 
@@ -168,7 +168,8 @@ POST /roroko-tool/state   → { tool: 'preinject' | 'data' | 'mark', ... }
 
 空串会让 renderPrompt 把该 section 整个 filter 掉 —— **未配置即零污染**。
 
-**已知限制**：section 的 `order` 在 `apply()`（preset 挂载）时读一次，**改 order 需要重新挂载 preset**（重开会话或重启 DSH）；而文件清单由 provider 每次装配现读 state，改了立刻生效。
+**已知限制**：section 的 `order` 在 `apply()`（preset 挂载）时读一次，**改 order 需要重新挂载 preset**（重开会话或重启 DSH）。
+文件清单由 provider 在**会话装配时**现读 state —— 但注意：**内容一旦装配进系统提示词，就在该会话内固化**，同一会话中途改注入文件不会刷新，要新开会话才看得到（2026-09-14 实测，见第九节）。
 
 ### 5.2 消息段：一次性注入
 
@@ -292,10 +293,21 @@ npx tsdown                        # client → client/client.js（bundle 产物�
 
 ## 九、更新记录
 
+### 2026-09-14
+
+| commit / 动作 | 内容 |
+|---|---|
+| **服务器 A 案手术** | `roroko-server` preset 删掉 `dsh-persona` 段、`roroko-preinject` 开 `personaSection: true`。根因：preset 里 persona 的 `complete: true` 是**硬替换**，会把独立段 `roroko:preinject` 整段扫掉——系统层注入一直没生效就是这个。备份留在 preset 同目录 `.bak-*` |
+| **实测：系统层注入 ✅** | 模型复述系统提示词第一行 = 工作区 `AGENTS.md` 开头（`# AGENTS` / `## 洛洛可规则`），语气带 `IDENTITY.md` 人设 |
+| **实测：同会话不重读 ⚠️** | 装配后改注入文件，同一会话内模型仍引用旧内容，新会话才刷新。第五、十节措辞已按此修正 |
+| **实测：user 消息段 ✅** | 会话 log 出现 `source.plugin = 'roroko-preinject'` 签名，GUI 直接显示「上下文注入 roroko-preinject」 |
+
 ### 2026-09-11
 
 | commit | 内容 |
 |---|---|
+| `26cd28b` | 修 POST 回执缺兼容视图导致设置页面板卡「加载中…」 |
+| `834f155` | preinject 按 preset 分桶 + 路径宏 + 落点档位 + 设置页卡片化 |
 | `56dd158` | **设置页保存白箱化**：拆掉吞点击的 `disabled` 锁 + 假成功改为服务端回执 + 双端留痕。详见第七节 |
 | `2dd86f3` | preinject 面板字段兜底：防旧版 state 缺字段导致保存静默失效（**事后证明没打在根因上**，见第七节教训） |
 | `756daff` | preinject 支持**接管 persona 槽位**：新增 `personaSection` / `personaHead` / `includeRuntimeContext` 三个 config |
@@ -343,6 +355,9 @@ npx tsdown                        # client → client/client.js（bundle 产物�
 - 接管 persona 槽位（`personaSection: true`）**必须在 preset 里先删掉 `dsh-persona`**。
 - `personaSection` 的完整装配路径**只在新建会话时发生** —— 改完 preset 后，**旧会话不会重装配**，必须开新会话验证。拿旧会话测会得出错误结论。
 - 系统段与官方 `dsh-agent-instructions` 存在**内容重复注入的可能**（两边都想吃工作区 `AGENTS.md`）。接线时二选一，别两头都开。
+- 系统段内容**只在会话装配时读取**：同一会话中途改注入文件不会刷新，要新开一个会话（2026-09-14 实测，见第九节）。文件清单参数本身仍是每次现读 state。
+- `personaSection: true` 与 preset 里既有的 `dsh-persona` 段**不能共存**：同层同名注册会直接抛错，必须先删掉 persona 段（2026-09-14 服务器落地时确认）。
+- 用 canary 口令做注入验证时注意：模型可能判断"口令价值在于保密"而**拒绝抄出**（服务器实测遇到）。要它开口，就把标记写成没有保密理由的普通内容。
 
 ---
 
