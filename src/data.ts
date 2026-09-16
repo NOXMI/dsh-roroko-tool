@@ -37,6 +37,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { loadStateSync } from './state.js'
 import { RorokoDataDefaultDbPath } from './settings.js'
 import { applyQuery } from './datas/query.js'
+import { applyStateAutoinject } from './datas/state-autoinject.js'
 
 export const name = 'roroko-data'
 
@@ -416,6 +417,9 @@ export function apply(ctx: Context, config: RorokoDataConfig = {}): void {
   const dbPath = resolveDbPath(config)
 
   applyQuery(ctx, dbPath)
+
+  // 机制层:state 短条自动注入(不进 schema,不注册工具,开关在设置面板)。
+  applyStateAutoinject(ctx, dbPath)
 
   const lookupTool = defineTool({
     name: 'roroko_datas_lookup',

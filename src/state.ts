@@ -23,7 +23,7 @@ import { dirname, join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { readFile, rename, mkdir, writeFile } from 'node:fs/promises'
 import {
-  normalizeDataState, normalizeMarkState, normalizeState,
+  normalizeAutoinject, normalizeDataState, normalizeMarkState, normalizeState,
   RorokoDataState, RorokoMarkState, RorokoPreinjectOverride, RorokoToolState,
   RorokoToolStateDefault,
 } from './settings.js'
@@ -159,6 +159,8 @@ export async function clearPreinjectConfig(scope: string): Promise<RorokoToolSta
 /** data 参数节可部分覆盖的字段(宽松 unknown,内部收窄)。 */
 export interface RorokoDataConfigInput {
   dbPath?: unknown
+  /** 自动注入开关;字段缺失 = 不改(部分保存语义)。 */
+  autoinject?: unknown
 }
 
 /**
@@ -174,6 +176,9 @@ export async function setDataConfig(
     dbPath: typeof config.dbPath === 'string' && config.dbPath.trim().length > 0
       ? config.dbPath.trim()
       : existing.dbPath,
+    autoinject: config.autoinject === undefined
+      ? existing.autoinject
+      : normalizeAutoinject(config.autoinject),
   }
   const next: RorokoToolState = {
     ...current,

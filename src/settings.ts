@@ -110,13 +110,32 @@ export interface RorokoPresetOverride {
   preinject?: RorokoPreinjectOverride
 }
 
+/** state 短条自动注入机制(data 节)的开关形状。 */
+export interface RorokoAutoinjectState {
+  /** 按轮数注入;关掉就只剩"工具后"那条路。 */
+  rounds: boolean
+  /** 轮数阈值:每 N 轮最多注一次。 */
+  every: number
+  /** 调过 roroko_datas_* 之后的下一步注入。 */
+  afterTool: boolean
+}
+
+/** 自动注入默认值:两个来源都开,阈值 8 轮。 */
+export const RorokoAutoinjectDefaults: RorokoAutoinjectState = {
+  rounds: true,
+  every: 8,
+  afterTool: true,
+}
+
 /**
- * data 一节的 wire 形状:数据库路径覆盖。
+ * data 一节的 wire 形状:数据库路径 + 自动注入机制开关。
  * enabled 已退役:preset 声明 roroko-data 即注册四把工具。
  */
 export interface RorokoDataState {
   /** soul.db 绝对路径;缺省回落服务器默认路径。 */
   dbPath: string
+  /** 自动注入开关(机制层:不发 schema,故运行级开关在此是安全的)。 */
+  autoinject: RorokoAutoinjectState
 }
 
 /** mark 一节的 wire 形状:呻吟标记渲染总开关(web 渲染 / Telegram 出站共用)。 */
@@ -165,6 +184,7 @@ export const RorokoToolStateDefault: RorokoToolState = {
   presets: {},
   data: {
     dbPath: RorokoDataDefaultDbPath,
+    autoinject: { ...RorokoAutoinjectDefaults },
   },
   warn: {},
   mark: { enabled: true },
@@ -245,6 +265,22 @@ function migrateLegacyPreinject(value: unknown): RorokoPreinjectOverride | undef
   return Object.keys(out).length > 0 ? out : undefined
 }
 
+/** 自动注入开关窄化:布尔兜底,阈值钳到整数 1~200(非法值回落默认 8)。 */
+export function normalizeAutoinject(value: unknown): RorokoAutoinjectState {
+  const base = RorokoAutoinjectDefaults
+  if (typeof value !== 'object' || value === null) return { ...base }
+  const section = value as Record<string, unknown>
+  const raw = Number(section.every)
+  const every = Number.isFinite(raw)
+    ? Math.min(200, Math.max(1, Math.trunc(raw)))
+    : base.every
+  return {
+    rounds: typeof section.rounds === 'boolean' ? section.rounds : base.rounds,
+    every,
+    afterTool: typeof section.afterTool === 'boolean' ? section.afterTool : base.afterTool,
+  }
+}
+
 /** data 一节的窄化与默认。 */
 export function normalizeDataState(value: unknown): RorokoDataState {
   const base = RorokoToolStateDefault.data
@@ -253,7 +289,7 @@ export function normalizeDataState(value: unknown): RorokoDataState {
   const dbPath = typeof section.dbPath === 'string' && section.dbPath.trim().length > 0
     ? section.dbPath
     : base.dbPath
-  return { dbPath }
+  return { dbPath, autoinject: normalizeAutoinject(section.autoinject) }
 }
 
 /** mark 一节的窄化与默认(enabled 布尔兜底)。 */

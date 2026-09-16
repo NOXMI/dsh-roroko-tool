@@ -157,6 +157,7 @@ GET  /roroko-tool/presets  → 扫 $DSH_HOME/.agent-presets 列出 preset 卡片
 - `roroko_datas_state` 读写状态单行（`snap` 读 / `update` 写；库里表名仍是历史遗留的 `soul_state`）
 - `dbPath` 默认 `/var/www/api/database/soul.db`，可经 preset config 或设置页覆盖
 - 取料口径：`hit_count` 与「多久没用」只作展示、**不参与排序**（按它排会永远推同几条）；记录侧单字关键词**不作命中依据**（库里 62%~84% 是分词产生的单字 token，会误炸）；时间一律本地口径
+- **state 短条自动注入**（机制层，不发工具 schema，开关在设置页）：`data.autoinject` 两个独立来源 —— `rounds`（每 N 轮，`every` 默认 8）与 `afterTool`（调过 `roroko_datas_*` 之后的下一步）。短条内容 = `scene / truth / decision / position / body_state / behavior / arousal / 着装四件 / 计数器`，追加在对话**尾部**（只动后缀，不破前缀缓存）；同一回合只注一次；压缩后自动重注一次（不用干等 N 轮）
 
 ### 5.5 呻吟标记（mark）
 

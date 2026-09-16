@@ -91,9 +91,18 @@ interface PresetOverrideWire {
   preinject?: PreinjectOverrideWire
 }
 
+/** state 短条自动注入开关 wire(与 host 的 RorokoAutoinjectState 一致)。 */
+interface AutoinjectWire {
+  rounds: boolean
+  every: number
+  afterTool: boolean
+}
+
 /** data 参数 wire 形状(与 host settings.ts 一致,无 enabled)。 */
 interface DataWire {
   dbPath: string
+  /** 宿主未同步升级时可能缺失 —— 读取处一律给默认值。 */
+  autoinject?: AutoinjectWire
 }
 
 /** state 文件参数 wire(host 返回;warn 无参数为空节,mark 有渲染开关)。 */
@@ -586,14 +595,26 @@ function PreinjectScopePanel(props: {
   })
 }
 
-/** data 参数面板:数据库路径编辑。 */
+/** 轮数阈值收窄:整数 1~200,非法回落 8(与 host 的 normalizeAutoinject 同口径)。 */
+function clampEvery(value: string): number {
+  const n = Number.parseInt(value, 10)
+  if (!Number.isFinite(n)) return 8
+  return Math.min(200, Math.max(1, n))
+}
+
+/** data 参数面板:数据库路径 + state 自动注入开关。 */
 function DataPanel(props: {
   config: DataWire
   busy: boolean
   onSave: (next: DataWire) => Promise<boolean>
 }): ReturnType<typeof h> {
   const { config, busy, onSave } = props
+  // 宿主老版可能没这个节,读取处就地给默认。
+  const autoinject = config.autoinject ?? { rounds: true, every: 8, afterTool: true }
   const [dbPath, setDbPath] = useState<string>(() => toStr(config.dbPath))
+  const [rounds, setRounds] = useState<boolean>(() => autoinject.rounds)
+  const [afterTool, setAfterTool] = useState<boolean>(() => autoinject.afterTool)
+  const [every, setEvery] = useState<string>(() => String(autoinject.every))
   const [dirty, setDirty] = useState(false)
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -602,7 +623,10 @@ function DataPanel(props: {
   useUnsavedGuard(dirty)
 
   const save = (): void => {
-    const next: DataWire = { dbPath: dbPath.trim() }
+    const next: DataWire = {
+      dbPath: dbPath.trim(),
+      autoinject: { rounds, every: clampEvery(every), afterTool },
+    }
     console.log('[roroko-tool] save data →', next)
     setSaveError(null)
     setSaving(true)
@@ -635,6 +659,44 @@ function DataPanel(props: {
         style: inputStyle,
         onChange: (event: { target: { value: string } }) => { setDbPath(event.target.value); setDirty(true); setSaved(false) },
       }),
+      h('div', { style: { fontWeight: 600, margin: '14px 0 6px', fontSize: '0.9em' } },
+        'state 自动注入(机制层,不发工具 schema)'),
+      h('div', { style: { fontSize: '0.85em', color: 'var(--dsw-text-secondary, #888)', marginBottom: 8 } },
+        '取料后把她的状态短条追加到对话尾部;两个开关各自独立,同一回合只注一次。'),
+      h('label', {
+        style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85em', cursor: 'pointer' },
+      },
+        h('input', {
+          type: 'checkbox',
+          checked: rounds,
+          disabled: busy,
+          onChange: () => { setRounds(!rounds); setDirty(true); setSaved(false) },
+        }),
+        '轮数注入'),
+      h('div', {
+        style: { display: 'flex', alignItems: 'center', gap: 6, margin: '6px 0 8px', fontSize: '0.85em' },
+      },
+        h('input', {
+          type: 'number',
+          min: 1,
+          max: 200,
+          value: every,
+          disabled: busy || !rounds,
+          style: { ...inputStyle, width: 90 },
+          onChange: (event: { target: { value: string } }) => { setEvery(event.target.value); setDirty(true); setSaved(false) },
+        }),
+        h('span', { style: { color: 'var(--dsw-text-secondary, #888)' } },
+          '轮(1~200,默认 8;关了「轮数注入」此项无效)')),
+      h('label', {
+        style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85em', cursor: 'pointer' },
+      },
+        h('input', {
+          type: 'checkbox',
+          checked: afterTool,
+          disabled: busy,
+          onChange: () => { setAfterTool(!afterTool); setDirty(true); setSaved(false) },
+        }),
+        '工具调用后注入(调过 roroko_datas_* 的下一步)'),
       h('div', {
         style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' },
       },
@@ -647,9 +709,9 @@ function DataPanel(props: {
             color: dirty ? 'var(--dsw-text-primary, #eee)' : undefined,
           },
           onClick: save,
-        }, saving ? '保存中…' : '保存路径'),
+        }, saving ? '保存中…' : '保存设置'),
         dirty
-          ? h('span', { style: { fontSize: '0.8em', color: 'var(--dsw-text-warning, #e5a00d)' } }, '● 未保存(点「保存路径」才写盘)')
+          ? h('span', { style: { fontSize: '0.8em', color: 'var(--dsw-text-warning, #e5a00d)' } }, '● 未保存(点「保存设置」才写盘)')
           : null,
         saved && !dirty
           ? h('span', { style: { fontSize: '0.8em', color: 'var(--dsw-text-success, #46a758)' } }, '已保存')
@@ -863,11 +925,11 @@ export function RorokoToolSection(): ReturnType<typeof h> {
             desc: '系统段进 system 提示词(常驻不折叠),消息段进 user 消息(会话一次);注入文件与落点按 preset 一卡一层。',
           }),
           ...scopeCards,
-          h(ToolHeader, { title: '素材库工具 (roroko-data)', desc: '取料 roroko_datas_query(发散默认 / 条件收束)+ roroko_datas_lookup / register / state;preset 声明即启用。' }),
+          h(ToolHeader, { title: '素材库工具 (roroko-data)', desc: '取料 roroko_datas_query(发散默认 / 条件收束)+ roroko_datas_lookup / register / state;state 短条可按轮数/取料后自动注入;preset 声明即启用。' }),
           h(DataPanel, {
             config: state.data,
             busy: busy && busyTool === 'data',
-            onSave: (next: DataWire) => post('data', { dbPath: next.dbPath }, 'data'),
+            onSave: (next: DataWire) => post('data', { dbPath: next.dbPath, autoinject: next.autoinject }, 'data'),
           }),
           h(ToolHeader, { title: '呻吟标记渲染 (roroko-mark)', desc: '-呻吟_X- 标记在 web / Telegram 显示层展开;preset 声明即启用。' }),
           h(MarkPanel, {

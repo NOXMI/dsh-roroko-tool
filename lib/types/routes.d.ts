@@ -7,7 +7,7 @@
  *   GET  /roroko-tool/state  → 200 { presets:{<id>:{preinject}}, data:{dbPath}, … }
  *                             另带一份兼容视图 preinject(公共桶 + 内置默认),旧设置页照读
  *   POST /roroko-tool/state  → body { tool:'preinject', preset?, systemFiles/… } 写该 preset 覆盖
- *                            → body { tool:'data', dbPath } 写参数
+ *                            → body { tool:'data', dbPath, autoinject? } 写参数
  *                            → body { tool:'mark', enabled } 写渲染开关
  *   其余 method → 405;POST 非同一 Origin → 403。
  *

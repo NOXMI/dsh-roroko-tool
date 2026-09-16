@@ -1481,17 +1481,38 @@ window.__ModuleLoader__.load({
 				} }, `保存失败: ${saveError}`) : null)
 			] });
 		}
-		/** data 参数面板:数据库路径编辑。 */
+		/** 轮数阈值收窄:整数 1~200,非法回落 8(与 host 的 normalizeAutoinject 同口径)。 */
+		function clampEvery(value) {
+			const n = Number.parseInt(value, 10);
+			if (!Number.isFinite(n)) return 8;
+			return Math.min(200, Math.max(1, n));
+		}
+		/** data 参数面板:数据库路径 + state 自动注入开关。 */
 		function DataPanel(props) {
 			const { config, busy, onSave } = props;
+			const autoinject = config.autoinject ?? {
+				rounds: true,
+				every: 8,
+				afterTool: true
+			};
 			const [dbPath, setDbPath] = (0, react.useState)(() => toStr(config.dbPath));
+			const [rounds, setRounds] = (0, react.useState)(() => autoinject.rounds);
+			const [afterTool, setAfterTool] = (0, react.useState)(() => autoinject.afterTool);
+			const [every, setEvery] = (0, react.useState)(() => String(autoinject.every));
 			const [dirty, setDirty] = (0, react.useState)(false);
 			const [saved, setSaved] = (0, react.useState)(false);
 			const [saving, setSaving] = (0, react.useState)(false);
 			const [saveError, setSaveError] = (0, react.useState)(null);
 			useUnsavedGuard(dirty);
 			const save = () => {
-				const next = { dbPath: dbPath.trim() };
+				const next = {
+					dbPath: dbPath.trim(),
+					autoinject: {
+						rounds,
+						every: clampEvery(every),
+						afterTool
+					}
+				};
 				console.log("[roroko-tool] save data →", next);
 				setSaveError(null);
 				setSaving(true);
@@ -1530,6 +1551,70 @@ window.__ModuleLoader__.load({
 					}
 				}),
 				(0, react.createElement)("div", { style: {
+					fontWeight: 600,
+					margin: "14px 0 6px",
+					fontSize: "0.9em"
+				} }, "state 自动注入(机制层,不发工具 schema)"),
+				(0, react.createElement)("div", { style: {
+					fontSize: "0.85em",
+					color: "var(--dsw-text-secondary, #888)",
+					marginBottom: 8
+				} }, "取料后把她的状态短条追加到对话尾部;两个开关各自独立,同一回合只注一次。"),
+				(0, react.createElement)("label", { style: {
+					display: "flex",
+					alignItems: "center",
+					gap: 6,
+					fontSize: "0.85em",
+					cursor: "pointer"
+				} }, (0, react.createElement)("input", {
+					type: "checkbox",
+					checked: rounds,
+					disabled: busy,
+					onChange: () => {
+						setRounds(!rounds);
+						setDirty(true);
+						setSaved(false);
+					}
+				}), "轮数注入"),
+				(0, react.createElement)("div", { style: {
+					display: "flex",
+					alignItems: "center",
+					gap: 6,
+					margin: "6px 0 8px",
+					fontSize: "0.85em"
+				} }, (0, react.createElement)("input", {
+					type: "number",
+					min: 1,
+					max: 200,
+					value: every,
+					disabled: busy || !rounds,
+					style: {
+						...inputStyle,
+						width: 90
+					},
+					onChange: (event) => {
+						setEvery(event.target.value);
+						setDirty(true);
+						setSaved(false);
+					}
+				}), (0, react.createElement)("span", { style: { color: "var(--dsw-text-secondary, #888)" } }, "轮(1~200,默认 8;关了「轮数注入」此项无效)")),
+				(0, react.createElement)("label", { style: {
+					display: "flex",
+					alignItems: "center",
+					gap: 6,
+					fontSize: "0.85em",
+					cursor: "pointer"
+				} }, (0, react.createElement)("input", {
+					type: "checkbox",
+					checked: afterTool,
+					disabled: busy,
+					onChange: () => {
+						setAfterTool(!afterTool);
+						setDirty(true);
+						setSaved(false);
+					}
+				}), "工具调用后注入(调过 roroko_datas_* 的下一步)"),
+				(0, react.createElement)("div", { style: {
 					display: "flex",
 					gap: 8,
 					alignItems: "center",
@@ -1544,10 +1629,10 @@ window.__ModuleLoader__.load({
 						color: dirty ? "var(--dsw-text-primary, #eee)" : void 0
 					},
 					onClick: save
-				}, saving ? "保存中…" : "保存路径"), dirty ? (0, react.createElement)("span", { style: {
+				}, saving ? "保存中…" : "保存设置"), dirty ? (0, react.createElement)("span", { style: {
 					fontSize: "0.8em",
 					color: "var(--dsw-text-warning, #e5a00d)"
-				} }, "● 未保存(点「保存路径」才写盘)") : null, saved && !dirty ? (0, react.createElement)("span", { style: {
+				} }, "● 未保存(点「保存设置」才写盘)") : null, saved && !dirty ? (0, react.createElement)("span", { style: {
 					fontSize: "0.8em",
 					color: "var(--dsw-text-success, #46a758)"
 				} }, "已保存") : null, saveError !== null ? (0, react.createElement)("span", { style: {
@@ -1741,11 +1826,14 @@ window.__ModuleLoader__.load({
 				desc: "系统段进 system 提示词(常驻不折叠),消息段进 user 消息(会话一次);注入文件与落点按 preset 一卡一层。"
 			}), ...scopeCards, (0, react.createElement)(ToolHeader, {
 				title: "素材库工具 (roroko-data)",
-				desc: "取料 roroko_datas_query(发散默认 / 条件收束)+ roroko_datas_lookup / register / state;preset 声明即启用。"
+				desc: "取料 roroko_datas_query(发散默认 / 条件收束)+ roroko_datas_lookup / register / state;state 短条可按轮数/取料后自动注入;preset 声明即启用。"
 			}), (0, react.createElement)(DataPanel, {
 				config: state.data,
 				busy: busy && busyTool === "data",
-				onSave: (next) => post("data", { dbPath: next.dbPath }, "data")
+				onSave: (next) => post("data", {
+					dbPath: next.dbPath,
+					autoinject: next.autoinject
+				}, "data")
 			}), (0, react.createElement)(ToolHeader, {
 				title: "呻吟标记渲染 (roroko-mark)",
 				desc: "-呻吟_X- 标记在 web / Telegram 显示层展开;preset 声明即启用。"

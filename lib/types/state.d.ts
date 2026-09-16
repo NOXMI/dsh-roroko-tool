@@ -58,6 +58,8 @@ export declare function clearPreinjectConfig(scope: string): Promise<RorokoToolS
 /** data 参数节可部分覆盖的字段(宽松 unknown,内部收窄)。 */
 export interface RorokoDataConfigInput {
     dbPath?: unknown;
+    /** 自动注入开关;字段缺失 = 不改(部分保存语义)。 */
+    autoinject?: unknown;
 }
 /**
  * 覆盖保存 data 参数节。body 中提供的字段(非 undefined)覆盖当前值,

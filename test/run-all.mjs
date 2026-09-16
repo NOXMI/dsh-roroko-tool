@@ -17,6 +17,11 @@ const suites = [
   { file: 'route-state.mjs', nodeArgs: [] },
   { file: 'preinject-form.mjs', nodeArgs: [] },
   {
+    file: 'datas-autoinject.mjs',
+    // 机制本体 import 了 dsh-llm 的 createUserMessage(值导入),同样走替身。
+    nodeArgs: ['--import', pathToFileURL(join(here, 'helpers', 'register-stubs.mjs')).href],
+  },
+  {
     file: 'preinject-unit.mjs',
     // preinject.js 顶层 import 了 DSH 运行时包,靠解析钩子换成本地替身。
     // 注意:--import 在 Windows 上必须给 file:// URL,盘符路径会被判成协议 'g:'。
