@@ -15,7 +15,7 @@ const { ok, eq, done } = makeAsserts()
 const home = await useTempDshHome('roroko-autoinject-')
 
 const {
-  AutoinjectDefaultRounds, AutoinjectShortLimit, clampRounds, todayStamp,
+  AutoinjectDefaultRounds, clampRounds, todayStamp,
   dueByRounds, isRorokoDatasTool, decide, renderStateShort, counterToday,
   buildInjectText, AutoinjectNotice,
 } = await import('../lib/datas/state-autoinject-form.js')
@@ -111,22 +111,15 @@ const longRow = {
   anal_today: 0, anal_total: 3,
   last_daily_reset: today,
 }
-const short = renderStateShort(longRow, now, 400)
+const short = renderStateShort(longRow, now)
 ok(short.startsWith('[state] scene=公司下午的开放工位'), '短条:以 scene 开头')
 ok(short.includes('arousal=62'), '短条:含 arousal')
 ok(short.includes('计 oral 1/12 · vaginal 0/8 · anal 0/3'), '短条:计数器格式')
 ok(short.includes('着装=白衬衫/包臀裙/蕾丝内衣/蕾丝内裤'), '短条:着装合并成一段')
 ok(short.includes('truth=') && short.includes('decision=') && short.includes('behavior='),
   '★ 短条:含 truth / decision / behavior(阿一拍板加的三项)')
-
-// 默认上限:11 项在 150 字里是紧的 —— 断言"不超限"与"从尾巴砍",不断言每段都在
-const capped = renderStateShort(longRow, now)
-ok(capped.length <= AutoinjectShortLimit,
-  `★ 默认上限生效(${capped.length} ≤ ${AutoinjectShortLimit})`)
-ok(capped.includes('scene=') && capped.includes('truth='),
-  '★ 默认上限:头部字段(含 truth)保住')
-ok(!capped.includes('着装='),
-  '★ 默认上限:超长时先砍着装 —— truth/decision/behavior 挤掉了它的位置(待阿一定夺上限)')
+ok(short.includes('着装=') && short.includes('计 oral'),
+  '★ 短条:不限字数 → 尾部段(计数器/着装)都保住')
 
 const slim = renderStateShort({
   scene: '办公室', arousal: 30, last_daily_reset: today, oral_today: 0, oral_total: 0,
@@ -137,15 +130,14 @@ ok(slim.includes('计 oral 0/0'), '短条:计数器恒在(哪怕全 0)')
 const dirty = renderStateShort({ scene: '咖啡 | 吧台', last_daily_reset: today }, now)
 ok(!dirty.includes('| 吧台'), '★ 短条:值里的竖线换成斜杠(不破分隔)')
 
-// 截断:造一条超长,断言被砍的是尾巴上的段(着装先走)
+// 不限字数:超长输入原样保留(生产库的 position/behavior 都是长句)
 const huge = renderStateShort({
   ...longRow,
   scene: '一'.repeat(80),
   truth: '二'.repeat(80),
 }, now)
-ok(huge.length <= AutoinjectShortLimit, `★ 超长 fixture 被截断(${huge.length} 字)`)
-ok(!huge.includes('着装='), '★ 截断从尾巴砍:着装先被砍掉')
-ok(huge.includes('scene='), '★ 截断保留头部字段')
+ok(huge.length > 200, `★ 不限字数:超长输入原样保留(${huge.length} 字,不截断)`)
+ok(huge.includes('着装=') && huge.includes('计 oral'), '★ 不限字数:尾部段不会被砍')
 
 // ── 注入壳
 const text = buildInjectText(short)

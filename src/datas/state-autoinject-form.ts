@@ -10,15 +10,12 @@
  *   3. 只有实际注入才刷新计数(调用方只在 inject=true 时改计数)。
  *
  * 拍板(2026-09-16 阿一):内容不去重(触发即注);短条含 truth/decision/behavior;
- * 上限放宽到 150 字;口径照抄 nanobot(「黑川不可见也不知情」)。
+ * **不做字数截断**(先不限,后面再调);口径照抄 nanobot(「黑川不可见也不知情」)。
  */
 import type { Row } from './query-form.js'
 
 /** 轮数阈值默认值(面板可改)。 */
 export const AutoinjectDefaultRounds = 8
-
-/** 短条字符上限:超过就从尾巴砍(先砍着装,再砍计数器)。 */
-export const AutoinjectShortLimit = 150
 
 /** 注入来源:轮数触发 / 工具调用后触发。 */
 export type InjectSource = 'rounds' | 'after-tool'
@@ -113,10 +110,11 @@ export function counterToday(row: Row, base: string, today: string): number {
 }
 
 /**
- * 渲染短条(≤limit 字)。段序 = 优先保留序,超限从**尾巴**砍:
- * 着装 → 计数器 → arousal → behavior …(越靠前越不会被砍)。
+ * 渲染短条。段序固定:叙事 → 计数 → 着装。
+ * 2026-09-16 阿一拍板:**不限字数**(先让状态说全,长度后面再调)——
+ * 曾试过 150 字上限,生产库实测一项 position 就 34 字,当场被砍掉着装与计数器。
  */
-export function renderStateShort(row: Row, now: Date, limit = AutoinjectShortLimit): string {
+export function renderStateShort(row: Row, now: Date): string {
   const today = todayStamp(now)
   const parts: string[] = []
   const push = (key: string): void => {
@@ -141,11 +139,7 @@ export function renderStateShort(row: Row, now: Date, limit = AutoinjectShortLim
     .filter(value => value.length > 0)
   if (outfit.length > 0) parts.push(`着装=${outfit.join('/')}`)
 
-  const segments = parts
-  while (segments.length > 1 && `[state] ${segments.join(' | ')}`.length > limit) {
-    segments.pop()
-  }
-  return `[state] ${segments.join(' | ')}`
+  return `[state] ${parts.join(' | ')}`
 }
 
 /** 注入壳:照抄 nanobot 口径(黑川不可见也不知情 —— 只看她说出口的)。 */
