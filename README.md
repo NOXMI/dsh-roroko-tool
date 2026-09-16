@@ -23,7 +23,7 @@ DSH 官方对「工作区指令」只提供一条路：把 `AGENTS.md` 追加到
 |---|---|---|
 | `.` | `roroko-tool` | host 入口：挂载 `GET/POST /roroko-tool/state` 与 `GET /roroko-tool/presets` |
 | `./preinject` | `roroko-preinject` | **指令注入器**（系统段 + 消息段两条腿） |
-| `./data` | `roroko-data` | 素材库工具集：`roroko_datas_query` / `roroko_lookup` / `roroko_register` / `roroko_soul` |
+| `./data` | `roroko-data` | 素材库工具集：`roroko_datas_query` / `roroko_datas_lookup` / `roroko_datas_register` / `roroko_datas_state` |
 | `./warn` | `roroko-warn` | 超量收敛警告（**尚未实现**） |
 | `./client` | — | Web 设置页（含 `-呻吟_X-` 展开的显示层节点） |
 
@@ -152,9 +152,9 @@ GET  /roroko-tool/presets  → 扫 $DSH_HOME/.agent-presets 列出 preset 卡片
 ### 5.4 素材库（data）
 
 - `roroko_datas_query` **取料**：表概览 + 候选召回。默认**发散**（池内均匀随机，每次结果不同）；给 `kw` 按关键词收束，`clothing` 另可给 `slot` / `reveal_level`（暴露上限 ≤N）/ `signal_level`（信号下限 ≥N）。穿搭按槽位动态分组（每槽位 `limit` 条，默认 2），候选不足时提示用 `roroko_datas_register` 落库
-- `roroko_lookup` 按名字查详情
-- `roroko_register` 不在库里时注册进 `ad_hoc`
-- `roroko_soul` 读写 `soul_state`（snap / update）
+- `roroko_datas_lookup` 按名字查详情
+- `roroko_datas_register` 不在库里时注册进 `ad_hoc`
+- `roroko_datas_state` 读写状态单行（`snap` 读 / `update` 写；库里表名仍是历史遗留的 `soul_state`）
 - `dbPath` 默认 `/var/www/api/database/soul.db`，可经 preset config 或设置页覆盖
 - 取料口径：`hit_count` 与「多久没用」只作展示、**不参与排序**（按它排会永远推同几条）；记录侧单字关键词**不作命中依据**（库里 62%~84% 是分词产生的单字 token，会误炸）；时间一律本地口径
 

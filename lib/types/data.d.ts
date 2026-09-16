@@ -9,10 +9,10 @@
  *   roroko_datas_query  取料:表概览 + 候选召回(发散默认 / 条件收束),
  *                   穿搭按 slot 分组,返回 markdown 表格(省 token,LLM 原生友好)。
  *                   实现见 datas/query.ts + datas/query-form.ts。
- *   roroko_lookup   按名在四张素材表查详情。
- *   roroko_register 兜底:场景/衣物/道具/伴侣不在库中时注册入 ad_hoc,
+ *   roroko_datas_lookup   按名在四张素材表查详情。
+ *   roroko_datas_register 兜底:场景/衣物/道具/伴侣不在库中时注册入 ad_hoc,
  *                   主表同名则合并关键词回主表。
- *   roroko_soul     soul_state 单行读写:snap 读当前状态(带 staleness
+ *   roroko_datas_state     状态单行读写(表 soul_state):snap 读当前状态(带 staleness
  *                   陈旧度 + 鞭策),update 按字段更新(自动同步 *_updated
  *                   时间戳 / 计数器 / hit_count 联动)。
  *
@@ -40,16 +40,16 @@ export interface RorokoDataConfig {
     /** soul.db 绝对路径;缺省回落服务器默认路径(state 覆盖其次)。 */
     dbPath?: string;
 }
-/** roroko_lookup 主逻辑:按名在四张素材表查详情 → markdown。 */
+/** roroko_datas_lookup 主逻辑:按名在四张素材表查详情 → markdown。 */
 export declare function runLookup(db: DatabaseSync, nameQuery: string): string;
-/** roroko_register 主逻辑:ad_hoc 注册,或主表同名合并关键词。 */
+/** roroko_datas_register 主逻辑:ad_hoc 注册,或主表同名合并关键词。 */
 export declare function runRegister(db: DatabaseSync, typeKey: string, nameInput: string, desc: string): string;
 /**
- * roroko_soul snap:读 soul_state 当前状态,输出 markdown + staleness 鞭策。
+ * roroko_datas_state snap:读 soul_state 当前状态,输出 markdown + staleness 鞭策。
  * 跨天自动清零今日计数器。
  */
-export declare function runSoulSnap(db: DatabaseSync, now: Date): string;
-/** roroko_soul update:宽松 fields → 白名单列写回,含 incr 快捷计数。 */
-export declare function runSoulUpdate(db: DatabaseSync, fields: Record<string, unknown>, now: Date): string;
+export declare function runStateSnap(db: DatabaseSync, now: Date): string;
+/** roroko_datas_state update:宽松 fields → 白名单列写回,含 incr 快捷计数。 */
+export declare function runStateUpdate(db: DatabaseSync, fields: Record<string, unknown>, now: Date): string;
 /** 注册四个素材库工具;preset 声明本插件即注册。 */
 export declare function apply(ctx: Context, config?: RorokoDataConfig): void;

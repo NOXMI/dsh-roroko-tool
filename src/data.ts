@@ -9,10 +9,10 @@
  *   roroko_datas_query  取料:表概览 + 候选召回(发散默认 / 条件收束),
  *                   穿搭按 slot 分组,返回 markdown 表格(省 token,LLM 原生友好)。
  *                   实现见 datas/query.ts + datas/query-form.ts。
- *   roroko_lookup   按名在四张素材表查详情。
- *   roroko_register 兜底:场景/衣物/道具/伴侣不在库中时注册入 ad_hoc,
+ *   roroko_datas_lookup   按名在四张素材表查详情。
+ *   roroko_datas_register 兜底:场景/衣物/道具/伴侣不在库中时注册入 ad_hoc,
  *                   主表同名则合并关键词回主表。
- *   roroko_soul     soul_state 单行读写:snap 读当前状态(带 staleness
+ *   roroko_datas_state     状态单行读写(表 soul_state):snap 读当前状态(带 staleness
  *                   陈旧度 + 鞭策),update 按字段更新(自动同步 *_updated
  *                   时间戳 / 计数器 / hit_count 联动)。
  *
@@ -96,7 +96,7 @@ const TABLE_META: Record<string, { table: string; nameCol: string; hasSlot: bool
   companion: { table: 'companion_pool', nameCol: 'profession', hasSlot: false },
 }
 
-/** roroko_register 合法 type 键(ad_hoc type 用主表名存)。 */
+/** roroko_datas_register 合法 type 键(ad_hoc type 用主表名存)。 */
 const REGISTER_TYPES: Record<string, string> = {
   scene: 'scenes',
   clothing: 'clothing',
@@ -104,7 +104,7 @@ const REGISTER_TYPES: Record<string, string> = {
   companion: 'companion_pool',
 }
 
-/** roroko_lookup 主逻辑:按名在四张素材表查详情 → markdown。 */
+/** roroko_datas_lookup 主逻辑:按名在四张素材表查详情 → markdown。 */
 export function runLookup(db: DatabaseSync, nameQuery: string): string {
   const tables: Array<{ table: string; nameCol: string; cols: string[] }> = [
     { table: 'clothing', nameCol: 'name', cols: ['name', 'slot', 'reveal_level', 'signal_level', 'note'] },
@@ -139,7 +139,7 @@ function tokenizeName(name: string): string[] {
   return [...tokens]
 }
 
-/** roroko_register 主逻辑:ad_hoc 注册,或主表同名合并关键词。 */
+/** roroko_datas_register 主逻辑:ad_hoc 注册,或主表同名合并关键词。 */
 export function runRegister(db: DatabaseSync, typeKey: string, nameInput: string, desc: string): string {
   const tableName = REGISTER_TYPES[typeKey]
   const meta = TABLE_META[typeKey] ?? { table: tableName, nameCol: 'name', hasSlot: false }
@@ -165,10 +165,10 @@ export function runRegister(db: DatabaseSync, typeKey: string, nameInput: string
 }
 
 /**
- * roroko_soul snap:读 soul_state 当前状态,输出 markdown + staleness 鞭策。
+ * roroko_datas_state snap:读 soul_state 当前状态,输出 markdown + staleness 鞭策。
  * 跨天自动清零今日计数器。
  */
-export function runSoulSnap(db: DatabaseSync, now: Date): string {
+export function runStateSnap(db: DatabaseSync, now: Date): string {
   // 今日计数器跨天清零。
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
   const row0 = db.prepare('SELECT last_daily_reset FROM soul_state WHERE id = 1').get() as unknown as Row | undefined
@@ -178,7 +178,7 @@ export function runSoulSnap(db: DatabaseSync, now: Date): string {
     ).run(today)
   }
   const row = db.prepare('SELECT * FROM soul_state WHERE id = 1').get() as unknown as Row | undefined
-  if (!row) return 'soul_state 为空(id=1 不存在)'
+  if (!row) return '状态表为空(id=1 不存在)'
 
   /** 字段 → (类别, 陈旧度阈值分钟列表[score1..4])。 */
   const CATS: Record<string, { cat: 'body' | 'outfit' | 'narrative'; minutes: number[] }> = {
@@ -279,7 +279,7 @@ export function runSoulSnap(db: DatabaseSync, now: Date): string {
     'outfit_socks', 'outfit_footwear', 'outfit_hair', 'outfit_accessory', 'outfit_outerwear',
     'companion_role', 'sexual_items',
   ]
-  const lines = ['## soul_state', '', '| 字段 | 值 | 鞭策 |', '|------|-----|------|']
+  const lines = ['## state', '', '| 字段 | 值 | 鞭策 |', '|------|-----|------|']
   for (const key of order) {
     const value = display(key)
     if (!value) continue
@@ -293,8 +293,8 @@ export function runSoulSnap(db: DatabaseSync, now: Date): string {
   return lines.join('\n')
 }
 
-/** roroko_soul update 字段白名单(宽松 fields 收窄用)。 */
-const SOUL_FIELD_COLS = [
+/** roroko_datas_state update 字段白名单(宽松 fields 收窄用)。 */
+const STATE_FIELD_COLS = [
   // narrative
   'scene', 'truth', 'decision', 'position', 'body_state', 'behavior',
   // body
@@ -324,8 +324,8 @@ const INT_FIELDS = new Set<string>([
   'oral_today', 'vaginal_today', 'anal_today', 'oral_total', 'vaginal_total', 'anal_total',
 ])
 
-/** roroko_soul update:宽松 fields → 白名单列写回,含 incr 快捷计数。 */
-export function runSoulUpdate(db: DatabaseSync, fields: Record<string, unknown>, now: Date): string {
+/** roroko_datas_state update:宽松 fields → 白名单列写回,含 incr 快捷计数。 */
+export function runStateUpdate(db: DatabaseSync, fields: Record<string, unknown>, now: Date): string {
   const tsNow = now.toISOString().slice(0, 19).replace('T', ' ')
   const updates = new Map<string, string | number>()
   const unknown: string[] = []
@@ -333,7 +333,7 @@ export function runSoulUpdate(db: DatabaseSync, fields: Record<string, unknown>,
   for (const [key, raw] of Object.entries(fields)) {
     // incr_* 快捷计数单独处理。
     if (key.startsWith('incr_')) continue
-    if (!(SOUL_FIELD_COLS as readonly string[]).includes(key)) { unknown.push(key); continue }
+    if (!(STATE_FIELD_COLS as readonly string[]).includes(key)) { unknown.push(key); continue }
     if (INT_FIELDS.has(key)) {
       const n = Number(raw)
       updates.set(key, Number.isFinite(n) ? Math.trunc(n) : 0)
@@ -418,7 +418,7 @@ export function apply(ctx: Context, config: RorokoDataConfig = {}): void {
   applyQuery(ctx, dbPath)
 
   const lookupTool = defineTool({
-    name: 'roroko_lookup',
+    name: 'roroko_datas_lookup',
     description: '按名字精确查某素材(场景/穿搭/道具/伴侣)的完整详情,返回过滤后的字段。遇到不认识的名字先查这里。',
     parameters: {
       name: {
@@ -437,7 +437,7 @@ export function apply(ctx: Context, config: RorokoDataConfig = {}): void {
   })
 
   const registerTool = defineTool({
-    name: 'roroko_register',
+    name: 'roroko_datas_register',
     description:
       '素材兜底注册:场景/穿搭/道具/伴侣不在库里时注册入 ad_hoc 表。'
       + '若主表已有同名,则把名字分词合并进关键词,不重复录入。type 取 scene|clothing|items|companion。',
@@ -467,10 +467,10 @@ export function apply(ctx: Context, config: RorokoDataConfig = {}): void {
     },
   })
 
-  const soulTool = defineTool({
-    name: 'roroko_soul',
+  const stateTool = defineTool({
+    name: 'roroko_datas_state',
     description:
-      '洛洛可 soul_state 读写:单行状态存叙事(scene/truth/decision/position/body_state/behavior)'
+      '洛洛可状态读写:单行状态存叙事(scene/truth/decision/position/body_state/behavior)'
       + '、身体(sex_state/arousal/fatigue/companion_*)、穿搭(outfit_*)、道具(sexual_items)与计数器'
       + '(oral/vaginal/anal today+total)。'
       + 'action=snap 读当前状态(markdown,含 stale 陈旧度鞭策,今日计数器跨天自动清零);'
@@ -498,21 +498,21 @@ export function apply(ctx: Context, config: RorokoDataConfig = {}): void {
     async execute(args) {
       const now = new Date()
       return withDb(dbPath, db => {
-        if (args.action === 'snap') return runSoulSnap(db, now)
+        if (args.action === 'snap') return runStateSnap(db, now)
         const fields = args.fields !== undefined && typeof args.fields === 'object' && args.fields !== null
           ? args.fields as Record<string, unknown>
           : {}
-        return runSoulUpdate(db, fields, now)
+        return runStateUpdate(db, fields, now)
       })
     },
     presentCall(args) {
       const sub = args.action === 'snap' ? 'snap' : JSON.stringify(args.fields ?? {}).slice(0, 40)
       const kind = args.action === 'snap' ? 'read' : 'other'
-      return { card: 'generic', title: `soul ${args.action}`, kind, rawInput: sub }
+      return { card: 'generic', title: `state ${args.action}`, kind, rawInput: sub }
     },
   })
 
   ctx.tools.register(lookupTool)
   ctx.tools.register(registerTool)
-  ctx.tools.register(soulTool)
+  ctx.tools.register(stateTool)
 }

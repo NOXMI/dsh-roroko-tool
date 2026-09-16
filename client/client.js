@@ -1741,7 +1741,7 @@ window.__ModuleLoader__.load({
 				desc: "系统段进 system 提示词(常驻不折叠),消息段进 user 消息(会话一次);注入文件与落点按 preset 一卡一层。"
 			}), ...scopeCards, (0, react.createElement)(ToolHeader, {
 				title: "素材库工具 (roroko-data)",
-				desc: "取料 roroko_datas_query(发散默认 / 条件收束)+ lookup/register + soul_state 读写;preset 声明即启用。"
+				desc: "取料 roroko_datas_query(发散默认 / 条件收束)+ roroko_datas_lookup / register / state;preset 声明即启用。"
 			}), (0, react.createElement)(DataPanel, {
 				config: state.data,
 				busy: busy && busyTool === "data",
