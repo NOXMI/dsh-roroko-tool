@@ -1,3 +1,9 @@
 node_modules/
 lib/
 .idea/
+
+# 第三方 NSFW 资料（卡/预设），绝不入库
+refs/
+
+# 私有凭据（cookie / token 导出物），绝不入库
+.secrets/

@@ -13,6 +13,7 @@ const suites = [
   { file: 'expander-smoke.mjs', nodeArgs: [] },
   { file: 'settings-unit.mjs', nodeArgs: [] },
   { file: 'state-io.mjs', nodeArgs: [] },
+  { file: 'datas-query.mjs', nodeArgs: [] },
   { file: 'route-state.mjs', nodeArgs: [] },
   { file: 'preinject-form.mjs', nodeArgs: [] },
   {

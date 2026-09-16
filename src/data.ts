@@ -6,8 +6,9 @@
  * 四个 agent 工具,直接经 `node:sqlite` 访问服务器 soul.db,不再外包 python
  * CLI。
  *
- *   roroko_query    按关键词查素材(scene/clothing/items/companion),
- *                   返回 markdown 表格(省 token,LLM 原生友好)。
+ *   roroko_datas_query  取料:表概览 + 候选召回(发散默认 / 条件收束),
+ *                   穿搭按 slot 分组,返回 markdown 表格(省 token,LLM 原生友好)。
+ *                   实现见 datas/query.ts + datas/query-form.ts。
  *   roroko_lookup   按名在四张素材表查详情。
  *   roroko_register 兜底:场景/衣物/道具/伴侣不在库中时注册入 ad_hoc,
  *                   主表同名则合并关键词回主表。
@@ -35,6 +36,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { loadStateSync } from './state.js'
 import { RorokoDataDefaultDbPath } from './settings.js'
+import { applyQuery } from './datas/query.js'
 
 export const name = 'roroko-data'
 
@@ -85,18 +87,6 @@ function parseKeywords(value: unknown): string[] {
   return raw.split(',').map(s => s.trim()).filter(s => s.length > 0)
 }
 
-/** 时间戳 → 相对时间文案(`从未`/`Xmin前`/`Xh前`/`Xd前`/`刚刚`)。 */
-function fmtLastUsed(ts: unknown, now: Date): string {
-  if (typeof ts !== 'string' || ts.trim().length === 0) return '从未'
-  const t = new Date(ts.replace(' ', 'T'))
-  if (Number.isNaN(t.getTime())) return '从未'
-  const minutes = (now.getTime() - t.getTime()) / 60_000
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${Math.floor(minutes)}min前`
-  if (minutes < 1440) return `${Math.floor(minutes / 60)}h前`
-  return `${Math.floor(minutes / 1440)}d前`
-}
-
 /** 素材表映射:alias → (真实表名, 名字列, 是否有 slot 列)。 */
 const TABLE_META: Record<string, { table: string; nameCol: string; hasSlot: boolean }> = {
   scene: { table: 'scenes', nameCol: 'name', hasSlot: false },
@@ -106,122 +96,12 @@ const TABLE_META: Record<string, { table: string; nameCol: string; hasSlot: bool
   companion: { table: 'companion_pool', nameCol: 'profession', hasSlot: false },
 }
 
-/** roroko_query 合法表键。 */
-const QUERY_TABLE_KEYS = ['scene', 'clothing', 'items', 'companion'] as const
-
 /** roroko_register 合法 type 键(ad_hoc type 用主表名存)。 */
 const REGISTER_TYPES: Record<string, string> = {
   scene: 'scenes',
   clothing: 'clothing',
   items: 'sexual_items',
   companion: 'companion_pool',
-}
-
-/**
- * 关键词匹配:SQL 预过滤(keywords LIKE 任一关键词)+ 内存打分。
- * 打分:完全相等 +2,单向包含 +1。返回行(名字/score/hit/last/slot/note)。
- */
-function matchRows(
-  db: DatabaseSync,
-  meta: { table: string; nameCol: string },
-  kws: string[],
-  limit: number,
-  now: Date,
-): Row[] {
-  const out: Row[] = []
-  let rows: Row[]
-  if (kws.length > 0) {
-    const clauses = kws.map(() => 'keywords LIKE ?').join(' OR ')
-    const stmt = db.prepare(`SELECT * FROM ${meta.table} WHERE ${clauses}`)
-    rows = stmt.all(...kws.map(kw => `%${kw}%`)) as unknown as Row[]
-    for (const row of rows) {
-      const recordKws = parseKeywords(row.keywords)
-      let score = 0
-      const matched: string[] = []
-      for (const qk of kws) {
-        for (const rk of recordKws) {
-          if (qk === rk) { score += 2; matched.push(`${qk}≡${rk}`) }
-          else if (rk.includes(qk)) { score += 1; matched.push(`${qk}→${rk}`) }
-          else if (qk.includes(rk)) { score += 1; matched.push(`${qk}←${rk}`) }
-        }
-      }
-      if (score > 0) {
-        out.push({ ...row, _score: score, _matched: matched.join(',') })
-      }
-    }
-    out.sort((a, b) => Number(b._score) - Number(a._score))
-  } else {
-    rows = db.prepare(`SELECT * FROM ${meta.table}`).all() as unknown as Row[]
-    out.push(...rows.map(row => ({ ...row, _score: 0, _matched: '' })))
-    // 随机洗牌(素材轮换不涉安全)。
-    for (let i = out.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1))
-      ;[out[i], out[j]] = [out[j], out[i]]
-    }
-  }
-  return out.slice(0, limit)
-}
-
-/** 命中不足时从 ad_hoc 表补位。 */
-function backfillAdHoc(db: DatabaseSync, tableName: string, rows: Row[], limit: number): void {
-  if (rows.length >= limit) return
-  const have = new Set(rows.map(r => String(r.name ?? r.profession ?? '')))
-  const sample = db
-    .prepare('SELECT name, description FROM ad_hoc WHERE type = ? ORDER BY RANDOM() LIMIT ?')
-    .all(tableName, limit - rows.length) as unknown as Row[]
-  for (const s of sample) {
-    const nm = String(s.name ?? '')
-    if (!nm || have.has(nm)) continue
-    rows.push({
-      name: nm,
-      _score: 0,
-      _matched: '',
-      hit_count: 0,
-      last_used_at: '',
-      note: s.description !== null ? `(ad_hoc) ${String(s.description)}` : null,
-    })
-    have.add(nm)
-  }
-}
-
-/** 查询热度累加:关键词写进 keywords 字典(hit_count +1)。 */
-function ensureKeywords(db: DatabaseSync, kws: string[]): void {
-  if (kws.length === 0) return
-  const upsert = db.prepare(
-    'INSERT INTO keywords (word, hit_count) VALUES (?, 1) '
-    + 'ON CONFLICT(word) DO UPDATE SET hit_count = hit_count + 1',
-  )
-  for (const kw of kws) upsert.run(kw)
-}
-
-/** markdown 表行:名称 | 已用次数 | 最后使用 | 备注(可选)。 */
-function mdRow(row: Row, meta: { nameCol: string }, withNote: boolean): string {
-  const name = String(row[meta.nameCol] ?? row.name ?? '?').replaceAll('|', '/')
-  const hits = String(row.hit_count ?? 0)
-  const last = fmtLastUsed(row.last_used_at, new Date())
-  const note = withNote ? ` | ${String(row.note ?? '').replaceAll('|', '/')}` : ''
-  const slot = meta.nameCol === 'name' && row.slot ? ` [${String(row.slot)}]` : ''
-  return `| ${name}${slot} | ${hits} | ${last}${note} |`
-}
-
-/** roroko_query 主逻辑:关键词查素材 → markdown。 */
-export function runQuery(db: DatabaseSync, tableKey: string, kwRaw: string): string {
-  const meta = TABLE_META[tableKey]
-  const kws = kwRaw.split(',').map(s => s.trim()).filter(s => s.length > 0)
-  const kwLabel = kws.length > 0 ? kws.join('、') : '随机'
-  ensureKeywords(db, kws)
-
-  const limit = tableKey === 'items' ? 3 : 5
-  let rows = matchRows(db, meta, kws, limit, new Date())
-  backfillAdHoc(db, meta.table, rows, limit)
-  if (rows.length === 0) rows = [{ name: '无匹配,可用 roroko_register 注册', hit_count: 0, last_used_at: '', _score: 0 }]
-
-  const withNote = rows.some(r => r.note !== undefined && r.note !== null && String(r.note).length > 0)
-  const lines = [`## 素材 · ${meta.table} · \`${kwLabel}\``, '']
-  lines.push(`| 名称 | 已用次数 | 最后使用${withNote ? ' | 备注' : ''} |`)
-  lines.push(`|------|---------|---------${withNote ? '|------' : ''} |`)
-  for (const row of rows) lines.push(mdRow(row, meta, withNote))
-  return lines.join('\n')
 }
 
 /** roroko_lookup 主逻辑:按名在四张素材表查详情 → markdown。 */
@@ -535,33 +415,7 @@ function withDb(dbPath: string, fn: (db: DatabaseSync) => string): string {
 export function apply(ctx: Context, config: RorokoDataConfig = {}): void {
   const dbPath = resolveDbPath(config)
 
-  const queryTool = defineTool({
-    name: 'roroko_query',
-    description:
-      '洛洛可素材库关键词查询:按关键词匹配场景/穿搭/道具/伴侣,返回 markdown 表格'
-      + '(含已用次数/最后使用)。table 取 scene|clothing|items|companion;'
-      + 'kw 逗号分隔多个关键词,越贴切得分越高。自动累加关键词热度,不足时从 ad_hoc 补位。',
-    parameters: {
-      table: {
-        type: 'string',
-        required: true,
-        enum: [...QUERY_TABLE_KEYS],
-        description: '素材表:scene=场景,clothing=穿搭,items=道具,companion=伴侣。',
-      },
-      kw: {
-        type: 'string',
-        required: true,
-        description: '逗号分隔的关键词,如 "职场,干练"。',
-      },
-    },
-    output: { schema: { type: 'string' }, render: textRender },
-    async execute(args) {
-      return withDb(dbPath, db => runQuery(db, args.table, args.kw))
-    },
-    presentCall(args) {
-      return { card: 'generic', title: `查素材 ${args.table} · ${args.kw}`, kind: 'read', rawInput: args.kw }
-    },
-  })
+  applyQuery(ctx, dbPath)
 
   const lookupTool = defineTool({
     name: 'roroko_lookup',
@@ -658,7 +512,6 @@ export function apply(ctx: Context, config: RorokoDataConfig = {}): void {
     },
   })
 
-  ctx.tools.register(queryTool)
   ctx.tools.register(lookupTool)
   ctx.tools.register(registerTool)
   ctx.tools.register(soulTool)

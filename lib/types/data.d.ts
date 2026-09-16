@@ -6,8 +6,9 @@
  * 四个 agent 工具,直接经 `node:sqlite` 访问服务器 soul.db,不再外包 python
  * CLI。
  *
- *   roroko_query    按关键词查素材(scene/clothing/items/companion),
- *                   返回 markdown 表格(省 token,LLM 原生友好)。
+ *   roroko_datas_query  取料:表概览 + 候选召回(发散默认 / 条件收束),
+ *                   穿搭按 slot 分组,返回 markdown 表格(省 token,LLM 原生友好)。
+ *                   实现见 datas/query.ts + datas/query-form.ts。
  *   roroko_lookup   按名在四张素材表查详情。
  *   roroko_register 兜底:场景/衣物/道具/伴侣不在库中时注册入 ad_hoc,
  *                   主表同名则合并关键词回主表。
@@ -39,8 +40,6 @@ export interface RorokoDataConfig {
     /** soul.db 绝对路径;缺省回落服务器默认路径(state 覆盖其次)。 */
     dbPath?: string;
 }
-/** roroko_query 主逻辑:关键词查素材 → markdown。 */
-export declare function runQuery(db: DatabaseSync, tableKey: string, kwRaw: string): string;
 /** roroko_lookup 主逻辑:按名在四张素材表查详情 → markdown。 */
 export declare function runLookup(db: DatabaseSync, nameQuery: string): string;
 /** roroko_register 主逻辑:ad_hoc 注册,或主表同名合并关键词。 */
