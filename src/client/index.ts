@@ -96,6 +96,8 @@ interface AutoinjectWire {
   rounds: boolean
   every: number
   afterTool: boolean
+  /** 最短间隔(轮);0 = 不限制。 */
+  minGap: number
 }
 
 /** data 参数 wire 形状(与 host settings.ts 一致,无 enabled)。 */
@@ -602,6 +604,13 @@ function clampEvery(value: string): number {
   return Math.min(200, Math.max(1, n))
 }
 
+/** 最短间隔收窄:整数 0~200,非法回落 4(与 host 的 normalizeAutoinject 同口径)。 */
+function clampGap(value: string): number {
+  const n = Number.parseInt(value, 10)
+  if (!Number.isFinite(n)) return 4
+  return Math.min(200, Math.max(0, n))
+}
+
 /** data 参数面板:数据库路径 + state 自动注入开关。 */
 function DataPanel(props: {
   config: DataWire
@@ -610,11 +619,12 @@ function DataPanel(props: {
 }): ReturnType<typeof h> {
   const { config, busy, onSave } = props
   // 宿主老版可能没这个节,读取处就地给默认。
-  const autoinject = config.autoinject ?? { rounds: true, every: 8, afterTool: true }
+  const autoinject = config.autoinject ?? { rounds: true, every: 8, afterTool: true, minGap: 4 }
   const [dbPath, setDbPath] = useState<string>(() => toStr(config.dbPath))
   const [rounds, setRounds] = useState<boolean>(() => autoinject.rounds)
   const [afterTool, setAfterTool] = useState<boolean>(() => autoinject.afterTool)
   const [every, setEvery] = useState<string>(() => String(autoinject.every))
+  const [minGap, setMinGap] = useState<string>(() => String(autoinject.minGap ?? 4))
   const [dirty, setDirty] = useState(false)
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -625,7 +635,7 @@ function DataPanel(props: {
   const save = (): void => {
     const next: DataWire = {
       dbPath: dbPath.trim(),
-      autoinject: { rounds, every: clampEvery(every), afterTool },
+      autoinject: { rounds, every: clampEvery(every), afterTool, minGap: clampGap(minGap) },
     }
     console.log('[roroko-tool] save data →', next)
     setSaveError(null)
@@ -662,7 +672,7 @@ function DataPanel(props: {
       h('div', { style: { fontWeight: 600, margin: '14px 0 6px', fontSize: '0.9em' } },
         'state 自动注入(机制层,不发工具 schema)'),
       h('div', { style: { fontSize: '0.85em', color: 'var(--dsw-text-secondary, #888)', marginBottom: 8 } },
-        '取料后把她的状态短条追加到对话尾部;两个开关各自独立,同一回合只注一次。'),
+        '取料后把她的状态短条追加到对话尾部;两个开关各自独立,同一回合只注一次,并受最短间隔约束(取料工具调得勤也不会轮轮都注)。'),
       h('label', {
         style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85em', cursor: 'pointer' },
       },
@@ -687,6 +697,20 @@ function DataPanel(props: {
         }),
         h('span', { style: { color: 'var(--dsw-text-secondary, #888)' } },
           '轮(1~200,默认 8;关了「轮数注入」此项无效)')),
+      h('div', {
+        style: { display: 'flex', alignItems: 'center', gap: 6, margin: '0 0 8px', fontSize: '0.85em' },
+      },
+        h('input', {
+          type: 'number',
+          min: 0,
+          max: 200,
+          value: minGap,
+          disabled: busy,
+          style: { ...inputStyle, width: 90 },
+          onChange: (event: { target: { value: string } }) => { setMinGap(event.target.value); setDirty(true); setSaved(false) },
+        }),
+        h('span', { style: { color: 'var(--dsw-text-secondary, #888)' } },
+          '轮 = 最短间隔(两次注入至少隔这么多轮,0 = 不限制)')),
       h('label', {
         style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85em', cursor: 'pointer' },
       },
@@ -925,7 +949,7 @@ export function RorokoToolSection(): ReturnType<typeof h> {
             desc: '系统段进 system 提示词(常驻不折叠),消息段进 user 消息(会话一次);注入文件与落点按 preset 一卡一层。',
           }),
           ...scopeCards,
-          h(ToolHeader, { title: '素材库工具 (roroko-data)', desc: '取料 roroko_datas_query(发散默认 / 条件收束)+ roroko_datas_lookup / register / state;state 短条可按轮数/取料后自动注入;preset 声明即启用。' }),
+          h(ToolHeader, { title: '素材库工具 (roroko-data)', desc: '取料 roroko_datas_query(发散默认 / 条件收束)+ roroko_datas_lookup / register / state;state 短条可按轮数/取料后自动注入(带最短间隔);preset 声明即启用。' }),
           h(DataPanel, {
             config: state.data,
             busy: busy && busyTool === 'data',

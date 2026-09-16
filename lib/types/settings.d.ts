@@ -90,8 +90,10 @@ export interface RorokoAutoinjectState {
     every: number;
     /** 调过 roroko_datas_* 之后的下一步注入。 */
     afterTool: boolean;
+    /** 最短间隔:两次注入之间至少隔 N 轮(0 = 不限制)。 */
+    minGap: number;
 }
-/** 自动注入默认值:两个来源都开,阈值 8 轮。 */
+/** 自动注入默认值:两个来源都开,阈值 8 轮,最短间隔 4 轮。 */
 export declare const RorokoAutoinjectDefaults: RorokoAutoinjectState;
 /**
  * data 一节的 wire 形状:数据库路径 + 自动注入机制开关。
@@ -139,7 +141,7 @@ export declare function isRorokoToolKey(value: unknown): value is RorokoToolKey;
 export declare function normalizePreinjectOverride(value: unknown): RorokoPreinjectOverride | undefined;
 /** 一个 preset 覆盖节归一化;节内无有效字段则整体丢弃。 */
 export declare function normalizePresetOverride(value: unknown): RorokoPresetOverride | undefined;
-/** 自动注入开关窄化:布尔兜底,阈值钳到整数 1~200(非法值回落默认 8)。 */
+/** 自动注入开关窄化:布尔兜底,阈值钳到整数 1~200、最短间隔钳到 0~200。 */
 export declare function normalizeAutoinject(value: unknown): RorokoAutoinjectState;
 /** data 一节的窄化与默认。 */
 export declare function normalizeDataState(value: unknown): RorokoDataState;

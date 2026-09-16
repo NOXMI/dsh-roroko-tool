@@ -109,8 +109,14 @@ export function applyStateAutoinject(ctx: Context, dbPath: string): void {
         roundsEnabled: settings.rounds,
         afterToolEnabled: settings.afterTool,
         every: clampRounds(settings.every),
+        minGap: settings.minGap,
       })
-      if (!verdict.inject) return decision
+      if (!verdict.inject) {
+        // 被最短间隔(或闸门/开关)挡下 → 消耗掉这次工具触发,
+        // 不让它挂到间隔开了才兑现(否则等于变相多出一条 4 轮通道)
+        counter.pending = false
+        return decision
+      }
 
       const row = readStateRow(dbPath)
       if (row === undefined) {

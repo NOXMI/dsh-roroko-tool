@@ -17,6 +17,9 @@ import type { Row } from './query-form.js'
 /** 轮数阈值默认值(面板可改)。 */
 export const AutoinjectDefaultRounds = 8
 
+/** 最短间隔默认值:两次注入之间至少隔 N 轮(0 = 不限制)。 */
+export const AutoinjectDefaultMinGap = 4
+
 /** 注入来源:轮数触发 / 工具调用后触发。 */
 export type InjectSource = 'rounds' | 'after-tool'
 
@@ -36,6 +39,8 @@ export interface AutoinjectDecideInput {
   afterToolEnabled: boolean
   /** 轮数阈值。 */
   every: number
+  /** 最短间隔:上次注入后至少隔 N 轮(0 = 不限制)。 */
+  minGap: number
 }
 
 /** 判定结果:要不要注、以哪个来源注。 */
@@ -52,6 +57,27 @@ export function clampRounds(value: unknown): number {
   if (int < 1) return 1
   if (int > 200) return 200
   return int
+}
+
+/** 最短间隔收窄:整数、0~200,非法值回落默认(4)。 */
+export function clampMinGap(value: unknown): number {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return AutoinjectDefaultMinGap
+  const int = Math.trunc(n)
+  if (int < 0) return 0
+  if (int > 200) return 200
+  return int
+}
+
+/**
+ * 最短间隔是否已满足。从未注入过(NaN)放行;minGap ≤ 0 视为不限制。
+ * 存在的意义:取料工具一多,"工具后注入"会退化成每轮都注的漏斗。
+ */
+export function gapSatisfied(turn: number, lastTurn: number, minGap: number): boolean {
+  if (!Number.isFinite(lastTurn)) return true
+  const gap = clampMinGap(minGap)
+  if (gap <= 0) return true
+  return Number.isFinite(turn) && turn - lastTurn >= gap
 }
 
 /** 本地日期戳(YYYY-MM-DD)。禁用 toISOString —— 那是 UTC,会差 8 小时。 */
@@ -75,14 +101,19 @@ export function isRorokoDatasTool(name: unknown): boolean {
 }
 
 /**
- * 唯一判定出口。优先级:闸门 → 压缩释放 → 工具后 → 轮数。
+ * 唯一判定出口。优先级:闸门 → 压缩释放 → **最短间隔** → 工具后 → 轮数。
  * 同一 turn 已注过则一律不注(哪怕 forced)。
  */
 export function decide(input: AutoinjectDecideInput): AutoinjectDecision {
   if (Number.isFinite(input.injectedTurn) && input.injectedTurn === input.turn) {
     return { inject: false, source: null }
   }
+  // 压缩释放是显式信号:不受最短间隔约束(刚被压缩甩掉,不该再干等)
   if (input.forced && input.roundsEnabled) return { inject: true, source: 'rounds' }
+  // 最短间隔:任何注入之后至少隔 N 轮(首次注入放行)
+  if (!gapSatisfied(input.turn, input.lastTurn, input.minGap)) {
+    return { inject: false, source: null }
+  }
   if (input.pending && input.afterToolEnabled) return { inject: true, source: 'after-tool' }
   if (input.roundsEnabled && dueByRounds(input.turn, input.lastTurn, input.every)) {
     return { inject: true, source: 'rounds' }

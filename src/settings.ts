@@ -118,13 +118,16 @@ export interface RorokoAutoinjectState {
   every: number
   /** 调过 roroko_datas_* 之后的下一步注入。 */
   afterTool: boolean
+  /** 最短间隔:两次注入之间至少隔 N 轮(0 = 不限制)。 */
+  minGap: number
 }
 
-/** 自动注入默认值:两个来源都开,阈值 8 轮。 */
+/** 自动注入默认值:两个来源都开,阈值 8 轮,最短间隔 4 轮。 */
 export const RorokoAutoinjectDefaults: RorokoAutoinjectState = {
   rounds: true,
   every: 8,
   afterTool: true,
+  minGap: 4,
 }
 
 /**
@@ -265,7 +268,7 @@ function migrateLegacyPreinject(value: unknown): RorokoPreinjectOverride | undef
   return Object.keys(out).length > 0 ? out : undefined
 }
 
-/** 自动注入开关窄化:布尔兜底,阈值钳到整数 1~200(非法值回落默认 8)。 */
+/** 自动注入开关窄化:布尔兜底,阈值钳到整数 1~200、最短间隔钳到 0~200。 */
 export function normalizeAutoinject(value: unknown): RorokoAutoinjectState {
   const base = RorokoAutoinjectDefaults
   if (typeof value !== 'object' || value === null) return { ...base }
@@ -274,10 +277,15 @@ export function normalizeAutoinject(value: unknown): RorokoAutoinjectState {
   const every = Number.isFinite(raw)
     ? Math.min(200, Math.max(1, Math.trunc(raw)))
     : base.every
+  const rawGap = Number(section.minGap)
+  const minGap = Number.isFinite(rawGap)
+    ? Math.min(200, Math.max(0, Math.trunc(rawGap)))
+    : base.minGap
   return {
     rounds: typeof section.rounds === 'boolean' ? section.rounds : base.rounds,
     every,
     afterTool: typeof section.afterTool === 'boolean' ? section.afterTool : base.afterTool,
+    minGap,
   }
 }
 

@@ -1487,18 +1487,26 @@ window.__ModuleLoader__.load({
 			if (!Number.isFinite(n)) return 8;
 			return Math.min(200, Math.max(1, n));
 		}
+		/** 最短间隔收窄:整数 0~200,非法回落 4(与 host 的 normalizeAutoinject 同口径)。 */
+		function clampGap(value) {
+			const n = Number.parseInt(value, 10);
+			if (!Number.isFinite(n)) return 4;
+			return Math.min(200, Math.max(0, n));
+		}
 		/** data 参数面板:数据库路径 + state 自动注入开关。 */
 		function DataPanel(props) {
 			const { config, busy, onSave } = props;
 			const autoinject = config.autoinject ?? {
 				rounds: true,
 				every: 8,
-				afterTool: true
+				afterTool: true,
+				minGap: 4
 			};
 			const [dbPath, setDbPath] = (0, react.useState)(() => toStr(config.dbPath));
 			const [rounds, setRounds] = (0, react.useState)(() => autoinject.rounds);
 			const [afterTool, setAfterTool] = (0, react.useState)(() => autoinject.afterTool);
 			const [every, setEvery] = (0, react.useState)(() => String(autoinject.every));
+			const [minGap, setMinGap] = (0, react.useState)(() => String(autoinject.minGap ?? 4));
 			const [dirty, setDirty] = (0, react.useState)(false);
 			const [saved, setSaved] = (0, react.useState)(false);
 			const [saving, setSaving] = (0, react.useState)(false);
@@ -1510,7 +1518,8 @@ window.__ModuleLoader__.load({
 					autoinject: {
 						rounds,
 						every: clampEvery(every),
-						afterTool
+						afterTool,
+						minGap: clampGap(minGap)
 					}
 				};
 				console.log("[roroko-tool] save data →", next);
@@ -1559,7 +1568,7 @@ window.__ModuleLoader__.load({
 					fontSize: "0.85em",
 					color: "var(--dsw-text-secondary, #888)",
 					marginBottom: 8
-				} }, "取料后把她的状态短条追加到对话尾部;两个开关各自独立,同一回合只注一次。"),
+				} }, "取料后把她的状态短条追加到对话尾部;两个开关各自独立,同一回合只注一次,并受最短间隔约束(取料工具调得勤也不会轮轮都注)。"),
 				(0, react.createElement)("label", { style: {
 					display: "flex",
 					alignItems: "center",
@@ -1598,6 +1607,28 @@ window.__ModuleLoader__.load({
 						setSaved(false);
 					}
 				}), (0, react.createElement)("span", { style: { color: "var(--dsw-text-secondary, #888)" } }, "轮(1~200,默认 8;关了「轮数注入」此项无效)")),
+				(0, react.createElement)("div", { style: {
+					display: "flex",
+					alignItems: "center",
+					gap: 6,
+					margin: "0 0 8px",
+					fontSize: "0.85em"
+				} }, (0, react.createElement)("input", {
+					type: "number",
+					min: 0,
+					max: 200,
+					value: minGap,
+					disabled: busy,
+					style: {
+						...inputStyle,
+						width: 90
+					},
+					onChange: (event) => {
+						setMinGap(event.target.value);
+						setDirty(true);
+						setSaved(false);
+					}
+				}), (0, react.createElement)("span", { style: { color: "var(--dsw-text-secondary, #888)" } }, "轮 = 最短间隔(两次注入至少隔这么多轮,0 = 不限制)")),
 				(0, react.createElement)("label", { style: {
 					display: "flex",
 					alignItems: "center",
@@ -1826,7 +1857,7 @@ window.__ModuleLoader__.load({
 				desc: "系统段进 system 提示词(常驻不折叠),消息段进 user 消息(会话一次);注入文件与落点按 preset 一卡一层。"
 			}), ...scopeCards, (0, react.createElement)(ToolHeader, {
 				title: "素材库工具 (roroko-data)",
-				desc: "取料 roroko_datas_query(发散默认 / 条件收束)+ roroko_datas_lookup / register / state;state 短条可按轮数/取料后自动注入;preset 声明即启用。"
+				desc: "取料 roroko_datas_query(发散默认 / 条件收束)+ roroko_datas_lookup / register / state;state 短条可按轮数/取料后自动注入(带最短间隔);preset 声明即启用。"
 			}), (0, react.createElement)(DataPanel, {
 				config: state.data,
 				busy: busy && busyTool === "data",

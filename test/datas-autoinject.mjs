@@ -15,8 +15,8 @@ const { ok, eq, done } = makeAsserts()
 const home = await useTempDshHome('roroko-autoinject-')
 
 const {
-  AutoinjectDefaultRounds, clampRounds, todayStamp,
-  dueByRounds, isRorokoDatasTool, decide, renderStateShort, counterToday,
+  AutoinjectDefaultRounds, AutoinjectDefaultMinGap, clampRounds, clampMinGap, gapSatisfied,
+  todayStamp, dueByRounds, isRorokoDatasTool, decide, renderStateShort, counterToday,
   buildInjectText, AutoinjectNotice,
 } = await import('../lib/datas/state-autoinject-form.js')
 
@@ -32,6 +32,19 @@ eq(clampRounds(-5), 1, 'clampRounds:负数钳到 1')
 eq(clampRounds(201), 200, 'clampRounds:上限 200')
 eq(clampRounds(8.9), 8, 'clampRounds:取整')
 eq(clampRounds('12'), 12, 'clampRounds:数字串可用')
+
+// ── 最短间隔
+eq(AutoinjectDefaultMinGap, 4, '最短间隔默认 4 轮')
+eq(clampMinGap(undefined), 4, 'clampMinGap:undefined → 默认 4')
+eq(clampMinGap('abc'), 4, 'clampMinGap:非数字 → 默认')
+eq(clampMinGap(-1), 0, 'clampMinGap:负数钳到 0(等于不限制)')
+eq(clampMinGap(0), 0, 'clampMinGap:0 保留(不限制)')
+eq(clampMinGap(201), 200, 'clampMinGap:上限 200')
+eq(clampMinGap(3.7), 3, 'clampMinGap:取整')
+eq(gapSatisfied(5, Number.NaN, 4), true, 'gapSatisfied:从未注入 → 放行')
+eq(gapSatisfied(5, 2, 4), false, 'gapSatisfied:隔 3 轮 → 未满足')
+eq(gapSatisfied(6, 2, 4), true, 'gapSatisfied:隔 4 轮 → 满足(边界含等号)')
+eq(gapSatisfied(3, 2, 0), true, 'gapSatisfied:minGap=0 → 不限制')
 
 // ── 本地时间口径(禁 UTC)
 eq(todayStamp(now), '2026-09-16', 'todayStamp:本地日期')
@@ -52,16 +65,18 @@ ok(!isRorokoDatasTool('roroko_datas'), 'isRorokoDatasTool:光前缀不算')
 ok(!isRorokoDatasTool('memory'), 'isRorokoDatasTool:别的工具不算')
 ok(!isRorokoDatasTool(undefined), 'isRorokoDatasTool:非字符串不算')
 
-// ── decide:四层优先级
+// ── decide:优先级(闸门 → 压缩 → 最短间隔 → 工具后 → 轮数)
+// base 的 lastTurn=12 表示距上次注入 8 轮(间隔与轮数阈值都已满足)
 const base = {
   turn: 20,
-  lastTurn: 20,
+  lastTurn: 12,
   injectedTurn: Number.NaN,
   pending: false,
   forced: false,
   roundsEnabled: true,
   afterToolEnabled: true,
   every: 8,
+  minGap: 4,
 }
 eq(decide({ ...base, injectedTurn: 20 }), { inject: false, source: null },
   '★ decide:本回合已注过 → 一律不注(闸门)')
@@ -74,9 +89,9 @@ eq(decide({ ...base, forced: true, pending: true }), { inject: true, source: 'ro
 eq(decide({ ...base, forced: true, roundsEnabled: false, pending: true }),
   { inject: true, source: 'after-tool' },
   'decide:轮数开关关了 → forced 失效,落回工具后')
-eq(decide({ ...base, lastTurn: 12 }), { inject: true, source: 'rounds' },
+eq(decide({ ...base }), { inject: true, source: 'rounds' },
   'decide:距上次 8 轮 → 轮数注入')
-eq(decide({ ...base, pending: true, afterToolEnabled: false }),
+eq(decide({ ...base, lastTurn: 16, pending: true, afterToolEnabled: false }),
   { inject: false, source: null },
   '★ decide:工具后开关关了 + 轮数未到期 → 不注')
 eq(decide({ ...base, roundsEnabled: false, afterToolEnabled: false, lastTurn: Number.NaN }),
@@ -85,6 +100,26 @@ eq(decide({ ...base, roundsEnabled: false, afterToolEnabled: false, lastTurn: Nu
 eq(decide({ ...base, lastTurn: Number.NaN, injectedTurn: Number.NaN }),
   { inject: true, source: 'rounds' },
   'decide:首次进入会话(从未注过)→ 轮数路径立即注一条')
+
+// ── decide:最短间隔(阿一 2026-09-16 追加:取料工具调得勤也不许轮轮注)
+eq(decide({ ...base, turn: 5, lastTurn: 2, pending: true, roundsEnabled: false }),
+  { inject: false, source: null },
+  '★ decide:取料后仅隔 3 轮 → 间隔未满足,不注(防每轮都注)')
+eq(decide({ ...base, turn: 6, lastTurn: 2, pending: true, roundsEnabled: false }),
+  { inject: true, source: 'after-tool' },
+  '★ decide:隔满 4 轮 → 工具后路径可注')
+eq(decide({ ...base, turn: 3, lastTurn: 2, pending: true, roundsEnabled: false, minGap: 0 }),
+  { inject: true, source: 'after-tool' },
+  'decide:最短间隔 0 = 不限制')
+eq(decide({ ...base, turn: 1, lastTurn: Number.NaN, pending: true, roundsEnabled: false }),
+  { inject: true, source: 'after-tool' },
+  '★ decide:首次注入不受最短间隔约束')
+eq(decide({ ...base, turn: 3, lastTurn: 2, forced: true, pending: true, afterToolEnabled: false }),
+  { inject: true, source: 'rounds' },
+  '★ decide:压缩释放不受最短间隔约束(刚被压缩甩掉不该再干等)')
+eq(decide({ ...base, turn: 5, lastTurn: 2 }),
+  { inject: false, source: null },
+  '★ decide:轮数到期也压不过最短间隔(4 轮是硬底)')
 
 // ── 计数器跨天口径(只读不写)
 const rowFresh = { last_daily_reset: today, oral_today: 3, oral_total: 12 }
@@ -267,6 +302,19 @@ const sub = { id: 'subagent-sess' }
 g.toolResult('roroko_datas_query', sub)
 eq((await g.preStep(7, session)).messages.length, 0,
   '★ 机制:子代理取料不会让主会话冒短条(计数按 session 隔离)')
+
+// 9. 最短间隔:每轮都取料也不会轮轮注入
+writeSettings({ rounds: false, every: 8, afterTool: true, minGap: 4 })
+const h = makeCtx()
+applyStateAutoinject(h.ctx, dbPath)
+h.toolResult('roroko_datas_query', session)
+eq((await h.preStep(1, session)).messages.length, 1, '机制:首次注入(间隔不约束首条)')
+h.toolResult('roroko_datas_query', session)
+eq((await h.preStep(2, session)).messages.length, 0, '★ 机制:隔 1 轮再取料 → 不注')
+h.toolResult('roroko_datas_query', session)
+eq((await h.preStep(3, session)).messages.length, 0, '★ 机制:隔 2 轮再取料 → 不注')
+h.toolResult('roroko_datas_query', session)
+eq((await h.preStep(5, session)).messages.length, 1, '★ 机制:隔满 4 轮再取料 → 注')
 
 home.cleanup()
 process.exit(done('datas-autoinject') === 0 ? 0 : 1)
