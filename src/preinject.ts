@@ -63,7 +63,7 @@ import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { AssembleContext } from '@deepseek-ai/dsh-system-prompt'
-import { PERSONA_SECTION } from '@deepseek-ai/dsh-system-prompt'
+import { PERSONA_PREFIX_SECTION } from '@deepseek-ai/dsh-system-prompt'
 import { dshHomeDirectory, loadState, loadStateSync } from './state.js'
 import { resolvePresetOverride, RorokoPreinjectDefaults } from './settings.js'
 import type { RorokoFilesPlacement, RorokoPreinjectOverride } from './settings.js'
@@ -407,17 +407,18 @@ export function apply(ctx: Context, config: RorokoPreinjectConfig = {}): void {
     'roroko-preinject.variable()',
   )
 
-  // 接管 persona 槽位时与 dsh-persona 同层同名,注册会抛错 —— 所以开启前
-  // 必须先从 preset 删掉那行。接管后带 complete,独占整个系统提示词。
+  // 接管 persona 槽位时与官方 persona 段同名:0.1.6 起 scoped 注册会 shadow
+  // 同名全局段(更早版本同层同名会抛错,故当时要求先从 preset 删掉那行)。
+  // 接管后带 complete,独占整个系统提示词。
   const personaSection = config.personaSection === true
   // order 是挂载期参数:此刻还没有会话,只认公共桶(common)覆盖 ——
   // per-preset 桶里的 systemOrder 读不到,改了要重挂载 preset 才生效。
   const order = personaSection
-    ? ctx.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA')
+    ? ctx.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA_PREFIX')
     : resolveSystemOrder(config, resolvePresetOverride(loadStateSync(), undefined))
   ctx.effect(
     () => ctx.systemPrompt.section({
-      name: personaSection ? PERSONA_SECTION : SYSTEM_SECTION,
+      name: personaSection ? PERSONA_PREFIX_SECTION : SYSTEM_SECTION,
       order,
       text: buildSectionText(config),
       ...personaSection ? { complete: true } : {},
