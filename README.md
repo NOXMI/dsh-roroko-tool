@@ -24,6 +24,7 @@ DSH 官方对「工作区指令」只提供一条路：把 `AGENTS.md` 追加到
 | `.` | `roroko-tool` | host 入口：挂载 `GET/POST /roroko-tool/state` 与 `GET /roroko-tool/presets` |
 | `./preinject` | `roroko-preinject` | **指令注入器**（系统段 + 消息段两条腿） |
 | `./data` | `roroko-data` | 素材库工具集：`roroko_datas_query` / `roroko_datas_lookup` / `roroko_datas_register` / `roroko_datas_state` |
+| `./memory` | `roroko-memory` | **经历记忆**：`roroko_mem_edit`（记一条）/ `roroko_mem_date`（按日期回查，默认今天 + 昨天） |
 | `./warn` | `roroko-warn` | 超量收敛警告（**尚未实现**） |
 | `./client` | — | Web 设置页（含 `-呻吟_X-` 展开的显示层节点） |
 
@@ -67,9 +68,18 @@ dsh plugin --profile <profile> add github:NOXMI/dsh-roroko-tool
 # 素材库工具集
 - id: roroko-data
   name: '@roroko-tool/dsh-roroko-tool/data'
+
+# 经历记忆(独立 sqlite;config 两项都有缺省值,不需要就整段省掉)
+- id: roroko-memory
+  name: '@roroko-tool/dsh-roroko-tool/memory'
+  config:
+    dbPath: '/var/www/api/database/roroko_memory.db'
+    owner: persona
 ```
 
 > **preset 声明即开关**——不引用即不存在，没有第二个运行级开关。
+
+> ⚠️ **升级后新增的子插件导出，必须先重启 DSH 宿主**：Node 把 `package.json` 的 `exports` 缓存在**进程内**，宿主启动时尚不存在的子路径（比如某次升级新出现的 `./memory`）在该进程里**永远解析不到**。症状：preset 行报 `never started`，**新建会话与「在新对话中分支」双双失败**（HTTP 200 但 body `ok:false`，界面零提示）。只改 preset 文件是"新会话生效"，**引入新的导出子路径属于进程级变更**，只能重启。详见第六节。
 
 ---
 
@@ -163,6 +173,15 @@ GET  /roroko-tool/presets  → 扫 $DSH_HOME/.agent-presets 列出 preset 卡片
 
 - `mark.enabled`：显示层是否把 `-呻吟_X-` 展开成呻吟文本；会话日志仍存原文，模型上下文零污染
 
+### 5.6 经历记忆（memory）
+
+- `roroko_mem_edit` **记一条**（`op=add`）：`content` 初摘要 + `summary` 二次摘要 + `owner` 分桶（`dev` / `persona`），`created_at` 由服务端按 **CST+0800** 生成；反思（`reflect`）尚未开放
+- `roroko_mem_date` **按日期回查**：默认区间 = **今天 + 昨天**（会话开始时先调它）；区间为空时**明说"没有记忆"**，不给模型脑补的空间
+- 独立库，表只有一张 `memory`（默认 `/var/www/api/database/roroko_memory.db`）；**原文不入表**——DSH 会话文件就是原文仓库，`source` 指回去
+- **推只有 `MEMORY.md`**：记忆内容全靠工具**拉取**，不新增系统段注入 → 对 request-cache 零冲击
+- 写入纪律写在**工具描述**里（常驻 schema，每轮可见）：三问判据（人设层已有 → 不记；永久生效 → 去改人设文件；能改变未来某场景行为 → 记成「触发条件 → 应做」）+ 四类必记（边界演变 / 有效与无效的挑逗 / 未完成的钩子 / 自己的失手）
+- `owner` 走白名单式收窄（小写字母数字与 `. _ -`），检索**默认不跨桶**，要看全桶显式传 `owner=all`
+
 ---
 
 ## 六、已知限制
@@ -172,6 +191,7 @@ GET  /roroko-tool/presets  → 扫 $DSH_HOME/.agent-presets 列出 preset 卡片
 - 接管 persona 槽位（`personaSection: true`）**必须先删掉 preset 里的 `dsh-persona`**，且完整装配只在**新建会话**时发生——旧会话不会重装配。
 - 系统段内容**在会话装配时读取、会话内固化**：同一会话中途改注入文件不会刷新，要新开会话。
 - 系统段与官方 `dsh-agent-instructions` 可能**重复吃同一份 `AGENTS.md`**，接线时二选一。
+- **新增子插件导出子路径（`package.json` 的 `exports`）后必须重启 DSH 宿主**：宿主进程内缓存 exports，启动之后才出现的子路径永远是 `never started`（fiber 没建起来，连堆栈都没有）。判据很好记——**同一份代码，在刚启动的实例里挂得上、在长期运行的实例里挂不上**，就是它。想确诊可以临时加一个"行指向已知可挂模块"的对照，或在隔离实例（`DSH_HOME=<临时目录>`）里复现。
 
 ---
 
