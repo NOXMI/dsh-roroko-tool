@@ -5,6 +5,7 @@
 const STUBS = {
   '@deepseek-ai/dsh-llm': './stubs/dsh-llm.mjs',
   '@deepseek-ai/dsh-system-prompt': './stubs/dsh-system-prompt.mjs',
+  '@deepseek-ai/dsh-tools': './stubs/dsh-tools.mjs',
 }
 
 export async function resolve(specifier, context, nextResolve) {

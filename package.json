@@ -18,6 +18,10 @@
       "types": "./lib/types/data.d.ts",
       "default": "./lib/data.js"
     },
+    "./memory": {
+      "types": "./lib/types/memory.d.ts",
+      "default": "./lib/memory.js"
+    },
     "./warn": {
       "types": "./lib/types/warn.d.ts",
       "default": "./lib/warn.js"

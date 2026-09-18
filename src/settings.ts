@@ -52,6 +52,12 @@ export const RorokoPreinjectDefaultFooter = [
 /** roroko-data 素材库工具默认数据库路径(服务器 soul.db)。 */
 export const RorokoDataDefaultDbPath = '/var/www/api/database/soul.db'
 
+/** roroko-memory 记忆库默认路径(服务器;与 soul.db 同目录,备份一起走)。 */
+export const RorokoMemoryDefaultDbPath = '/var/www/api/database/roroko_memory.db'
+
+/** roroko-memory 缺省 owner 桶(本机开发侧;服务器 preset 接线里改 persona)。 */
+export const RorokoMemoryDefaultOwner = 'dev'
+
 /**
  * 公共覆盖桶名:未指定 preset 时生效。旧版扁平 state 迁入此桶,让既有配置
  * 继续对每个 preset 生效;具体 preset 的桶叠在它之上。

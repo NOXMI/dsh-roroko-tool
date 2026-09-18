@@ -14,6 +14,12 @@ const suites = [
   { file: 'settings-unit.mjs', nodeArgs: [] },
   { file: 'state-io.mjs', nodeArgs: [] },
   { file: 'datas-query.mjs', nodeArgs: [] },
+  { file: 'memory-unit.mjs', nodeArgs: [] },
+  {
+    file: 'memory-tool.mjs',
+    // memory.js 顶层 import dsh-tools 的 defineTool(值导入),同样走替身。
+    nodeArgs: ['--import', pathToFileURL(join(here, 'helpers', 'register-stubs.mjs')).href],
+  },
   { file: 'route-state.mjs', nodeArgs: [] },
   { file: 'preinject-form.mjs', nodeArgs: [] },
   {
