@@ -29,7 +29,8 @@ import {
 } from './settings.js'
 import type { RorokoPreinjectState, RorokoToolState } from './settings.js'
 import {
-  clearPreinjectConfig, dshHomeDirectory, loadState, setDataConfig, setMarkConfig, setPreinjectConfig,
+  clearPreinjectConfig, dshHomeDirectory, loadState, setDataConfig, setDreamConfig, setMarkConfig,
+  setPreinjectConfig,
 } from './state.js'
 import { dreamRuntime } from './memory-dream.js'
 
@@ -205,6 +206,8 @@ export function registerStateRoutes(webServer: WebServerLike): () => void {
             dbPath?: unknown
             /** state 短条自动注入开关 { rounds, every, afterTool }。 */
             autoinject?: unknown
+            /** dream 覆盖层(字段可选):{ enabled, intervalMs, batch, provider, model, maxTokens, logDir }。 */
+            dream?: unknown
             enabled?: unknown
           }
           if (!isRorokoToolKey(body.tool)) {
@@ -259,6 +262,16 @@ export function registerStateRoutes(webServer: WebServerLike): () => void {
               return
             }
             const state = await setMarkConfig({ enabled: body.enabled })
+            sendJson(response, 200, { ok: true, state: statePayload(state) })
+            return
+          }
+          // dream 覆盖层保存:字段全可选,出现过的才写;空对象等价于"未覆盖"。
+          if (body.tool === 'dream') {
+            if (typeof body.dream !== 'object' || body.dream === null) {
+              sendJson(response, 400, { error: 'dream save requires object "dream"' })
+              return
+            }
+            const state = await setDreamConfig(body.dream as Record<string, unknown>)
             sendJson(response, 200, { ok: true, state: statePayload(state) })
             return
           }

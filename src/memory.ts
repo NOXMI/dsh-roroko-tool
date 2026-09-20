@@ -25,6 +25,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { DatabaseSync } from 'node:sqlite'
 import { RorokoMemoryDefaultDbPath, RorokoMemoryDefaultOwner } from './settings.js'
+import { loadStateSync } from './state.js'
 import {
   MEMORY_OWNERS, MEMORY_ROUGH_DEFAULT_LIMIT, MEMORY_ROUGH_MAX_LIMIT, fmtCst, normalizeAdd,
   normalizeOwner, normalizeReflect,
@@ -103,8 +104,14 @@ async function callModelOnce(llm: LlmLike, dream: DreamConfig, prompt: string): 
  * 一起消失。这里用 `ctx.get('llm')` 动态取,取不到就记一条日志、dream 不启动,工具照常。
  */
 function applyDream(ctx: Context, dbPath: string, owner: string, config: RorokoMemoryConfig): void {
-  const dream = normalizeDreamConfig(config.dream)
-  if (!dream.enabled) return
+  // preset config 的 dream 当底座,state 覆盖层(面板)叠在上面 —— 字段级,state 优先
+  const presetDream = typeof config.dream === 'object' && config.dream !== null
+    ? config.dream as Record<string, unknown>
+    : {}
+  /** 每次现算生效配置:面板改了 provider/model/间隔,不必重启宿主。 */
+  const resolveDream = (): DreamConfig => normalizeDreamConfig({ ...presetDream, ...loadStateSync().dream })
+
+  if (!resolveDream().enabled) return
   // 进程级去重:同一个库只跑一份定时器(插件按 preset/会话装配,apply 可能被调多次)
   if (!claimDreamStart(dbPath)) {
     ctx.logger?.info?.(`[roroko-memory] dream 已在管 ${dbPath},本次不重复启动定时器`)
@@ -115,11 +122,12 @@ function applyDream(ctx: Context, dbPath: string, owner: string, config: RorokoM
     ctx.logger?.info?.('[roroko-memory] dream 未启动:llm 服务不可用')
     return
   }
-  if (dream.provider.length === 0 || dream.model.length === 0) {
+  if (resolveDream().provider.length === 0) {
     ctx.logger?.info?.('[roroko-memory] dream 已启用但未配 provider/model,每次都会跳过')
   }
 
-  const deps: DreamDeps = {
+  /** 按当前配置造一次执行的依赖(现算,所以配置是活的)。 */
+  const makeDeps = (dream: DreamConfig): DreamDeps => ({
     dbPath,
     owner,
     provider: dream.provider,
@@ -129,30 +137,35 @@ function applyDream(ctx: Context, dbPath: string, owner: string, config: RorokoM
     logDir: dream.logDir.length > 0 ? dream.logDir : defaultDreamLogDir(dbPath),
     now: () => new Date(),
     callModel: prompt => callModelOnce(llm, dream, prompt),
-  }
+  })
 
   /**
    * 跑一次并把结果贴到共享面 —— 定时器与手动触发共用同一条路,顺便防并发
    * (同一时刻只允许一个 dream 在跑,免得两轮同时写同一条记忆)。
    */
   const runOnce = async (): Promise<DreamRunResult> => {
-    if (dreamRuntime.running) {
-      return { queued: 0, skippedLogs: 0, proposed: 0, changed: [], note: '上一次还在跑,本次跳过' }
-    }
+    const dream = resolveDream()
+    const skip = (note: string): DreamRunResult => ({
+      queued: 0, skippedLogs: 0, proposed: 0, changed: [], note,
+    })
+    if (!dream.enabled) return skip('已在面板关闭,跳过')
+    if (dream.provider.length === 0 || dream.model.length === 0) return skip('未配置模型(provider/model),跳过')
+    if (dreamRuntime.running) return skip('上一次还在跑,本次跳过')
     dreamRuntime.running = true
     try {
-      const result = await runDreamOnce(deps)
+      const result = await runDreamOnce(makeDeps(dream))
       dreamRuntime.last = { ...result, at: fmtCst(new Date()) }
       return result
     } finally {
       dreamRuntime.running = false
     }
   }
-  dreamRuntime.config = dream
+  dreamRuntime.config = resolveDream()
+  dreamRuntime.resolve = resolveDream
   dreamRuntime.run = runOnce
 
   const timer = startDreamTimer({
-    intervalMs: dream.intervalMs,
+    intervalMs: () => resolveDream().intervalMs,
     run: async () => {
       const result = await runOnce()
       if (result.error !== undefined) ctx.logger?.warn?.(`[roroko-memory] dream: ${result.note}`)

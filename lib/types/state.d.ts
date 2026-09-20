@@ -75,3 +75,19 @@ export interface RorokoMarkConfigInput {
  * 未提供的保留现有值。落盘后返回新状态。
  */
 export declare function setMarkConfig(config: RorokoMarkConfigInput): Promise<RorokoToolState>;
+/** dream 参数节可覆盖的字段(宽松 unknown,内部收窄)。 */
+export interface RorokoDreamConfigInput {
+    enabled?: unknown;
+    intervalMs?: unknown;
+    batch?: unknown;
+    provider?: unknown;
+    model?: unknown;
+    maxTokens?: unknown;
+    logDir?: unknown;
+}
+/**
+ * 覆盖保存 dream 参数节:body 里**出现过**的字段才写(部分覆盖语义)。
+ * 全部字段都没出现时结果仍是空桶 —— 空桶等价于"未覆盖",preset config 照常生效,
+ * 所以 dream 不需要单独的 reset 端点(要清就显式提交空值)。
+ */
+export declare function setDreamConfig(config: RorokoDreamConfigInput): Promise<RorokoToolState>;

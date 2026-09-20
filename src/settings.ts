@@ -153,8 +153,23 @@ export interface RorokoMarkState {
   enabled: boolean
 }
 
+/**
+ * dream 一节的 wire 形状:字段**全可选**。
+ * 没给的字段回落 preset config 再回落内置默认 —— **默认值一律不写进 state**,
+ * 否则会把 preset config 永久压住(与 preinject 覆盖同一条纪律)。
+ */
+export interface RorokoDreamState {
+  enabled?: boolean
+  intervalMs?: number
+  batch?: number
+  provider?: string
+  model?: string
+  maxTokens?: number
+  logDir?: string
+}
+
 /** 四工具参数键(与 HTTP payload 一致)。 */
-export type RorokoToolKey = 'preinject' | 'data' | 'warn' | 'mark'
+export type RorokoToolKey = 'preinject' | 'data' | 'warn' | 'mark' | 'dream'
 
 /**
  * 电箱参数状态。
@@ -166,10 +181,12 @@ export interface RorokoToolState {
   data: RorokoDataState
   warn: Record<string, never>
   mark: RorokoMarkState
+  /** dream 覆盖层(字段可选;空对象 = 全走 preset config + 内置默认)。 */
+  dream: RorokoDreamState
 }
 
 /** 四工具键的稳定序(渲染/校验共用)。 */
-export const ROROKO_TOOL_KEYS = ['preinject', 'data', 'warn', 'mark'] as const
+export const ROROKO_TOOL_KEYS = ['preinject', 'data', 'warn', 'mark', 'dream'] as const
 
 /** preinject 内置默认:覆盖层与 preset config 都没给时的最终兜底。 */
 export const RorokoPreinjectDefaults: RorokoPreinjectState = {
@@ -197,6 +214,7 @@ export const RorokoToolStateDefault: RorokoToolState = {
   },
   warn: {},
   mark: { enabled: true },
+  dream: {},
 }
 
 /** 窄化未知值为工具键。 */
@@ -316,6 +334,28 @@ export function normalizeMarkState(value: unknown): RorokoMarkState {
 }
 
 /**
+ * dream 一节的窄化:**只留出现过的合法字段**(不做默认填充)。
+ * 全非法 → 空对象,等于"未覆盖",preset config 照常生效。
+ */
+export function normalizeDreamState(value: unknown): RorokoDreamState {
+  if (typeof value !== 'object' || value === null) return {}
+  const section = value as Record<string, unknown>
+  const out: RorokoDreamState = {}
+  if (typeof section.enabled === 'boolean') out.enabled = section.enabled
+  const ints: Array<'intervalMs' | 'batch' | 'maxTokens'> = ['intervalMs', 'batch', 'maxTokens']
+  for (const key of ints) {
+    const raw = section[key]
+    if (typeof raw === 'number' && Number.isFinite(raw)) out[key] = Math.floor(raw)
+  }
+  const strings: Array<'provider' | 'model' | 'logDir'> = ['provider', 'model', 'logDir']
+  for (const key of strings) {
+    const raw = section[key]
+    if (typeof raw === 'string') out[key] = raw.trim()
+  }
+  return out
+}
+
+/**
  * 把任意(部分/旧版)状态对象叠到默认上。
  * 兼容旧形状:顶层 `preinject` 节迁进 `presets[ROROKO_COMMON_SCOPE]`。
  * 容错:缺键用默认、未知键丢弃、非法桶丢弃;绝不抛。
@@ -339,6 +379,7 @@ export function normalizeState(value: unknown): RorokoToolState {
 
   base.data = normalizeDataState(source.data)
   base.mark = normalizeMarkState(source.mark)
+  base.dream = normalizeDreamState(source.dream)
   return base
 }
 

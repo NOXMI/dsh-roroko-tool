@@ -29,6 +29,8 @@ export interface DreamRunResult extends DreamOutcome {
 export interface DreamRuntime {
     /** 生效配置;dream 未启用时为 undefined。 */
     config?: DreamConfig;
+    /** 动态解析当前生效配置(面板改了立刻反映;优先于 config)。 */
+    resolve?: () => DreamConfig;
     /** 手动触发一次;未启用时为 undefined。 */
     run?: () => Promise<DreamRunResult>;
     /** 最近一次结果(CST 时间戳)。 */
@@ -55,7 +57,8 @@ export interface DreamTimer {
 }
 /** 分段定时器入参。 */
 export interface DreamTimerOptions {
-    intervalMs: number;
+    /** 间隔(毫秒);给函数则每轮重新取 —— 面板改了间隔不必重启宿主。 */
+    intervalMs: number | (() => number);
     /** 启动后首次检查的延迟(默认 5 分钟:进程刚起来别抢资源)。 */
     startupDelayMs?: number;
     run: () => Promise<void>;

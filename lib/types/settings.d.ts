@@ -114,8 +114,22 @@ export interface RorokoMarkState {
     /** 显示层是否把 -呻吟_X- 标记展开为完整呻吟文本(session 存储仍存原文)。 */
     enabled: boolean;
 }
+/**
+ * dream 一节的 wire 形状:字段**全可选**。
+ * 没给的字段回落 preset config 再回落内置默认 —— **默认值一律不写进 state**,
+ * 否则会把 preset config 永久压住(与 preinject 覆盖同一条纪律)。
+ */
+export interface RorokoDreamState {
+    enabled?: boolean;
+    intervalMs?: number;
+    batch?: number;
+    provider?: string;
+    model?: string;
+    maxTokens?: number;
+    logDir?: string;
+}
 /** 四工具参数键(与 HTTP payload 一致)。 */
-export type RorokoToolKey = 'preinject' | 'data' | 'warn' | 'mark';
+export type RorokoToolKey = 'preinject' | 'data' | 'warn' | 'mark' | 'dream';
 /**
  * 电箱参数状态。
  * presets 按 agent preset id 分桶(空对象 = 全部走 preset config 兜底),
@@ -126,9 +140,11 @@ export interface RorokoToolState {
     data: RorokoDataState;
     warn: Record<string, never>;
     mark: RorokoMarkState;
+    /** dream 覆盖层(字段可选;空对象 = 全走 preset config + 内置默认)。 */
+    dream: RorokoDreamState;
 }
 /** 四工具键的稳定序(渲染/校验共用)。 */
-export declare const ROROKO_TOOL_KEYS: readonly ["preinject", "data", "warn", "mark"];
+export declare const ROROKO_TOOL_KEYS: readonly ["preinject", "data", "warn", "mark", "dream"];
 /** preinject 内置默认:覆盖层与 preset config 都没给时的最终兜底。 */
 export declare const RorokoPreinjectDefaults: RorokoPreinjectState;
 /**
@@ -151,6 +167,11 @@ export declare function normalizeAutoinject(value: unknown): RorokoAutoinjectSta
 export declare function normalizeDataState(value: unknown): RorokoDataState;
 /** mark 一节的窄化与默认(enabled 布尔兜底)。 */
 export declare function normalizeMarkState(value: unknown): RorokoMarkState;
+/**
+ * dream 一节的窄化:**只留出现过的合法字段**(不做默认填充)。
+ * 全非法 → 空对象,等于"未覆盖",preset config 照常生效。
+ */
+export declare function normalizeDreamState(value: unknown): RorokoDreamState;
 /**
  * 把任意(部分/旧版)状态对象叠到默认上。
  * 兼容旧形状:顶层 `preinject` 节迁进 `presets[ROROKO_COMMON_SCOPE]`。

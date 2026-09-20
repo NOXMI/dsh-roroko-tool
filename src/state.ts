@@ -23,8 +23,8 @@ import { dirname, join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { readFile, rename, mkdir, writeFile } from 'node:fs/promises'
 import {
-  normalizeAutoinject, normalizeDataState, normalizeMarkState, normalizeState,
-  RorokoDataState, RorokoMarkState, RorokoPreinjectOverride, RorokoToolState,
+  normalizeAutoinject, normalizeDataState, normalizeDreamState, normalizeMarkState, normalizeState,
+  RorokoDataState, RorokoDreamState, RorokoMarkState, RorokoPreinjectOverride, RorokoToolState,
   RorokoToolStateDefault,
 } from './settings.js'
 
@@ -210,6 +210,36 @@ export async function setMarkConfig(
     ...current,
     mark: normalizeMarkState(merged),
   }
+  await saveState(next)
+  return next
+}
+
+/** dream 参数节可覆盖的字段(宽松 unknown,内部收窄)。 */
+export interface RorokoDreamConfigInput {
+  enabled?: unknown
+  intervalMs?: unknown
+  batch?: unknown
+  provider?: unknown
+  model?: unknown
+  maxTokens?: unknown
+  logDir?: unknown
+}
+
+/** dream 节可覆盖的键(与 RorokoDreamState 对齐)。 */
+const DREAM_INPUT_KEYS = ['enabled', 'intervalMs', 'batch', 'provider', 'model', 'maxTokens', 'logDir'] as const
+
+/**
+ * 覆盖保存 dream 参数节:body 里**出现过**的字段才写(部分覆盖语义)。
+ * 全部字段都没出现时结果仍是空桶 —— 空桶等价于"未覆盖",preset config 照常生效,
+ * 所以 dream 不需要单独的 reset 端点(要清就显式提交空值)。
+ */
+export async function setDreamConfig(config: RorokoDreamConfigInput): Promise<RorokoToolState> {
+  const current = await loadState()
+  const merged: Record<string, unknown> = { ...current.dream }
+  for (const key of DREAM_INPUT_KEYS) {
+    if (config[key] !== undefined) merged[key] = config[key]
+  }
+  const next: RorokoToolState = { ...current, dream: normalizeDreamState(merged) }
   await saveState(next)
   return next
 }

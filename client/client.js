@@ -1120,7 +1120,7 @@ window.__ModuleLoader__.load({
 				marginTop: 2
 			} }, desc));
 		}
-		/** 区块外壳:参数面板共用背景/圆角/内边距。 */
+		/** 区块外壳:参数面板共用背景/圆角/内边距(child 允许 null,便于条件渲染)。 */
 		function PanelShell(props) {
 			return (0, react.createElement)("div", { style: {
 				background: "var(--dsw-surface-secondary, rgba(128,128,128,.06))",
@@ -1702,6 +1702,251 @@ window.__ModuleLoader__.load({
 				}), enabled ? "展开已开启(推荐保持)" : "展开已关闭(-呻吟_X- 原样显示)")
 			] });
 		}
+		/** 间隔小时数收窄:1~24,非法回落 4。 */
+		function clampHours(value) {
+			const n = Number.parseInt(value, 10);
+			if (!Number.isFinite(n)) return 4;
+			return Math.min(24, Math.max(1, n));
+		}
+		/** 批量收窄:1~50,非法回落 20。 */
+		function clampBatch(value) {
+			const n = Number.parseInt(value, 10);
+			if (!Number.isFinite(n)) return 20;
+			return Math.min(50, Math.max(1, n));
+		}
+		/**
+		* dream 面板:开关 / provider / model / 间隔 / 批量 + 「立即整理」+ 运行状态。
+		*
+		* 配置存 state(覆盖层,字段级叠在 preset config 之上);provider/model **改了立刻生效**
+		* (机制层每轮现算配置),间隔改动则在下一轮重新 arm 时生效 —— 都不必重启宿主。
+		*/
+		function DreamPanel(props) {
+			const { config, busy, onSave } = props;
+			const [enabled, setEnabled] = (0, react.useState)(() => config.enabled ?? true);
+			const [provider, setProvider] = (0, react.useState)(() => toStr(config.provider));
+			const [model, setModel] = (0, react.useState)(() => toStr(config.model));
+			const [hours, setHours] = (0, react.useState)(() => String(Math.round((config.intervalMs ?? 144e5) / 36e5)));
+			const [batch, setBatch] = (0, react.useState)(() => String(config.batch ?? 20));
+			const [dirty, setDirty] = (0, react.useState)(false);
+			const [saved, setSaved] = (0, react.useState)(false);
+			const [saving, setSaving] = (0, react.useState)(false);
+			const [saveError, setSaveError] = (0, react.useState)(null);
+			const [status, setStatus] = (0, react.useState)(null);
+			const [statusError, setStatusError] = (0, react.useState)(null);
+			const [runningNow, setRunningNow] = (0, react.useState)(false);
+			useUnsavedGuard(dirty);
+			const loadStatus = () => {
+				fetch(api("/roroko-tool/dream"), { cache: "no-store" }).then(async (response) => {
+					const body = await response.json();
+					setStatus(body);
+					setStatusError(null);
+				}).catch((cause) => {
+					setStatusError(cause instanceof Error ? cause.message : String(cause));
+				});
+			};
+			(0, react.useEffect)(loadStatus, []);
+			const save = () => {
+				const next = {
+					enabled,
+					provider: provider.trim(),
+					model: model.trim(),
+					intervalMs: clampHours(hours) * 36e5,
+					batch: clampBatch(batch)
+				};
+				console.log("[roroko-tool] save dream →", next);
+				setSaveError(null);
+				setSaving(true);
+				onSave(next).then((ok) => {
+					if (ok) {
+						setDirty(false);
+						setSaved(true);
+						loadStatus();
+					} else setSaveError("服务端未接受本次写入(细节见下方面板错误行)");
+				}).catch((cause) => {
+					setSaveError(cause instanceof Error ? cause.message : String(cause));
+				}).finally(() => {
+					setSaving(false);
+				});
+			};
+			const runNow = () => {
+				console.log("[roroko-tool] dream run now");
+				setStatusError(null);
+				setRunningNow(true);
+				fetch(api("/roroko-tool/dream"), {
+					method: "POST",
+					headers: { "content-type": "application/json" }
+				}).then(async (response) => {
+					const body = await response.json();
+					if (!response.ok || body.ok !== true) setStatusError(body.error ?? body.result?.note ?? `HTTP ${response.status}`);
+					else console.log("[roroko-tool] dream ran:", body.result);
+					loadStatus();
+				}).catch((cause) => {
+					setStatusError(cause instanceof Error ? cause.message : String(cause));
+				}).finally(() => {
+					setRunningNow(false);
+				});
+			};
+			const last = status?.last ?? null;
+			return (0, react.createElement)(PanelShell, { children: [
+				(0, react.createElement)("div", { style: {
+					fontWeight: 600,
+					marginBottom: 8,
+					fontSize: "0.9em"
+				} }, "记忆整理开关与模型(存 state,字段级叠在 preset config 之上)"),
+				(0, react.createElement)("div", { style: {
+					fontSize: "0.85em",
+					color: "var(--dsw-text-secondary, #888)",
+					marginBottom: 8
+				} }, "定时挑出「未反思」的记忆(日志不计),调一次模型要一份改写,逐条按 reflect 语义覆盖。没配 provider/model 就每次静默跳过。"),
+				(0, react.createElement)("label", { style: {
+					display: "flex",
+					alignItems: "center",
+					gap: 6,
+					fontSize: "0.85em",
+					cursor: "pointer"
+				} }, (0, react.createElement)("input", {
+					type: "checkbox",
+					checked: enabled,
+					disabled: busy,
+					onChange: () => {
+						setEnabled(!enabled);
+						setDirty(true);
+						setSaved(false);
+					}
+				}), "启用 dream"),
+				(0, react.createElement)("div", { style: {
+					display: "flex",
+					gap: 8,
+					alignItems: "center",
+					margin: "10px 0 6px",
+					flexWrap: "wrap"
+				} }, (0, react.createElement)("input", {
+					type: "text",
+					value: provider,
+					disabled: busy,
+					placeholder: "provider(如 deepseek)",
+					style: {
+						...inputStyle,
+						width: 190
+					},
+					onChange: (event) => {
+						setProvider(event.target.value);
+						setDirty(true);
+						setSaved(false);
+					}
+				}), (0, react.createElement)("input", {
+					type: "text",
+					value: model,
+					disabled: busy,
+					placeholder: "model(如 deepseek-chat)",
+					style: {
+						...inputStyle,
+						width: 230
+					},
+					onChange: (event) => {
+						setModel(event.target.value);
+						setDirty(true);
+						setSaved(false);
+					}
+				})),
+				(0, react.createElement)("div", { style: {
+					display: "flex",
+					gap: 8,
+					alignItems: "center",
+					margin: "0 0 8px",
+					flexWrap: "wrap"
+				} }, (0, react.createElement)("span", { style: {
+					fontSize: "0.85em",
+					color: "var(--dsw-text-secondary, #888)"
+				} }, "每"), (0, react.createElement)("input", {
+					type: "number",
+					min: 1,
+					max: 24,
+					value: hours,
+					disabled: busy,
+					style: {
+						...inputStyle,
+						width: 80
+					},
+					onChange: (event) => {
+						setHours(event.target.value);
+						setDirty(true);
+						setSaved(false);
+					}
+				}), (0, react.createElement)("span", { style: {
+					fontSize: "0.85em",
+					color: "var(--dsw-text-secondary, #888)"
+				} }, "小时跑一次;一次最多"), (0, react.createElement)("input", {
+					type: "number",
+					min: 1,
+					max: 50,
+					value: batch,
+					disabled: busy,
+					style: {
+						...inputStyle,
+						width: 70
+					},
+					onChange: (event) => {
+						setBatch(event.target.value);
+						setDirty(true);
+						setSaved(false);
+					}
+				}), (0, react.createElement)("span", { style: {
+					fontSize: "0.85em",
+					color: "var(--dsw-text-secondary, #888)"
+				} }, "条")),
+				(0, react.createElement)("div", { style: {
+					display: "flex",
+					gap: 8,
+					alignItems: "center",
+					marginTop: 10,
+					flexWrap: "wrap"
+				} }, (0, react.createElement)("button", {
+					type: "button",
+					disabled: busy || saving,
+					style: {
+						...buttonStyle,
+						borderColor: dirty ? "var(--dsw-text-primary, #eee)" : void 0,
+						color: dirty ? "var(--dsw-text-primary, #eee)" : void 0
+					},
+					onClick: save
+				}, saving ? "保存中…" : "保存设置"), (0, react.createElement)("button", {
+					type: "button",
+					disabled: runningNow || status?.enabled !== true || status?.configured !== true,
+					style: buttonStyle,
+					onClick: runNow
+				}, runningNow ? "整理中…" : "立即整理一次"), (0, react.createElement)("button", {
+					type: "button",
+					disabled: busy,
+					style: buttonStyle,
+					onClick: loadStatus
+				}, "刷新状态"), dirty ? (0, react.createElement)("span", { style: {
+					fontSize: "0.8em",
+					color: "var(--dsw-text-warning, #e5a00d)"
+				} }, "● 未保存(点「保存设置」才写盘)") : null, saved && !dirty ? (0, react.createElement)("span", { style: {
+					fontSize: "0.8em",
+					color: "var(--dsw-text-success, #46a758)"
+				} }, "已保存") : null, saveError !== null ? (0, react.createElement)("span", { style: {
+					fontSize: "0.8em",
+					color: "var(--dsw-text-danger, #e5484d)"
+				} }, `保存失败: ${saveError}`) : null),
+				(0, react.createElement)("div", { style: {
+					marginTop: 10,
+					fontSize: "0.8em",
+					color: "var(--dsw-text-secondary, #888)"
+				} }, status === null ? statusError === null ? "状态: 读取中…" : `状态读取失败: ${statusError}` : `状态: ${status.enabled ? "已接上" : "未接上(插件未声明 / llm 不可用)"} · 模型 ${status.configured ? `${status.provider}/${status.model}` : "(未配,每次跳过)"} · 间隔 ${Math.round(status.intervalMs / 36e5)} 小时 · 批量 ${status.batch}${status.running ? " · 正在跑" : ""}`),
+				last !== null ? (0, react.createElement)("div", { style: {
+					marginTop: 4,
+					fontSize: "0.8em",
+					color: "var(--dsw-text-secondary, #888)"
+				} }, `上次 ${last.at}: ${last.note}(队列 ${last.queued} · 跳过日志 ${last.skippedLogs}${last.changed.length > 0 ? ` · 已反思 ${last.changed.map((id) => `#${id}`).join(" ")}` : ""})`) : null,
+				statusError !== null && status !== null ? (0, react.createElement)("div", { style: {
+					marginTop: 4,
+					fontSize: "0.8em",
+					color: "var(--dsw-text-danger, #e5484d)"
+				} }, statusError) : null
+			] });
+		}
 		/** 设置页内容:按 preset 分卡片编辑注入参数,data/mark 仍是全局参数。 */
 		function RorokoToolSection() {
 			const [state, setState] = (0, react.useState)(null);
@@ -1874,6 +2119,13 @@ window.__ModuleLoader__.load({
 				onToggle: (next) => {
 					saveMark(next);
 				}
+			}), (0, react.createElement)(ToolHeader, {
+				title: "经历记忆与 dream (roroko-memory)",
+				desc: "四把工具 roroko_mem_edit / date / rough / id 由 preset 声明即启用;dream 周期挑「未反思」的记忆交给模型收敛(日志不计),开关与模型在下面调。"
+			}), (0, react.createElement)(DreamPanel, {
+				config: state.dream ?? {},
+				busy: busy && busyTool === "dream",
+				onSave: (next) => post("dream", { dream: next }, "dream")
 			}), (0, react.createElement)(ToolHeader, {
 				title: "超量收敛警告 (roroko-warn)",
 				desc: "工具调用/思考超量时注入收敛警告(未实现)。"

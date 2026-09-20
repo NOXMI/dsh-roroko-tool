@@ -149,6 +149,21 @@ eq(response.json().state.data.dbPath, '/tmp/soul.db', 'data 保存落盘')
 response = await post({ tool: 'mark', enabled: false })
 eq(response.json().state.mark.enabled, false, 'mark 保存落盘')
 
+// ── dream 覆盖层保存(字段全可选;部分保存不该冲掉别的字段)
+eq((await post({ tool: 'dream' })).status, 400, 'dream 缺对象 → 400')
+response = await post({ tool: 'dream', dream: { provider: 'deepseek', model: 'deepseek-chat', batch: 12 } })
+eq(response.status, 200, 'dream 保存 → 200')
+eq(response.json().state.dream.provider, 'deepseek', 'provider 落盘')
+eq(response.json().state.dream.batch, 12, 'batch 落盘')
+response = await post({ tool: 'dream', dream: { enabled: false } })
+eq(
+  { ...response.json().state.dream },
+  { provider: 'deepseek', model: 'deepseek-chat', batch: 12, enabled: false },
+  '★ 部分保存合并:只发 enabled 也不冲掉前面那三项',
+)
+response = await call('GET', '/roroko-tool/state')
+eq(response.json().dream.batch, 12, '模拟刷新页面:dream 配置仍在')
+
 // ── 方法/体积边界
 eq((await call('PUT', '/roroko-tool/state')).status, 405, '非 GET/POST → 405')
 eq((await call('PUT', '/roroko-tool/presets')).status, 405, 'presets 非 GET → 405')

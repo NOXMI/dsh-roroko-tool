@@ -3,8 +3,8 @@
  * 运行:node test/settings-unit.mjs
  */
 import {
-  RorokoDataDefaultDbPath, ROROKO_COMMON_SCOPE, RorokoToolStateDefault,
-  isRorokoToolKey, normalizePreinjectOverride, normalizeState,
+  RorokoDataDefaultDbPath, ROROKO_COMMON_SCOPE, ROROKO_TOOL_KEYS, RorokoToolStateDefault,
+  isRorokoToolKey, normalizeDreamState, normalizePreinjectOverride, normalizeState,
   preinjectView, resolvePresetOverride,
 } from '../lib/settings.js'
 import { makeAsserts } from './helpers/harness.mjs'
@@ -16,6 +16,21 @@ eq(RorokoToolStateDefault.presets, {}, '默认 presets 为空对象(不写默认
 eq(RorokoToolStateDefault.data.dbPath, RorokoDataDefaultDbPath, '默认 dbPath = 服务器路径')
 eq(RorokoToolStateDefault.mark.enabled, true, '默认 mark.enabled = true')
 eq(RorokoToolStateDefault.warn, {}, '默认 warn 为空节')
+
+// ── dream 节:字段全可选,默认值一个都不写(否则会把 preset config 永久压住)
+eq(RorokoToolStateDefault.dream, {}, '默认 dream 为空桶 = 未覆盖')
+ok(ROROKO_TOOL_KEYS.includes('dream'), '工具键含 dream')
+eq(normalizeDreamState(undefined), {}, 'undefined → 空桶')
+eq(normalizeDreamState(42), {}, '非对象 → 空桶')
+eq(
+  normalizeDreamState({ provider: ' deepseek ', model: 'm', batch: 2.7, 未知键: 'x' }),
+  { provider: 'deepseek', model: 'm', batch: 2 },
+  '只留出现过的合法字段(trim / 取整 / 丢未知键)',
+)
+eq(normalizeDreamState({ enabled: 'yes', intervalMs: 'x' }), {}, '类型不对的字段一律丢')
+eq(normalizeDreamState({ enabled: false, logDir: '/tmp/d' }), { enabled: false, logDir: '/tmp/d' }, '布尔与字符串照收')
+eq(normalizeState({ dream: { provider: 'p' } }).dream, { provider: 'p' }, 'normalizeState 认 dream 节')
+eq(normalizeState({}).dream, {}, '没有 dream 节时回落空桶')
 
 // ── normalizeState 容错:绝不抛
 for (const bad of [null, undefined, 42, 'x', [], true]) {

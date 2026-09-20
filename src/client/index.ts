@@ -116,6 +116,34 @@ interface RorokoToolState {
   data: DataWire
   warn: Record<string, never>
   mark: { enabled: boolean }
+  /** dream 覆盖层;旧宿主可能没这一节。 */
+  dream?: DreamWire
+}
+
+/** dream 覆盖层 wire(字段全可选;与 host 的 RorokoDreamState 一致)。 */
+interface DreamWire {
+  enabled?: boolean
+  intervalMs?: number
+  batch?: number
+  provider?: string
+  model?: string
+  maxTokens?: number
+  logDir?: string
+}
+
+/** GET /roroko-tool/dream 的运行时状态(与 host route 一致)。 */
+interface DreamStatusWire {
+  /** dream 是否已接上(llm 可用 + 已启用)。 */
+  enabled: boolean
+  /** provider/model 是否配齐 —— 没配齐每次都会跳过。 */
+  configured: boolean
+  provider: string
+  model: string
+  intervalMs: number
+  batch: number
+  logDir: string
+  running: boolean
+  last: { note: string; changed: number[]; queued: number; skippedLogs: number; at: string } | null
 }
 
 /** preset 列表 wire(host 扫 $DSH_HOME/.agent-presets 得到)。 */
@@ -185,8 +213,8 @@ function ToolHeader(props: { title: string; desc: string }): ReturnType<typeof h
   )
 }
 
-/** 区块外壳:参数面板共用背景/圆角/内边距。 */
-function PanelShell(props: { children: ReturnType<typeof h>[] }): ReturnType<typeof h> {
+/** 区块外壳:参数面板共用背景/圆角/内边距(child 允许 null,便于条件渲染)。 */
+function PanelShell(props: { children: Array<ReturnType<typeof h> | null | undefined> }): ReturnType<typeof h> {
   return h('div', {
     style: {
       background: 'var(--dsw-surface-secondary, rgba(128,128,128,.06))',
@@ -783,6 +811,208 @@ function MarkPanel(props: {
   })
 }
 
+/** 间隔小时数收窄:1~24,非法回落 4。 */
+function clampHours(value: string): number {
+  const n = Number.parseInt(value, 10)
+  if (!Number.isFinite(n)) return 4
+  return Math.min(24, Math.max(1, n))
+}
+
+/** 批量收窄:1~50,非法回落 20。 */
+function clampBatch(value: string): number {
+  const n = Number.parseInt(value, 10)
+  if (!Number.isFinite(n)) return 20
+  return Math.min(50, Math.max(1, n))
+}
+
+/**
+ * dream 面板:开关 / provider / model / 间隔 / 批量 + 「立即整理」+ 运行状态。
+ *
+ * 配置存 state(覆盖层,字段级叠在 preset config 之上);provider/model **改了立刻生效**
+ * (机制层每轮现算配置),间隔改动则在下一轮重新 arm 时生效 —— 都不必重启宿主。
+ */
+function DreamPanel(props: {
+  config: DreamWire
+  busy: boolean
+  onSave: (next: DreamWire) => Promise<boolean>
+}): ReturnType<typeof h> {
+  const { config, busy, onSave } = props
+  const [enabled, setEnabled] = useState<boolean>(() => config.enabled ?? true)
+  const [provider, setProvider] = useState<string>(() => toStr(config.provider))
+  const [model, setModel] = useState<string>(() => toStr(config.model))
+  const [hours, setHours] = useState<string>(() => String(Math.round((config.intervalMs ?? 4 * 60 * 60 * 1000) / 3600000)))
+  const [batch, setBatch] = useState<string>(() => String(config.batch ?? 20))
+  const [dirty, setDirty] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [status, setStatus] = useState<DreamStatusWire | null>(null)
+  const [statusError, setStatusError] = useState<string | null>(null)
+  const [runningNow, setRunningNow] = useState(false)
+  useUnsavedGuard(dirty)
+
+  const loadStatus = (): void => {
+    void fetch(api('/roroko-tool/dream'), { cache: 'no-store' })
+      .then(async (response) => {
+        const body = (await response.json()) as DreamStatusWire
+        setStatus(body)
+        setStatusError(null)
+      })
+      .catch((cause: unknown) => {
+        setStatusError(cause instanceof Error ? cause.message : String(cause))
+      })
+  }
+  useEffect(loadStatus, [])
+
+  const save = (): void => {
+    const next: DreamWire = {
+      enabled,
+      provider: provider.trim(),
+      model: model.trim(),
+      intervalMs: clampHours(hours) * 3600000,
+      batch: clampBatch(batch),
+    }
+    console.log('[roroko-tool] save dream →', next)
+    setSaveError(null)
+    setSaving(true)
+    void onSave(next)
+      .then((ok: boolean) => {
+        if (ok) {
+          setDirty(false)
+          setSaved(true)
+          loadStatus()
+        } else setSaveError('服务端未接受本次写入(细节见下方面板错误行)')
+      })
+      .catch((cause: unknown) => {
+        setSaveError(cause instanceof Error ? cause.message : String(cause))
+      })
+      .finally(() => { setSaving(false) })
+  }
+
+  const runNow = (): void => {
+    console.log('[roroko-tool] dream run now')
+    setStatusError(null)
+    setRunningNow(true)
+    void fetch(api('/roroko-tool/dream'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+    })
+      .then(async (response) => {
+        const body = (await response.json()) as { ok?: boolean; error?: string; result?: { note?: string } }
+        if (!response.ok || body.ok !== true) {
+          setStatusError(body.error ?? body.result?.note ?? `HTTP ${response.status}`)
+        } else {
+          console.log('[roroko-tool] dream ran:', body.result)
+        }
+        loadStatus()
+      })
+      .catch((cause: unknown) => {
+        setStatusError(cause instanceof Error ? cause.message : String(cause))
+      })
+      .finally(() => { setRunningNow(false) })
+  }
+
+  const last = status?.last ?? null
+  return h(PanelShell, {
+    children: [
+      h('div', { style: { fontWeight: 600, marginBottom: 8, fontSize: '0.9em' } },
+        '记忆整理开关与模型(存 state,字段级叠在 preset config 之上)'),
+      h('div', { style: { fontSize: '0.85em', color: 'var(--dsw-text-secondary, #888)', marginBottom: 8 } },
+        '定时挑出「未反思」的记忆(日志不计),调一次模型要一份改写,逐条按 reflect 语义覆盖。'
+        + '没配 provider/model 就每次静默跳过。'),
+      h('label', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85em', cursor: 'pointer' } },
+        h('input', {
+          type: 'checkbox',
+          checked: enabled,
+          disabled: busy,
+          onChange: () => { setEnabled(!enabled); setDirty(true); setSaved(false) },
+        }),
+        '启用 dream'),
+      h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', margin: '10px 0 6px', flexWrap: 'wrap' } },
+        h('input', {
+          type: 'text',
+          value: provider,
+          disabled: busy,
+          placeholder: 'provider(如 deepseek)',
+          style: { ...inputStyle, width: 190 },
+          onChange: (event: { target: { value: string } }) => { setProvider(event.target.value); setDirty(true); setSaved(false) },
+        }),
+        h('input', {
+          type: 'text',
+          value: model,
+          disabled: busy,
+          placeholder: 'model(如 deepseek-chat)',
+          style: { ...inputStyle, width: 230 },
+          onChange: (event: { target: { value: string } }) => { setModel(event.target.value); setDirty(true); setSaved(false) },
+        })),
+      h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', margin: '0 0 8px', flexWrap: 'wrap' } },
+        h('span', { style: { fontSize: '0.85em', color: 'var(--dsw-text-secondary, #888)' } }, '每'),
+        h('input', {
+          type: 'number',
+          min: 1,
+          max: 24,
+          value: hours,
+          disabled: busy,
+          style: { ...inputStyle, width: 80 },
+          onChange: (event: { target: { value: string } }) => { setHours(event.target.value); setDirty(true); setSaved(false) },
+        }),
+        h('span', { style: { fontSize: '0.85em', color: 'var(--dsw-text-secondary, #888)' } }, '小时跑一次;一次最多'),
+        h('input', {
+          type: 'number',
+          min: 1,
+          max: 50,
+          value: batch,
+          disabled: busy,
+          style: { ...inputStyle, width: 70 },
+          onChange: (event: { target: { value: string } }) => { setBatch(event.target.value); setDirty(true); setSaved(false) },
+        }),
+        h('span', { style: { fontSize: '0.85em', color: 'var(--dsw-text-secondary, #888)' } }, '条')),
+      h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' } },
+        h('button', {
+          type: 'button',
+          disabled: busy || saving,
+          style: {
+            ...buttonStyle,
+            borderColor: dirty ? 'var(--dsw-text-primary, #eee)' : undefined,
+            color: dirty ? 'var(--dsw-text-primary, #eee)' : undefined,
+          },
+          onClick: save,
+        }, saving ? '保存中…' : '保存设置'),
+        h('button', {
+          type: 'button',
+          disabled: runningNow || status?.enabled !== true || status?.configured !== true,
+          style: buttonStyle,
+          onClick: runNow,
+        }, runningNow ? '整理中…' : '立即整理一次'),
+        h('button', { type: 'button', disabled: busy, style: buttonStyle, onClick: loadStatus }, '刷新状态'),
+        dirty
+          ? h('span', { style: { fontSize: '0.8em', color: 'var(--dsw-text-warning, #e5a00d)' } }, '● 未保存(点「保存设置」才写盘)')
+          : null,
+        saved && !dirty
+          ? h('span', { style: { fontSize: '0.8em', color: 'var(--dsw-text-success, #46a758)' } }, '已保存')
+          : null,
+        saveError !== null
+          ? h('span', { style: { fontSize: '0.8em', color: 'var(--dsw-text-danger, #e5484d)' } }, `保存失败: ${saveError}`)
+          : null),
+      h('div', { style: { marginTop: 10, fontSize: '0.8em', color: 'var(--dsw-text-secondary, #888)' } },
+        status === null
+          ? (statusError === null ? '状态: 读取中…' : `状态读取失败: ${statusError}`)
+          : `状态: ${status.enabled ? '已接上' : '未接上(插件未声明 / llm 不可用)'}`
+            + ` · 模型 ${status.configured ? `${status.provider}/${status.model}` : '(未配,每次跳过)'}`
+            + ` · 间隔 ${Math.round(status.intervalMs / 3600000)} 小时 · 批量 ${status.batch}`
+            + `${status.running ? ' · 正在跑' : ''}`),
+      last !== null
+        ? h('div', { style: { marginTop: 4, fontSize: '0.8em', color: 'var(--dsw-text-secondary, #888)' } },
+            `上次 ${last.at}: ${last.note}(队列 ${last.queued} · 跳过日志 ${last.skippedLogs}`
+            + `${last.changed.length > 0 ? ` · 已反思 ${last.changed.map(id => `#${id}`).join(' ')}` : ''})`)
+        : null,
+      statusError !== null && status !== null
+        ? h('div', { style: { marginTop: 4, fontSize: '0.8em', color: 'var(--dsw-text-danger, #e5484d)' } }, statusError)
+        : null,
+    ],
+  })
+}
+
 /** 设置页内容:按 preset 分卡片编辑注入参数,data/mark 仍是全局参数。 */
 export function RorokoToolSection(): ReturnType<typeof h> {
   const [state, setState] = useState<RorokoToolState | null>(null)
@@ -960,6 +1190,12 @@ export function RorokoToolSection(): ReturnType<typeof h> {
             enabled: state.mark.enabled,
             busy: busy && busyTool === 'mark',
             onToggle: (next: boolean) => { void saveMark(next) },
+          }),
+          h(ToolHeader, { title: '经历记忆与 dream (roroko-memory)', desc: '四把工具 roroko_mem_edit / date / rough / id 由 preset 声明即启用;dream 周期挑「未反思」的记忆交给模型收敛(日志不计),开关与模型在下面调。' }),
+          h(DreamPanel, {
+            config: state.dream ?? {},
+            busy: busy && busyTool === 'dream',
+            onSave: (next: DreamWire) => post('dream', { dream: next }, 'dream'),
           }),
           h(ToolHeader, { title: '超量收敛警告 (roroko-warn)', desc: '工具调用/思考超量时注入收敛警告(未实现)。' }),
           error !== null
