@@ -38,6 +38,8 @@ export interface DateQuery {
  * 区间非法时返回人话错误,不抛 —— 工具执行失败会污染整轮。
  */
 export declare function runDate(db: DatabaseSync, query: DateQuery, now: Date): string;
+/** 检索 / 取全文 / dream 共用的列(改动这里要顺手看一眼各处渲染)。 */
+export declare const MEMORY_COLUMNS = "id, owner, content, summary, created_at, reflected_at, recalled, source, kind";
 /** 关键词检索入参。 */
 export interface RoughQuery {
     keywords?: unknown;

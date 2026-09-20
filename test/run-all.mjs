@@ -15,6 +15,8 @@ const suites = [
   { file: 'state-io.mjs', nodeArgs: [] },
   { file: 'datas-query.mjs', nodeArgs: [] },
   { file: 'memory-unit.mjs', nodeArgs: [] },
+  // dream 机制不 import DSH 运行时值(模型调用是注入的),所以也不用替身。
+  { file: 'memory-dream.mjs', nodeArgs: [] },
   {
     file: 'memory-tool.mjs',
     // memory.js 顶层 import dsh-tools 的 defineTool(值导入),同样走替身。

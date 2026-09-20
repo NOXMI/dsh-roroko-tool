@@ -22,7 +22,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { DatabaseSync } from 'node:sqlite'
 import { RorokoMemoryDefaultDbPath, RorokoMemoryDefaultOwner } from './settings.js'
 import {
@@ -30,6 +30,8 @@ import {
   normalizeReflect,
 } from './memory-form.js'
 import { openMemoryDb, runAdd, runDate, runId, runReflect, runRough } from './memory-store.js'
+import { normalizeDreamConfig, type DreamConfig } from './memory-dream-form.js'
+import { defaultDreamLogDir, runDreamOnce, startDreamTimer, type DreamDeps } from './memory-dream.js'
 
 export const name = 'roroko-memory'
 
@@ -42,6 +44,97 @@ export interface RorokoMemoryConfig {
   dbPath?: string
   /** 缺省 owner 桶(工具不传 owner 时用它);缺省回落 dev。 */
   owner?: string
+  /** dream 配置(enabled / intervalMs / batch / provider / model / maxTokens / logDir)。 */
+  dream?: unknown
+}
+
+/** 流式 chunk 的宽松形状(只取我们用到的三类)。 */
+interface LlmStreamChunkLike {
+  type: string
+  text?: string
+  reason?: { kind?: string; failure?: { message?: string } }
+}
+
+/** llm 服务的最小面:只要一个 stream。 */
+interface LlmLike {
+  stream(options: Record<string, unknown>): AsyncIterable<LlmStreamChunkLike>
+}
+
+/**
+ * 调一次模型,拼出纯文本回复。
+ * 消息走官方 `createUserMessage` 构造器(别手搓消息对象);终止原因不是 stop 就抛错 ——
+ * 截断/报错的回复交给 dream 的解析层判失败,绝不"装作跑过"。
+ */
+async function callModelOnce(llm: LlmLike, dream: DreamConfig, prompt: string): Promise<string> {
+  const options: Record<string, unknown> = {
+    provider: dream.provider,
+    model: dream.model,
+    messages: [createUserMessage({
+      content: [{ type: 'text', text: prompt }],
+      source: { kind: 'plugin', plugin: name },
+    })],
+    maxTokens: dream.maxTokens,
+  }
+  let text = ''
+  for await (const chunk of llm.stream(options)) {
+    if (chunk.type === 'text-delta') {
+      if (typeof chunk.text === 'string') text += chunk.text
+      continue
+    }
+    if (chunk.type === 'finish') {
+      const kind = chunk.reason?.kind
+      if (kind === 'error' || kind === 'aborted') {
+        throw new Error(`模型调用未完成(${kind}): ${chunk.reason?.failure?.message ?? ''}`)
+      }
+    }
+  }
+  if (text.trim().length === 0) throw new Error('模型没有输出任何文本')
+  return text
+}
+
+/**
+ * 接 dream 机制。
+ *
+ * **刻意不声明 `inject: ['llm']`** —— 照机制结论 10 的教训:为一个可选功能去声明服务
+ * 依赖,服务一旦缺席(诊断场合、headless 裁剪)会让**整个记忆子插件不加载**,四把工具
+ * 一起消失。这里用 `ctx.get('llm')` 动态取,取不到就记一条日志、dream 不启动,工具照常。
+ */
+function applyDream(ctx: Context, dbPath: string, owner: string, config: RorokoMemoryConfig): void {
+  const dream = normalizeDreamConfig(config.dream)
+  if (!dream.enabled) return
+  const llm = (ctx as unknown as { get?: (key: string) => unknown }).get?.('llm') as LlmLike | undefined
+  if (llm === undefined || typeof llm.stream !== 'function') {
+    ctx.logger?.info?.('[roroko-memory] dream 未启动:llm 服务不可用')
+    return
+  }
+  if (dream.provider.length === 0 || dream.model.length === 0) {
+    ctx.logger?.info?.('[roroko-memory] dream 已启用但未配 provider/model,每次都会跳过')
+  }
+
+  const deps: DreamDeps = {
+    dbPath,
+    owner,
+    provider: dream.provider,
+    model: dream.model,
+    batch: dream.batch,
+    maxTokens: dream.maxTokens,
+    logDir: dream.logDir.length > 0 ? dream.logDir : defaultDreamLogDir(dbPath),
+    now: () => new Date(),
+    callModel: prompt => callModelOnce(llm, dream, prompt),
+  }
+
+  const timer = startDreamTimer({
+    intervalMs: dream.intervalMs,
+    run: async () => {
+      const result = await runDreamOnce(deps)
+      if (result.error !== undefined) ctx.logger?.warn?.(`[roroko-memory] dream: ${result.note}`)
+      else ctx.logger?.info?.(`[roroko-memory] dream: ${result.note}`)
+    },
+    now: () => new Date(),
+    onError: error => ctx.logger?.warn?.(`[roroko-memory] dream 定时器异常: ${String(error)}`),
+  })
+  // 插件卸载时收掉定时器(定时器本身已 unref,漏了也不会挂住进程退出)
+  ctx.effect(() => () => timer.dispose())
 }
 
 /** "看全部桶"的显式取值。 */
@@ -281,4 +374,7 @@ export function apply(ctx: Context, config: RorokoMemoryConfig = {}): void {
   ctx.tools.register(dateTool)
   ctx.tools.register(roughTool)
   ctx.tools.register(idTool)
+
+  // 机制层:dream 定时整理(不发 schema,不注册工具;开关在 config.dream)
+  applyDream(ctx, dbPath, defaultOwner, config)
 }

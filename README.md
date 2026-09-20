@@ -186,6 +186,9 @@ GET  /roroko-tool/presets  → 扫 $DSH_HOME/.agent-presets 列出 preset 卡片
 - 写入纪律写在**工具描述**里（常驻 schema，每轮可见）：三问判据（人设层已有 → 不记；永久生效 → 去改人设文件；能改变未来某场景行为 → 记成「触发条件 → 应做」）+ 四类必记（边界演变 / 有效与无效的挑逗 / 未完成的钩子 / 自己的失手）
 - `owner` 走白名单式收窄（小写字母数字与 `. _ -`），检索**默认不跨桶**，要看全桶显式传 `owner=all`
 - `reflected_at` 就是**反思作业队列**：待办 = `WHERE reflected_at IS NULL ORDER BY created_at ASC`（第七刀 `dream` 按这个契约消费；`roroko_mem_date` 的「未反思 N」是同一队列的计数）
+- **`dream`（机制层，不发 schema）**：`config.dream` 开关 —— 周期性挑出待反思的记忆（`reflected_at IS NULL`，**`kind=log` 不在队列里**），调一次模型要一份 JSON 改写，逐条按 `reflect` 语义覆盖。**门禁只看 `reflected_at` 真落下去没**，没变就不推进队列（照抄 nanobot 的 diff 门禁语义）。默认 **4 小时 / 一批 20 条 / 单条截断 300 字**；未配 `provider` + `model` 就每次静默跳过（不报错、不烧 token）。审计落 `<库目录>/dream-log/<时间>.md`，**只记字数 diff，不记模型自述**
+  - config 形状：`dream: { enabled, intervalMs, batch, provider, model, maxTokens, logDir }` —— 全部可选，缺省见上
+  - 实现上**不建 agent 会话**：`GenerateOptions.system` 官方注释写明支持 one-shot caller，所以 dream 只调一次 `ctx.llm.stream`，模型回文本、我们自己写库（因此快照目录 / `.dream_cursor` / 受限工具集 / prune 全都不需要）
 
 ---
 
