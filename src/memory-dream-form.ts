@@ -47,8 +47,16 @@ export const DREAM_SKIP_KINDS: readonly string[] = ['log']
 /** 审计落盘目录(相对工作区)。 */
 export const DREAM_LOG_DIR = 'dream-log'
 
-/** 单次调用的 token 上限(默认值;provider 侧另有上限时取小)。 */
-export const DREAM_DEFAULT_MAX_TOKENS = 2048
+/**
+ * 单次调用的 token 上限。
+ * ⚠️ **默认必须够推理模型用**:`deepseek-v4-flash` 这类带 thinking 的模型会先把
+ * reasoning 写完再吐正文,2048 会被 thinking 吃满 → 正文一个字都没有(2026-09-20
+ * 在服务器上实测踩到,提到 8192 立刻通)。
+ */
+export const DREAM_DEFAULT_MAX_TOKENS = 8192
+
+/** maxTokens 上限。 */
+export const DREAM_MAX_TOKENS_LIMIT = 16384
 
 /**
  * dream 配置。默认**开着**但没配模型 —— 未配就每次静默跳过(照抄 nanobot 的
@@ -103,7 +111,7 @@ export function normalizeDreamConfig(raw: unknown): DreamConfig {
     batch: clampInt(value.batch, 1, DREAM_MAX_BATCH, DREAM_DEFAULTS.batch),
     provider: typeof value.provider === 'string' ? value.provider.trim() : '',
     model: typeof value.model === 'string' ? value.model.trim() : '',
-    maxTokens: clampInt(value.maxTokens, 128, 8192, DREAM_DEFAULTS.maxTokens),
+    maxTokens: clampInt(value.maxTokens, 128, DREAM_MAX_TOKENS_LIMIT, DREAM_DEFAULTS.maxTokens),
     logDir: typeof value.logDir === 'string' ? value.logDir.trim() : '',
   }
 }

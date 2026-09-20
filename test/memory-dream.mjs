@@ -56,7 +56,7 @@ eq(form.DREAM_DEFAULT_INTERVAL_MS, 4 * 60 * 60 * 1000, '默认间隔 4 小时(�
 const cfgEmpty = form.normalizeDreamConfig({})
 eq(cfgEmpty.intervalMs, 4 * 60 * 60 * 1000, '★ 未给 intervalMs → 默认 4 小时(不是下限 5 分钟)')
 eq(cfgEmpty.batch, 20, '★ 未给 batch → 默认 20(不是下限 1)')
-eq(cfgEmpty.maxTokens, 2048, '未给 maxTokens → 默认 2048')
+eq(cfgEmpty.maxTokens, 8192, '★ 未给 maxTokens → 默认 8192(推理模型要够用,2048 会被 thinking 吃满)')
 eq(form.normalizeDreamConfig(undefined).intervalMs, 4 * 60 * 60 * 1000, 'undefined 配置 → 全默认')
 eq(form.normalizeDreamConfig({ intervalMs: '7200000' }).intervalMs, 7200000, '字符串数字也认')
 eq(form.normalizeDreamConfig({ intervalMs: '' }).intervalMs, 4 * 60 * 60 * 1000, '空串 → 默认')
