@@ -164,6 +164,10 @@ export interface RorokoDreamState {
   batch?: number
   provider?: string
   model?: string
+  /** 起会话用哪个 preset(空 = 部署默认);人设与工具都从它来。 */
+  preset?: string
+  /** 会话工作目录(空 = 进程 cwd)。 */
+  cwd?: string
 }
 
 /** 四工具参数键(与 HTTP payload 一致)。 */
@@ -345,7 +349,7 @@ export function normalizeDreamState(value: unknown): RorokoDreamState {
     const raw = section[key]
     if (typeof raw === 'number' && Number.isFinite(raw)) out[key] = Math.floor(raw)
   }
-  const strings: Array<'provider' | 'model'> = ['provider', 'model']
+  const strings: Array<'provider' | 'model' | 'preset' | 'cwd'> = ['provider', 'model', 'preset', 'cwd']
   for (const key of strings) {
     const raw = section[key]
     if (typeof raw === 'string') out[key] = raw.trim()

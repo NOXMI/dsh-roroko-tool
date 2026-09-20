@@ -2,12 +2,16 @@
  * roroko-memory — 洛洛可经历记忆工具集(roroko-tool 电箱子功能)。
  *
  * 设计来源:`refs/notes/roroko-memory-design-v1.md`(2026-09-17 定稿)。用 DSH 姿势
- * 重写:agent preset 层注册两把 agent 工具,直连独立库 `roroko_memory.db`
+ * 实现:agent preset 层注册四把 agent 工具,直连独立库 `roroko_memory.db`
  * (`node:sqlite`),不外包 python、不引入向量、不新增注入。
  *
- *   roroko_mem_edit  写记忆:op=add 落一条(初摘要 content + 二次摘要 summary),
- *                    created_at 由服务端按 CST 生成。反思(op=reflect)留 M4 刀。
+ *   roroko_mem_edit  写记忆 / 反思:add 落一条;reflect 整条覆盖 + 刷反思时间。
  *   roroko_mem_date  按日期回查:默认今天 + 昨天(会话开始必读),带未反思统计。
+ *   roroko_mem_rough 关键词检索:一条 SQL LIKE(每个词都要命中)。
+ *   roroko_mem_id    按 id 取全文(含 source provenance)。
+ *
+ * 2026-09-21 减法(阿一:"工具就只是简单的 sqlite 工具"):删掉 bigram 打分 / 覆盖度 /
+ * 召回计数 / owner=all / kind 入参 —— 细节见 memory-form.ts 的文件头与 README §5.6。
  *
  * 电箱闸门(2026-09-18 阿一拍板 · A 案):**preset 声明即开关** ——
  * 需要在哪个工作区用记忆,就在那个 preset 里写 `roroko-memory` 行;不写即不存在。
@@ -30,7 +34,7 @@ export interface RorokoMemoryConfig {
     dbPath?: string;
     /** 缺省 owner 桶(工具不传 owner 时用它);缺省回落 dev。 */
     owner?: string;
-    /** dream 配置(enabled / intervalMs / batch / provider / model)。 */
+    /** dream 配置(enabled / intervalMs / batch / provider / model / preset / cwd)。 */
     dream?: unknown;
 }
 /** 注册四把记忆工具;preset 声明本插件即注册。 */

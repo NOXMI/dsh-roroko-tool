@@ -327,6 +327,8 @@ export function registerStateRoutes(webServer: WebServerLike): () => void {
             model: config?.model ?? '',
             intervalMs: config?.intervalMs ?? 0,
             batch: config?.batch ?? 0,
+            preset: config?.preset ?? '',
+            cwd: config?.cwd ?? '',
             running: dreamRuntime.running,
             last: dreamRuntime.last ?? null,
           })

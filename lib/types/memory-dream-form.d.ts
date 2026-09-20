@@ -1,16 +1,21 @@
 /**
- * roroko 记忆 dream 的纯逻辑:队列口径 / prompt 组装 / 回复解析 / 门禁判定。
+ * roroko 记忆 dream 的纯逻辑:队列口径 / 任务书组装 / 门禁判定 / 审计渲染。
  *
  * 设计来源:`refs/notes/roroko-memory-design-v1.md` §七(第七刀 = 记忆系统的下游)+
  * `refs/notes/roroko-datas-dream-slice7-plan.md`(照抄 nanobot 的九步执行序)。
  *
- * 与 09-16 那份计划的**唯一差别**:靶子从"三个记忆文件"换成 sqlite 记忆表。
- * 因为不写文件,所以 E2 的快照目录、`.dream_cursor`、受限工具集、prune 全部作废 ——
- * **队列本身就是游标**(`reflected_at IS NULL`)。
+ * 2026-09-21 会话化改写(阿一:光给它一段提示词"像啥也不知道的外人来弄"):
+ *   - **不再让模型回 JSON** —— 改成起一个一次性会话,上下文由那个 preset 供
+ *     (人设靠 preinject 注入的系统段、工具靠 preset 声明的插件行),模型自己
+ *     `roroko_mem_id` 取全文、自己 `roroko_mem_edit` 改回去。
+ *   - 因此任务书里**只给清单**(id / 时间 / 摘要),正文让它自己按需取 ——
+ *     既省上下文,也逼它走一遍"取全文再改"的正路。
+ *   - 门禁照旧:**只认 `reflected_at` 真落下去**(不认模型自述),另外统计
+ *     会话前后桶内条数差 = 它自己 `add` 了几条(保留矛盾那条通道)。
  *
  * 本文件**不 import node 内置与 DSH 运行时包** —— 零依赖测试直读编译产物。
  */
-import { type MemoryRow } from './memory-form.js';
+import { MEMORY_CONTENT_MAX, type MemoryRow } from './memory-form.js';
 /** 默认间隔:4 小时(照抄 nanobot 的 everyMs=14400000)。 */
 export declare const DREAM_DEFAULT_INTERVAL_MS: number;
 /** 间隔下限:5 分钟(防手滑配成 0 秒把模型当风扇吹)。 */
@@ -21,8 +26,8 @@ export declare const DREAM_MAX_INTERVAL_MS: number;
 export declare const DREAM_DEFAULT_BATCH = 20;
 /** 批量上限。 */
 export declare const DREAM_MAX_BATCH = 50;
-/** 单条喂给模型的截断长度(照抄 nanobot 的 truncate_text(content, 300))。 */
-export declare const DREAM_ENTRY_MAX = 300;
+/** 清单里每条摘要的预览长度 —— 只够粗筛,正文要它自己取。 */
+export declare const DREAM_PREVIEW_MAX = 120;
 /**
  * 分段定时器的每段长度:最多 1 小时醒一次,醒来自查墙钟到点没。
  * Node 的 timer 上限是 2147483647ms(约 24.8 天),分段是照抄 dsh-schedule 的做法。
@@ -33,14 +38,14 @@ export declare const DREAM_TICK_MS: number;
  * 再让模型逐条提炼一遍纯属白烧 token(2026-09-20 阿一拍)。
  */
 export declare const DREAM_SKIP_KINDS: readonly string[];
-/** 审计落盘目录(相对工作区)。 */
+/** 审计落盘目录(相对库所在目录)。 */
 export declare const DREAM_LOG_DIR = "dream-log";
 /**
- * 单次调用的 token 上限。
- * ⚠️ **默认必须够推理模型用**:`deepseek-v4-flash` 这类带 thinking 的模型会先把
- * reasoning 写完再吐正文,2048 会被 thinking 吃满 → 正文一个字都没有(2026-09-20
- * 在服务器上实测踩到,提到 8192 立刻通)。
- * 2026-09-21:它从"配置项"降回内置常量 —— 这是踩过的坑,不是天天要调的旋钮。
+ * 会话每次请求的 token 上限。
+ * ⚠️ **必须够推理模型用**:`deepseek-v4-flash` 这类带 thinking 的模型会先把
+ * reasoning 写完再吐正文,2048 会被 thinking 吃满 → 正文一个字都没有
+ * (2026-09-20 在服务器上实测踩到,提到 8192 立刻通)。
+ * 会话化之后它仍要传进 `agentOptions.maxTokens`,所以保留为常量。
  */
 export declare const DREAM_DEFAULT_MAX_TOKENS = 8192;
 /**
@@ -53,17 +58,15 @@ export interface DreamConfig {
     batch: number;
     provider: string;
     model: string;
+    /** 用哪个 preset 起会话(空串 = 该部署的默认 preset)。 */
+    preset: string;
+    /** 会话的工作目录(空串 = 进程 cwd)。 */
+    cwd: string;
 }
 /** dream 内置默认(preset 不传就用它)。 */
 export declare const DREAM_DEFAULTS: DreamConfig;
 /** dream 配置归一化:非法字段逐个回落默认,不抛。 */
 export declare function normalizeDreamConfig(raw: unknown): DreamConfig;
-/** 一次 dream 里对单条的改写。 */
-export interface DreamEdit {
-    id: number;
-    content: string;
-    summary: string;
-}
 /** 队列筛选结果。 */
 export interface DreamQueue {
     /** 本次要整理的条目(最久没反思的在前)。 */
@@ -77,26 +80,13 @@ export interface DreamQueue {
  */
 export declare function pickQueue(rows: MemoryRow[], limit: number): DreamQueue;
 /**
- * 组装 dream 的提示词。要求模型只回一个 JSON 数组,**整条覆盖**语义,
- * 且**不抹平矛盾**(阿一的铁律:保留矛盾)。
+ * 组装任务书。**只给清单**(id / 时间 / 摘要预览),正文让模型自己用
+ * `roroko_mem_id` 取、改完用 `roroko_mem_edit(op=reflect)` 覆盖回去。
+ * 第一段是"记忆整理模式"声明 —— 这是阿一定的那句:让它知道现在不是对话/开发情景。
  */
-export declare function buildDreamPrompt(entries: MemoryRow[]): string;
-/** 解析结果。 */
-export type DreamParseResult = {
-    edits: DreamEdit[];
-    error?: undefined;
-} | {
-    edits?: undefined;
-    error: string;
-};
+export declare function buildDreamTask(entries: MemoryRow[]): string;
 /**
- * 解析模型回复。**失败就是失败** —— 不给"装作跑过了"的后路(照抄 nanobot
- * "没跑完 → 游标不动"):解析不出来就返回 error,调用方不写库、不推队列。
- * 越界的 id(不在本批里)与超长正文一律丢掉单条,不算整体失败。
- */
-export declare function parseDreamReply(text: string, allowedIds: number[]): DreamParseResult;
-/**
- * 门禁:比对写回前后的 reflected_at,只认真落下去的那些(照抄 nanobot 的
+ * 门禁:比对写回前后的 `reflected_at`,只认真落下去的那些(照抄 nanobot 的
  * "审计只认 diff,不认模型自述")。返回真变了的 id。
  */
 export declare function diffReflected(before: MemoryRow[], after: MemoryRow[]): number[];
@@ -106,8 +96,12 @@ export interface DreamOutcome {
     queued: number;
     /** 排除了多少条日志。 */
     skippedLogs: number;
-    /** 模型给了几条改写。 */
-    proposed: number;
+    /** 本次会话的 id(空串 = 压根没起会话)。 */
+    sessionId: string;
+    /** 会话挂上的 preset(空串 = 没挂)。 */
+    preset: string;
+    /** 会话自己 add 了几条(桶内条数差;≥0)。 */
+    added: number;
     /** 真写进库并落了 reflected_at 的 id。 */
     changed: number[];
     /** 一句话结论。 */
@@ -123,11 +117,15 @@ export declare function renderDreamAudit(input: {
     at: string;
     provider: string;
     model: string;
+    sessionId: string;
+    preset: string;
     queued: number;
     skippedLogs: number;
-    proposed: number;
+    added: number;
     changed: number[];
     before: MemoryRow[];
     after: MemoryRow[];
     error?: string;
 }): string;
+/** 内容上限(与 add 共用同一把尺,渲染说明里用得到)。 */
+export { MEMORY_CONTENT_MAX };

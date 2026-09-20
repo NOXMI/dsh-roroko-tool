@@ -1727,6 +1727,8 @@ window.__ModuleLoader__.load({
 			const [model, setModel] = (0, react.useState)(() => toStr(config.model));
 			const [hours, setHours] = (0, react.useState)(() => String(Math.round((config.intervalMs ?? 144e5) / 36e5)));
 			const [batch, setBatch] = (0, react.useState)(() => String(config.batch ?? 20));
+			const [preset, setPreset] = (0, react.useState)(() => toStr(config.preset));
+			const [cwd, setCwd] = (0, react.useState)(() => toStr(config.cwd));
 			const [dirty, setDirty] = (0, react.useState)(false);
 			const [saved, setSaved] = (0, react.useState)(false);
 			const [saving, setSaving] = (0, react.useState)(false);
@@ -1751,7 +1753,9 @@ window.__ModuleLoader__.load({
 					provider: provider.trim(),
 					model: model.trim(),
 					intervalMs: clampHours(hours) * 36e5,
-					batch: clampBatch(batch)
+					batch: clampBatch(batch),
+					preset: preset.trim(),
+					cwd: cwd.trim()
 				};
 				console.log("[roroko-tool] save dream →", next);
 				setSaveError(null);
@@ -1797,7 +1801,7 @@ window.__ModuleLoader__.load({
 					fontSize: "0.85em",
 					color: "var(--dsw-text-secondary, #888)",
 					marginBottom: 8
-				} }, "定时挑出「未反思」的记忆(日志不计),调一次模型要一份改写,逐条按 reflect 语义覆盖。没配 provider/model 就每次静默跳过。"),
+				} }, "定时挑出「未反思」的记忆(日志不计),起一个**一次性会话**交给它整理 ——会话带上面那个 preset 的人设与工具,它会自己取全文、自己按 reflect 语义改回去。没配 provider/model 就每次静默跳过。"),
 				(0, react.createElement)("label", { style: {
 					display: "flex",
 					alignItems: "center",
@@ -1899,6 +1903,46 @@ window.__ModuleLoader__.load({
 					display: "flex",
 					gap: 8,
 					alignItems: "center",
+					margin: "0 0 8px",
+					flexWrap: "wrap"
+				} }, (0, react.createElement)("input", {
+					type: "text",
+					value: preset,
+					disabled: busy,
+					placeholder: "preset(如 roroko-server;留空 = 部署默认)",
+					style: {
+						...inputStyle,
+						width: 260
+					},
+					onChange: (event) => {
+						setPreset(event.target.value);
+						setDirty(true);
+						setSaved(false);
+					}
+				}), (0, react.createElement)("input", {
+					type: "text",
+					value: cwd,
+					disabled: busy,
+					placeholder: "会话工作目录(留空 = 进程 cwd)",
+					style: {
+						...inputStyle,
+						width: 260
+					},
+					onChange: (event) => {
+						setCwd(event.target.value);
+						setDirty(true);
+						setSaved(false);
+					}
+				})),
+				(0, react.createElement)("div", { style: {
+					fontSize: "0.8em",
+					color: "var(--dsw-text-secondary, #888)",
+					marginBottom: 8
+				} }, "preset 决定这次整理看到的人设与可用工具 —— 想让它「像妈妈本人」就在这里填日常用的那个 preset;留空则用部署默认 preset(会话里没有人设行)。"),
+				(0, react.createElement)("div", { style: {
+					display: "flex",
+					gap: 8,
+					alignItems: "center",
 					marginTop: 10,
 					flexWrap: "wrap"
 				} }, (0, react.createElement)("button", {
@@ -1934,7 +1978,7 @@ window.__ModuleLoader__.load({
 					marginTop: 10,
 					fontSize: "0.8em",
 					color: "var(--dsw-text-secondary, #888)"
-				} }, status === null ? statusError === null ? "状态: 读取中…" : `状态读取失败: ${statusError}` : `状态: ${status.enabled ? "已接上" : "未接上(插件未声明 / llm 不可用)"} · 模型 ${status.configured ? `${status.provider}/${status.model}` : "(未配,每次跳过)"} · 间隔 ${Math.round(status.intervalMs / 36e5)} 小时 · 批量 ${status.batch}${status.running ? " · 正在跑" : ""}`),
+				} }, status === null ? statusError === null ? "状态: 读取中…" : `状态读取失败: ${statusError}` : `状态: ${status.enabled ? "已接上" : "未接上(插件未声明 / agents·sessions 不可用)"} · 模型 ${status.configured ? `${status.provider}/${status.model}` : "(未配,每次跳过)"} · preset ${status.preset.length > 0 ? status.preset : "(部署默认)"} · 间隔 ${Math.round(status.intervalMs / 36e5)} 小时 · 批量 ${status.batch}${status.running ? " · 正在跑" : ""}`),
 				last !== null ? (0, react.createElement)("div", { style: {
 					marginTop: 4,
 					fontSize: "0.8em",

@@ -127,11 +127,15 @@ interface DreamWire {
   batch?: number
   provider?: string
   model?: string
+  /** 起会话用哪个 preset(空 = 部署默认);人设与工具都从它来。 */
+  preset?: string
+  /** 会话工作目录(空 = 进程 cwd)。 */
+  cwd?: string
 }
 
 /** GET /roroko-tool/dream 的运行时状态(与 host route 一致)。 */
 interface DreamStatusWire {
-  /** dream 是否已接上(llm 可用 + 已启用)。 */
+  /** dream 是否已接上(agents/sessions 可用 + 已启用)。 */
   enabled: boolean
   /** provider/model 是否配齐 —— 没配齐每次都会跳过。 */
   configured: boolean
@@ -139,6 +143,8 @@ interface DreamStatusWire {
   model: string
   intervalMs: number
   batch: number
+  preset: string
+  cwd: string
   running: boolean
   last: { note: string; changed: number[]; queued: number; skippedLogs: number; at: string } | null
 }
@@ -839,6 +845,8 @@ function DreamPanel(props: {
   const [model, setModel] = useState<string>(() => toStr(config.model))
   const [hours, setHours] = useState<string>(() => String(Math.round((config.intervalMs ?? 4 * 60 * 60 * 1000) / 3600000)))
   const [batch, setBatch] = useState<string>(() => String(config.batch ?? 20))
+  const [preset, setPreset] = useState<string>(() => toStr(config.preset))
+  const [cwd, setCwd] = useState<string>(() => toStr(config.cwd))
   const [dirty, setDirty] = useState(false)
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -868,6 +876,8 @@ function DreamPanel(props: {
       model: model.trim(),
       intervalMs: clampHours(hours) * 3600000,
       batch: clampBatch(batch),
+      preset: preset.trim(),
+      cwd: cwd.trim(),
     }
     console.log('[roroko-tool] save dream →', next)
     setSaveError(null)
@@ -915,7 +925,8 @@ function DreamPanel(props: {
       h('div', { style: { fontWeight: 600, marginBottom: 8, fontSize: '0.9em' } },
         '记忆整理开关与模型(存 state,字段级叠在 preset config 之上)'),
       h('div', { style: { fontSize: '0.85em', color: 'var(--dsw-text-secondary, #888)', marginBottom: 8 } },
-        '定时挑出「未反思」的记忆(日志不计),调一次模型要一份改写,逐条按 reflect 语义覆盖。'
+        '定时挑出「未反思」的记忆(日志不计),起一个**一次性会话**交给它整理 ——'
+        + '会话带上面那个 preset 的人设与工具,它会自己取全文、自己按 reflect 语义改回去。'
         + '没配 provider/model 就每次静默跳过。'),
       h('label', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85em', cursor: 'pointer' } },
         h('input', {
@@ -964,6 +975,26 @@ function DreamPanel(props: {
           onChange: (event: { target: { value: string } }) => { setBatch(event.target.value); setDirty(true); setSaved(false) },
         }),
         h('span', { style: { fontSize: '0.85em', color: 'var(--dsw-text-secondary, #888)' } }, '条')),
+      h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', margin: '0 0 8px', flexWrap: 'wrap' } },
+        h('input', {
+          type: 'text',
+          value: preset,
+          disabled: busy,
+          placeholder: 'preset(如 roroko-server;留空 = 部署默认)',
+          style: { ...inputStyle, width: 260 },
+          onChange: (event: { target: { value: string } }) => { setPreset(event.target.value); setDirty(true); setSaved(false) },
+        }),
+        h('input', {
+          type: 'text',
+          value: cwd,
+          disabled: busy,
+          placeholder: '会话工作目录(留空 = 进程 cwd)',
+          style: { ...inputStyle, width: 260 },
+          onChange: (event: { target: { value: string } }) => { setCwd(event.target.value); setDirty(true); setSaved(false) },
+        })),
+      h('div', { style: { fontSize: '0.8em', color: 'var(--dsw-text-secondary, #888)', marginBottom: 8 } },
+        'preset 决定这次整理看到的人设与可用工具 —— 想让它「像妈妈本人」就在这里填日常用的那个 preset;'
+        + '留空则用部署默认 preset(会话里没有人设行)。'),
       h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' } },
         h('button', {
           type: 'button',
@@ -994,8 +1025,9 @@ function DreamPanel(props: {
       h('div', { style: { marginTop: 10, fontSize: '0.8em', color: 'var(--dsw-text-secondary, #888)' } },
         status === null
           ? (statusError === null ? '状态: 读取中…' : `状态读取失败: ${statusError}`)
-          : `状态: ${status.enabled ? '已接上' : '未接上(插件未声明 / llm 不可用)'}`
+          : `状态: ${status.enabled ? '已接上' : '未接上(插件未声明 / agents·sessions 不可用)'}`
             + ` · 模型 ${status.configured ? `${status.provider}/${status.model}` : '(未配,每次跳过)'}`
+            + ` · preset ${status.preset.length > 0 ? status.preset : '(部署默认)'}`
             + ` · 间隔 ${Math.round(status.intervalMs / 3600000)} 小时 · 批量 ${status.batch}`
             + `${status.running ? ' · 正在跑' : ''}`),
       last !== null

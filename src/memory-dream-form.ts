@@ -1,18 +1,21 @@
 /**
- * roroko 记忆 dream 的纯逻辑:队列口径 / prompt 组装 / 回复解析 / 门禁判定。
+ * roroko 记忆 dream 的纯逻辑:队列口径 / 任务书组装 / 门禁判定 / 审计渲染。
  *
  * 设计来源:`refs/notes/roroko-memory-design-v1.md` §七(第七刀 = 记忆系统的下游)+
  * `refs/notes/roroko-datas-dream-slice7-plan.md`(照抄 nanobot 的九步执行序)。
  *
- * 与 09-16 那份计划的**唯一差别**:靶子从"三个记忆文件"换成 sqlite 记忆表。
- * 因为不写文件,所以 E2 的快照目录、`.dream_cursor`、受限工具集、prune 全部作废 ——
- * **队列本身就是游标**(`reflected_at IS NULL`)。
+ * 2026-09-21 会话化改写(阿一:光给它一段提示词"像啥也不知道的外人来弄"):
+ *   - **不再让模型回 JSON** —— 改成起一个一次性会话,上下文由那个 preset 供
+ *     (人设靠 preinject 注入的系统段、工具靠 preset 声明的插件行),模型自己
+ *     `roroko_mem_id` 取全文、自己 `roroko_mem_edit` 改回去。
+ *   - 因此任务书里**只给清单**(id / 时间 / 摘要),正文让它自己按需取 ——
+ *     既省上下文,也逼它走一遍"取全文再改"的正路。
+ *   - 门禁照旧:**只认 `reflected_at` 真落下去**(不认模型自述),另外统计
+ *     会话前后桶内条数差 = 它自己 `add` 了几条(保留矛盾那条通道)。
  *
  * 本文件**不 import node 内置与 DSH 运行时包** —— 零依赖测试直读编译产物。
  */
-import {
-  MEMORY_CONTENT_MAX, MEMORY_SUMMARY_MAX, type MemoryRow,
-} from './memory-form.js'
+import { MEMORY_CONTENT_MAX, type MemoryRow } from './memory-form.js'
 
 /** 默认间隔:4 小时(照抄 nanobot 的 everyMs=14400000)。 */
 export const DREAM_DEFAULT_INTERVAL_MS = 4 * 60 * 60 * 1000
@@ -29,8 +32,8 @@ export const DREAM_DEFAULT_BATCH = 20
 /** 批量上限。 */
 export const DREAM_MAX_BATCH = 50
 
-/** 单条喂给模型的截断长度(照抄 nanobot 的 truncate_text(content, 300))。 */
-export const DREAM_ENTRY_MAX = 300
+/** 清单里每条摘要的预览长度 —— 只够粗筛,正文要它自己取。 */
+export const DREAM_PREVIEW_MAX = 120
 
 /**
  * 分段定时器的每段长度:最多 1 小时醒一次,醒来自查墙钟到点没。
@@ -44,15 +47,15 @@ export const DREAM_TICK_MS = 60 * 60 * 1000
  */
 export const DREAM_SKIP_KINDS: readonly string[] = ['log']
 
-/** 审计落盘目录(相对工作区)。 */
+/** 审计落盘目录(相对库所在目录)。 */
 export const DREAM_LOG_DIR = 'dream-log'
 
 /**
- * 单次调用的 token 上限。
- * ⚠️ **默认必须够推理模型用**:`deepseek-v4-flash` 这类带 thinking 的模型会先把
- * reasoning 写完再吐正文,2048 会被 thinking 吃满 → 正文一个字都没有(2026-09-20
- * 在服务器上实测踩到,提到 8192 立刻通)。
- * 2026-09-21:它从"配置项"降回内置常量 —— 这是踩过的坑,不是天天要调的旋钮。
+ * 会话每次请求的 token 上限。
+ * ⚠️ **必须够推理模型用**:`deepseek-v4-flash` 这类带 thinking 的模型会先把
+ * reasoning 写完再吐正文,2048 会被 thinking 吃满 → 正文一个字都没有
+ * (2026-09-20 在服务器上实测踩到,提到 8192 立刻通)。
+ * 会话化之后它仍要传进 `agentOptions.maxTokens`,所以保留为常量。
  */
 export const DREAM_DEFAULT_MAX_TOKENS = 8192
 
@@ -66,6 +69,10 @@ export interface DreamConfig {
   batch: number
   provider: string
   model: string
+  /** 用哪个 preset 起会话(空串 = 该部署的默认 preset)。 */
+  preset: string
+  /** 会话的工作目录(空串 = 进程 cwd)。 */
+  cwd: string
 }
 
 /** dream 内置默认(preset 不传就用它)。 */
@@ -75,6 +82,8 @@ export const DREAM_DEFAULTS: DreamConfig = {
   batch: DREAM_DEFAULT_BATCH,
   provider: '',
   model: '',
+  preset: '',
+  cwd: '',
 }
 
 /**
@@ -104,14 +113,9 @@ export function normalizeDreamConfig(raw: unknown): DreamConfig {
     batch: clampInt(value.batch, 1, DREAM_MAX_BATCH, DREAM_DEFAULTS.batch),
     provider: typeof value.provider === 'string' ? value.provider.trim() : '',
     model: typeof value.model === 'string' ? value.model.trim() : '',
+    preset: typeof value.preset === 'string' ? value.preset.trim() : '',
+    cwd: typeof value.cwd === 'string' ? value.cwd.trim() : '',
   }
-}
-
-/** 一次 dream 里对单条的改写。 */
-export interface DreamEdit {
-  id: number
-  content: string
-  summary: string
 }
 
 /** 队列筛选结果。 */
@@ -131,90 +135,40 @@ export function pickQueue(rows: MemoryRow[], limit: number): DreamQueue {
     const reflected = row.reflected_at
     return reflected === null || reflected === undefined || reflected === ''
   })
-  const entries = fresh.filter(row => !DREAM_SKIP_KINDS.includes(String(row.kind ?? '')))
+  const entries = fresh.filter(row => !DREAM_SKIP_KINDS.includes(String(row.kind ?? '').toLowerCase()))
   const skippedLogs = fresh.length - entries.length
   return { entries: entries.slice(0, Math.max(1, limit)), skippedLogs }
 }
 
-/** 单条条目渲染成 prompt 里的一段。 */
-function renderEntry(row: MemoryRow): string {
-  const raw = String(row.content ?? '')
-  const body = raw.length > DREAM_ENTRY_MAX ? `${raw.slice(0, DREAM_ENTRY_MAX)}…(截断)` : raw
-  const kind = row.kind !== null && row.kind !== undefined && String(row.kind).length > 0 ? String(row.kind) : '(无)'
-  return `[#${row.id}] (${row.created_at}) kind=${kind}\n${body}`
-}
-
 /**
- * 组装 dream 的提示词。要求模型只回一个 JSON 数组,**整条覆盖**语义,
- * 且**不抹平矛盾**(阿一的铁律:保留矛盾)。
+ * 组装任务书。**只给清单**(id / 时间 / 摘要预览),正文让模型自己用
+ * `roroko_mem_id` 取、改完用 `roroko_mem_edit(op=reflect)` 覆盖回去。
+ * 第一段是"记忆整理模式"声明 —— 这是阿一定的那句:让它知道现在不是对话/开发情景。
  */
-export function buildDreamPrompt(entries: MemoryRow[]): string {
+export function buildDreamTask(entries: MemoryRow[]): string {
   const head = [
-    '你是记忆整理器。下面是记忆库里**待反思**的条目。',
-    '对每一条:判断它有没有记得太啰嗦、有没有更准的措辞、有没有该收敛的结论。',
+    '现在进入**记忆整理模式**。',
+    '- 这不是对话,也不是开发:不要回应任何人的话,不要动工作区文件,不要开 shell,不要上网。',
+    '- 只做一件事:看下面这份待整理清单(它来自你自己的记忆库),判断哪几条记得太啰嗦、',
+    '  措辞不准、或该收敛结论。',
+    '- 对要改的:先用 `roroko_mem_id` 取全文,再用 `roroko_mem_edit`(op=reflect)把改写后的',
+    '  **完整正文**覆盖回去(summary 一起给就一起换)。',
+    '- 不值得改的就跳过 —— **一条都不改也是正常结果**。改完给一行结论就停。',
+    '- **观点变了或出现矛盾时不要抹平**:用 op=add 另记一条,保留矛盾。',
     '',
-    '只输出一个 **JSON 数组**(不要 markdown 代码块、不要任何解释文字),每个元素形如:',
-    '{"id": 12, "content": "改写后的完整正文", "summary": "一句话摘要"}',
-    '',
-    '铁律:',
-    `- content 是**整条覆盖**而非追加,长度 ≤ ${MEMORY_CONTENT_MAX} 字;summary ≤ ${MEMORY_SUMMARY_MAX} 字`,
-    '- 不要新增条目、不要合并条目、不要改 id',
-    '- **观点变了或出现矛盾时不要抹平** —— 只收敛措辞,不消解矛盾',
-    '- 不值得改的条目**不要出现在输出里**(空数组也是合法回答)',
-    '',
-    '## 待反思条目',
+    `## 待整理清单(共 ${entries.length} 条,按时间升序)`,
   ]
-  const body = entries.map(renderEntry)
-  return [...head, ...body].join('\n')
-}
-
-/** 解析结果。 */
-export type DreamParseResult =
-  | { edits: DreamEdit[]; error?: undefined }
-  | { edits?: undefined; error: string }
-
-/** 从模型回复里剥出 JSON(容忍 ```json 围栏与前后废话)。 */
-function extractJsonArray(text: string): string | undefined {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/)
-  const body = fenced === null ? text : fenced[1]
-  const start = body.indexOf('[')
-  const end = body.lastIndexOf(']')
-  if (start < 0 || end <= start) return undefined
-  return body.slice(start, end + 1)
+  const lines = entries.map(row => {
+    const summary = String(row.summary ?? '').replaceAll('\n', ' ')
+    const preview = summary.length > DREAM_PREVIEW_MAX ? `${summary.slice(0, DREAM_PREVIEW_MAX)}…` : summary
+    const kind = row.kind === null || row.kind === undefined || String(row.kind).length === 0 ? '' : ` · ${String(row.kind)}`
+    return `- #${row.id} · ${row.created_at}${kind} · ${preview}`
+  })
+  return [...head, ...lines].join('\n')
 }
 
 /**
- * 解析模型回复。**失败就是失败** —— 不给"装作跑过了"的后路(照抄 nanobot
- * "没跑完 → 游标不动"):解析不出来就返回 error,调用方不写库、不推队列。
- * 越界的 id(不在本批里)与超长正文一律丢掉单条,不算整体失败。
- */
-export function parseDreamReply(text: string, allowedIds: number[]): DreamParseResult {
-  const json = extractJsonArray(text)
-  if (json === undefined) return { error: '回复里没有 JSON 数组' }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(json)
-  } catch (error) {
-    return { error: `JSON 解析失败: ${String(error)}` }
-  }
-  if (!Array.isArray(parsed)) return { error: 'JSON 顶层不是数组' }
-  const allowed = new Set(allowedIds)
-  const edits: DreamEdit[] = []
-  for (const item of parsed) {
-    if (item === null || typeof item !== 'object') continue
-    const row = item as Record<string, unknown>
-    const id = Number(row.id)
-    if (!Number.isInteger(id) || !allowed.has(id)) continue
-    const content = typeof row.content === 'string' ? row.content.trim() : ''
-    if (content.length === 0 || content.length > MEMORY_CONTENT_MAX) continue
-    const summary = typeof row.summary === 'string' ? row.summary.trim().slice(0, MEMORY_SUMMARY_MAX) : ''
-    edits.push({ id, content, summary })
-  }
-  return { edits }
-}
-
-/**
- * 门禁:比对写回前后的 reflected_at,只认真落下去的那些(照抄 nanobot 的
+ * 门禁:比对写回前后的 `reflected_at`,只认真落下去的那些(照抄 nanobot 的
  * "审计只认 diff,不认模型自述")。返回真变了的 id。
  */
 export function diffReflected(before: MemoryRow[], after: MemoryRow[]): number[] {
@@ -238,8 +192,12 @@ export interface DreamOutcome {
   queued: number
   /** 排除了多少条日志。 */
   skippedLogs: number
-  /** 模型给了几条改写。 */
-  proposed: number
+  /** 本次会话的 id(空串 = 压根没起会话)。 */
+  sessionId: string
+  /** 会话挂上的 preset(空串 = 没挂)。 */
+  preset: string
+  /** 会话自己 add 了几条(桶内条数差;≥0)。 */
+  added: number
   /** 真写进库并落了 reflected_at 的 id。 */
   changed: number[]
   /** 一句话结论。 */
@@ -250,8 +208,11 @@ export interface DreamOutcome {
 export function renderDreamOutcome(outcome: DreamOutcome): string {
   const lines = [
     `dream: ${outcome.note}`,
-    `队列 ${outcome.queued} 条(跳过日志 ${outcome.skippedLogs} 条)· 模型改写 ${outcome.proposed} 条 · 真落库 ${outcome.changed.length} 条`,
+    `队列 ${outcome.queued} 条(跳过日志 ${outcome.skippedLogs} 条)· 真反思 ${outcome.changed.length} 条 · 自记 ${outcome.added} 条`,
   ]
+  if (outcome.sessionId.length > 0) {
+    lines.push(`会话 ${outcome.sessionId}${outcome.preset.length > 0 ? ` · preset=${outcome.preset}` : ' · 未挂 preset'}`)
+  }
   if (outcome.changed.length > 0) lines.push(`已反思: ${outcome.changed.map(id => `#${id}`).join(' ')}`)
   return lines.join('\n')
 }
@@ -264,9 +225,11 @@ export function renderDreamAudit(input: {
   at: string
   provider: string
   model: string
+  sessionId: string
+  preset: string
   queued: number
   skippedLogs: number
-  proposed: number
+  added: number
   changed: number[]
   before: MemoryRow[]
   after: MemoryRow[]
@@ -278,7 +241,10 @@ export function renderDreamAudit(input: {
     `# dream ${input.at} CST`,
     '',
     `provider/model: ${input.provider} / ${input.model}`,
-    `队列 ${input.queued} 条(跳过日志 ${input.skippedLogs} 条)· 模型改写 ${input.proposed} 条 · 真落库 ${input.changed.length} 条`,
+    input.sessionId.length > 0
+      ? `会话: ${input.sessionId}${input.preset.length > 0 ? ` · preset=${input.preset}` : ' · 未挂 preset'}`
+      : '会话: (未起)',
+    `队列 ${input.queued} 条(跳过日志 ${input.skippedLogs} 条)· 真反思 ${input.changed.length} 条 · 自记 ${input.added} 条`,
   ]
   if (input.error !== undefined) lines.push('', `error: ${input.error}`)
   if (input.changed.length > 0) {
@@ -291,3 +257,6 @@ export function renderDreamAudit(input: {
   }
   return lines.join('\n')
 }
+
+/** 内容上限(与 add 共用同一把尺,渲染说明里用得到)。 */
+export { MEMORY_CONTENT_MAX }

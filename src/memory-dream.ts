@@ -2,27 +2,28 @@
  * roroko 记忆 dream 机制:一次执行序 + 分段定时器。
  *
  * 靶子是 sqlite 记忆表(不是文件) —— 照 `roroko-datas-dream-slice7-plan.md`
- * 的九步执行序,但把"模型去改文件"换成"模型回 JSON、我们自己写库":
+ * 的九步执行序,但**载体在 2026-09-21 换成了一次性会话**(阿一:光给一段提示词
+ * "像啥也不知道的外人来弄")。于是执行序变成:
  *
- *   1 取队列(无条目 → 直接结束,**不调模型、不烧 token**)
- *   2 组 prompt(单条截断 300)
- *   3 调模型(一次性,`ctx.llm.stream` 由接线层注入成 `callModel`)
- *   4 解析 JSON(解析不出来就是失败,不留"装作跑过"的后路)
- *   5 写回(整条覆盖 content + 刷 reflected_at)
- *   6 **门禁:回读看 reflected_at 真落下去没** —— 只认真 diff,不认模型自述
- *   7 审计落盘(只记事实)
- *   8 异常全吞,定时器绝不能被 dream 打崩
+ *   1 取队列(无条目 → 直接结束,**不起会话、不烧 token**)
+ *   2 组任务书(清单:id / 时间 / 摘要预览)
+ *   3 起一次性会话(挂 preset → 投任务书 → 等收敛 → 等落盘 → 收掉)
+ *     —— 人设由 preset 的 preinject 系统段供,工具由 preset 声明的插件行供,
+ *        模型自己 `roroko_mem_id` 取全文、自己 `roroko_mem_edit` 改回去
+ *   4 门禁:回读看 `reflected_at` **真落下去没** —— 只认库里的事实,不认模型自述
+ *   5 顺带统计桶内条数差 = 它自己 add 了几条(保留矛盾那条通道)
+ *   6 审计落盘(只记事实)
+ *   7 异常全吞(调用方也会收),定时器绝不能被 dream 打崩
  *
  * 本文件**不 import DSH 运行时值**(只吃 node 内置与纯逻辑) → 测试零替身。
- * 载体上相对 09-16 那份计划最大的简化:不建 agent 会话(官方 `GenerateOptions.system`
- * 注释写明了支持"one-shot callers")→ E2 快照 / `.dream_cursor` / 受限工具集 / prune 全作废。
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { MEMORY_COLUMNS, openMemoryDb, runReflect } from './memory-store.js'
+import { MEMORY_COLUMNS, openMemoryDb } from './memory-store.js'
 import { fmtCst, type MemoryRow } from './memory-form.js'
+import type { DreamSessionOutcome } from './memory-dream-session.js'
 import {
-  DREAM_LOG_DIR, DREAM_TICK_MS, buildDreamPrompt, diffReflected, parseDreamReply, pickQueue,
+  DREAM_LOG_DIR, DREAM_TICK_MS, buildDreamTask, diffReflected, pickQueue,
   renderDreamAudit, type DreamConfig, type DreamOutcome,
 } from './memory-dream-form.js'
 
@@ -37,8 +38,8 @@ export interface DreamDeps {
   batch: number
   /** 审计目录;空串 = 不落盘。 */
   logDir: string
-  /** 调一次模型拿纯文本回复(接线层用 ctx.llm.stream 拼装)。 */
-  callModel: (prompt: string) => Promise<string>
+  /** 起一次性会话把任务书跑完(接线层用 agents/sessions/presets 实现)。 */
+  runSession: (prompt: string, bookmark: string) => Promise<DreamSessionOutcome>
   now: () => Date
 }
 
@@ -98,7 +99,20 @@ function loadRows(dbPath: string, owner: string): MemoryRow[] {
   }
 }
 
-/** 回读指定 id 的 reflected_at 与 content(门禁判定用)。 */
+/** 桶内条数(会话前后各取一次,差值 = 它自己 add 了几条)。 */
+function countOwner(dbPath: string, owner: string): number {
+  const db = openMemoryDb(dbPath)
+  try {
+    const row = db
+      .prepare('SELECT count(*) AS n FROM memory WHERE owner = ?')
+      .get(owner) as unknown as { n?: number | bigint } | undefined
+    return Number(row?.n ?? 0) || 0
+  } finally {
+    db.close()
+  }
+}
+
+/** 回读指定 id 的行(门禁判定用)。 */
 function reload(dbPath: string, ids: number[]): MemoryRow[] {
   if (ids.length === 0) return []
   const db = openMemoryDb(dbPath)
@@ -132,9 +146,13 @@ function writeAudit(deps: DreamDeps, body: string, at: string): string | undefin
  */
 export async function runDreamOnce(deps: DreamDeps): Promise<DreamRunResult> {
   const atCst = fmtCst(deps.now())
-  const empty = (note: string, queued = 0, skippedLogs = 0): DreamRunResult => ({
-    queued, skippedLogs, proposed: 0, changed: [], note,
-  })
+  const empty = (
+    note: string,
+    queued = 0,
+    skippedLogs = 0,
+    sessionId = '',
+    preset = '',
+  ): DreamRunResult => ({ queued, skippedLogs, sessionId, preset, added: 0, changed: [], note })
 
   if (deps.provider.length === 0 || deps.model.length === 0) {
     return empty('未配置模型(provider/model),跳过')
@@ -156,66 +174,49 @@ export async function runDreamOnce(deps: DreamDeps): Promise<DreamRunResult> {
     )
   }
 
-  const prompt = buildDreamPrompt(entries)
-  let reply: string
-  try {
-    reply = await deps.callModel(prompt)
-  } catch (error) {
-    const note = `模型调用失败: ${String(error)}`
-    writeAudit(deps, renderDreamAudit({
-      at: atCst, provider: deps.provider, model: deps.model,
-      queued: entries.length, skippedLogs, proposed: 0, changed: [], before: entries, after: [], error: note,
-    }), atCst)
-    return { queued: entries.length, skippedLogs, proposed: 0, changed: [], note, error: note }
-  }
+  const prompt = buildDreamTask(entries)
+  const beforeCount = countOwner(deps.dbPath, deps.owner)
 
-  const allowedIds = entries.map(row => Number(row.id))
-  const parsed = parseDreamReply(reply, allowedIds)
-  if (parsed.edits === undefined) {
-    const note = `回复不可用: ${parsed.error}`
+  let session: DreamSessionOutcome
+  try {
+    session = await deps.runSession(prompt, atCst)
+  } catch (error) {
+    const note = `会话执行失败: ${String(error)}`
     writeAudit(deps, renderDreamAudit({
-      at: atCst, provider: deps.provider, model: deps.model,
-      queued: entries.length, skippedLogs, proposed: 0, changed: [], before: entries, after: [], error: note,
+      at: atCst, provider: deps.provider, model: deps.model, sessionId: '', preset: '',
+      queued: entries.length, skippedLogs, added: 0, changed: [], before: entries, after: [], error: note,
     }), atCst)
-    return { queued: entries.length, skippedLogs, proposed: 0, changed: [], note, error: note }
-  }
-
-  // 写回:照 reflect 的语义(整条覆盖 content + 刷 reflected_at),summary 空则保留原值
-  let db
-  try {
-    db = openMemoryDb(deps.dbPath)
-  } catch (error) {
-    const note = `写库失败: ${String(error)}`
-    return { queued: entries.length, skippedLogs, proposed: parsed.edits.length, changed: [], note, error: note }
-  }
-  try {
-    for (const edit of parsed.edits) {
-      runReflect(db, { id: edit.id, content: edit.content, summary: edit.summary }, deps.now())
-    }
-  } catch (error) {
-    const note = `写回出错: ${String(error)}`
-    return { queued: entries.length, skippedLogs, proposed: parsed.edits.length, changed: [], note, error: note }
-  } finally {
-    db.close()
+    return { queued: entries.length, skippedLogs, sessionId: '', preset: '', added: 0, changed: [], note, error: note }
   }
 
   // 门禁:回读,只认 reflected_at 真落下去的
-  const touched = parsed.edits.map(edit => edit.id)
+  const touched = entries.map(row => Number(row.id))
   const after = reload(deps.dbPath, touched)
   const changed = diffReflected(entries, after)
+
+  // 它自己 add 了几条(桶内条数差;并发写入会让这个数偏大,审计里说明是"近似")
+  let added = 0
+  try {
+    added = Math.max(0, countOwner(deps.dbPath, deps.owner) - beforeCount)
+  } catch {
+    added = 0
+  }
 
   const outcome: DreamOutcome = {
     queued: entries.length,
     skippedLogs,
-    proposed: parsed.edits.length,
+    sessionId: session.sessionId,
+    preset: session.preset,
+    added,
     changed,
     note: changed.length > 0
       ? `完成,反思 ${changed.length} 条`
-      : '完成;**没有记忆变更**(模型没给可落地的改写)',
+      : '完成;**没有记忆变更**(它没改任何一条)',
   }
   const auditPath = writeAudit(deps, renderDreamAudit({
     at: atCst, provider: deps.provider, model: deps.model,
-    queued: entries.length, skippedLogs, proposed: parsed.edits.length, changed,
+    sessionId: session.sessionId, preset: session.preset,
+    queued: entries.length, skippedLogs, added, changed,
     before: entries, after,
   }), atCst)
   return { ...outcome, auditPath }

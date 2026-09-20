@@ -1,3 +1,4 @@
+import type { DreamSessionOutcome } from './memory-dream-session.js';
 import { type DreamConfig, type DreamOutcome } from './memory-dream-form.js';
 /** 机制依赖(全部注入 —— 测试里换成假的就能跑整个执行序)。 */
 export interface DreamDeps {
@@ -10,8 +11,8 @@ export interface DreamDeps {
     batch: number;
     /** 审计目录;空串 = 不落盘。 */
     logDir: string;
-    /** 调一次模型拿纯文本回复(接线层用 ctx.llm.stream 拼装)。 */
-    callModel: (prompt: string) => Promise<string>;
+    /** 起一次性会话把任务书跑完(接线层用 agents/sessions/presets 实现)。 */
+    runSession: (prompt: string, bookmark: string) => Promise<DreamSessionOutcome>;
     now: () => Date;
 }
 /** 一次 dream 的完整结果。 */

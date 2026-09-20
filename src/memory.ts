@@ -2,12 +2,16 @@
  * roroko-memory — 洛洛可经历记忆工具集(roroko-tool 电箱子功能)。
  *
  * 设计来源:`refs/notes/roroko-memory-design-v1.md`(2026-09-17 定稿)。用 DSH 姿势
- * 重写:agent preset 层注册两把 agent 工具,直连独立库 `roroko_memory.db`
+ * 实现:agent preset 层注册四把 agent 工具,直连独立库 `roroko_memory.db`
  * (`node:sqlite`),不外包 python、不引入向量、不新增注入。
  *
- *   roroko_mem_edit  写记忆:op=add 落一条(初摘要 content + 二次摘要 summary),
- *                    created_at 由服务端按 CST 生成。反思(op=reflect)留 M4 刀。
+ *   roroko_mem_edit  写记忆 / 反思:add 落一条;reflect 整条覆盖 + 刷反思时间。
  *   roroko_mem_date  按日期回查:默认今天 + 昨天(会话开始必读),带未反思统计。
+ *   roroko_mem_rough 关键词检索:一条 SQL LIKE(每个词都要命中)。
+ *   roroko_mem_id    按 id 取全文(含 source provenance)。
+ *
+ * 2026-09-21 减法(阿一:"工具就只是简单的 sqlite 工具"):删掉 bigram 打分 / 覆盖度 /
+ * 召回计数 / owner=all / kind 入参 —— 细节见 memory-form.ts 的文件头与 README §5.6。
  *
  * 电箱闸门(2026-09-18 阿一拍板 · A 案):**preset 声明即开关** ——
  * 需要在哪个工作区用记忆,就在那个 preset 里写 `roroko-memory` 行;不写即不存在。
@@ -22,7 +26,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { DatabaseSync } from 'node:sqlite'
 import { RorokoMemoryDefaultDbPath, RorokoMemoryDefaultOwner } from './settings.js'
 import { loadStateSync } from './state.js'
@@ -36,6 +40,9 @@ import {
   claimDreamStart, defaultDreamLogDir, dreamRuntime, runDreamOnce, startDreamTimer,
   type DreamDeps, type DreamRunResult,
 } from './memory-dream.js'
+import {
+  runDreamSession, type DreamAgentsLike, type DreamPresetsLike, type DreamSessionsLike,
+} from './memory-dream-session.js'
 
 export const name = 'roroko-memory'
 
@@ -48,69 +55,19 @@ export interface RorokoMemoryConfig {
   dbPath?: string
   /** 缺省 owner 桶(工具不传 owner 时用它);缺省回落 dev。 */
   owner?: string
-  /** dream 配置(enabled / intervalMs / batch / provider / model)。 */
+  /** dream 配置(enabled / intervalMs / batch / provider / model / preset / cwd)。 */
   dream?: unknown
-}
-
-/** 流式 chunk 的宽松形状(只取我们用到的三类)。 */
-interface LlmStreamChunkLike {
-  type: string
-  text?: string
-  reason?: { kind?: string; failure?: { message?: string } }
-}
-
-/** llm 服务的最小面:只要一个 stream。 */
-interface LlmLike {
-  stream(options: Record<string, unknown>): AsyncIterable<LlmStreamChunkLike>
-}
-
-/**
- * 调一次模型,拼出纯文本回复。
- * 消息走官方 `createUserMessage` 构造器(别手搓消息对象);终止原因不是 stop 就抛错 ——
- * 截断/报错的回复交给 dream 的解析层判失败,绝不"装作跑过"。
- * maxTokens 用内置常量(2026-09-21 删掉了配置项):默认必须够推理模型用,
- * `deepseek-v4-flash` 这类带 thinking 的模型在 2048 下会把额度全花在 reasoning 上。
- */
-async function callModelOnce(llm: LlmLike, dream: DreamConfig, prompt: string): Promise<string> {
-  const options: Record<string, unknown> = {
-    provider: dream.provider,
-    model: dream.model,
-    messages: [createUserMessage({
-      content: [{ type: 'text', text: prompt }],
-      source: { kind: 'plugin', plugin: name },
-    })],
-    maxTokens: DREAM_DEFAULT_MAX_TOKENS,
-  }
-  let text = ''
-  let finishKind: string | undefined
-  for await (const chunk of llm.stream(options)) {
-    if (chunk.type === 'text-delta') {
-      if (typeof chunk.text === 'string') text += chunk.text
-      continue
-    }
-    if (chunk.type === 'finish') {
-      finishKind = chunk.reason?.kind
-      if (finishKind === 'error' || finishKind === 'aborted') {
-        throw new Error(`模型调用未完成(${finishKind}): ${chunk.reason?.failure?.message ?? ''}`)
-      }
-    }
-  }
-  if (text.trim().length === 0) {
-    // 推理模型把 maxTokens 吃满是这条最常见的成因,错误信息里直接点出来
-    const hint = finishKind === 'max-tokens'
-      ? ' —— finish=max-tokens,推理模型的 thinking 把 maxTokens 吃满了,把它调大再试'
-      : ''
-    throw new Error(`模型没有输出任何文本(finish=${finishKind ?? '未知'})${hint}`)
-  }
-  return text
 }
 
 /**
  * 接 dream 机制。
  *
- * **刻意不声明 `inject: ['llm']`** —— 照机制结论 10 的教训:为一个可选功能去声明服务
- * 依赖,服务一旦缺席(诊断场合、headless 裁剪)会让**整个记忆子插件不加载**,四把工具
- * 一起消失。这里用 `ctx.get('llm')` 动态取,取不到就记一条日志、dream 不启动,工具照常。
+ * **刻意不声明 `inject`** —— 照机制结论 10 的教训:为一个可选功能去声明服务依赖,
+ * 服务一旦缺席(诊断场合、headless 裁剪)会让**整个记忆子插件不加载**,四把工具一起消失。
+ * 这里一律用 `ctx.get(...)` 动态取,取不到就记一条日志、dream 不启动,工具照常。
+ *
+ * 2026-09-21 会话化:载体从"一次性 llm 调用"换成**一次性会话** —— 于是要拿的是
+ * agents / sessions(必)与 agentPresets(可选:没有它就没有人设与工具,但仍能跑)。
  */
 function applyDream(ctx: Context, dbPath: string, owner: string, config: RorokoMemoryConfig): void {
   // preset config 的 dream 当底座,state 覆盖层(面板)叠在上面 —— 字段级,state 优先
@@ -126,10 +83,16 @@ function applyDream(ctx: Context, dbPath: string, owner: string, config: RorokoM
     ctx.logger?.info?.(`[roroko-memory] dream 已在管 ${dbPath},本次不重复启动定时器`)
     return
   }
-  const llm = (ctx as unknown as { get?: (key: string) => unknown }).get?.('llm') as LlmLike | undefined
-  if (llm === undefined || typeof llm.stream !== 'function') {
-    ctx.logger?.info?.('[roroko-memory] dream 未启动:llm 服务不可用')
+  const get = (key: string): unknown => (ctx as unknown as { get?: (k: string) => unknown }).get?.(key)
+  const agents = get('agents') as DreamAgentsLike | undefined
+  const sessions = get('sessions') as DreamSessionsLike | undefined
+  const presets = get('agentPresets') as DreamPresetsLike | undefined
+  if (agents === undefined || sessions === undefined) {
+    ctx.logger?.info?.('[roroko-memory] dream 未启动:agents/sessions 服务不可用')
     return
+  }
+  if (presets === undefined) {
+    ctx.logger?.info?.('[roroko-memory] dream 起会话时没有 preset 名册:会话里不会有人设与工具行')
   }
   if (resolveDream().provider.length === 0) {
     ctx.logger?.info?.('[roroko-memory] dream 已启用但未配 provider/model,每次都会跳过')
@@ -144,7 +107,19 @@ function applyDream(ctx: Context, dbPath: string, owner: string, config: RorokoM
     batch: dream.batch,
     logDir: defaultDreamLogDir(dbPath),
     now: () => new Date(),
-    callModel: prompt => callModelOnce(llm, dream, prompt),
+    runSession: (prompt, bookmark) => runDreamSession({
+      agents,
+      sessions,
+      presets,
+      pluginName: name,
+      cwd: dream.cwd,
+      presetId: dream.preset,
+      agentOptions: {
+        provider: dream.provider,
+        model: dream.model,
+        maxTokens: DREAM_DEFAULT_MAX_TOKENS,
+      },
+    }, prompt, bookmark),
   })
 
   /**
@@ -154,7 +129,7 @@ function applyDream(ctx: Context, dbPath: string, owner: string, config: RorokoM
   const runOnce = async (): Promise<DreamRunResult> => {
     const dream = resolveDream()
     const skip = (note: string): DreamRunResult => ({
-      queued: 0, skippedLogs: 0, proposed: 0, changed: [], note,
+      queued: 0, skippedLogs: 0, sessionId: '', preset: '', added: 0, changed: [], note,
     })
     if (!dream.enabled) return skip('已在面板关闭,跳过')
     if (dream.provider.length === 0 || dream.model.length === 0) return skip('未配置模型(provider/model),跳过')

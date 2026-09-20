@@ -221,10 +221,12 @@ export interface RorokoDreamConfigInput {
   batch?: unknown
   provider?: unknown
   model?: unknown
+  preset?: unknown
+  cwd?: unknown
 }
 
 /** dream 节可覆盖的键(与 RorokoDreamState 对齐)。 */
-const DREAM_INPUT_KEYS = ['enabled', 'intervalMs', 'batch', 'provider', 'model'] as const
+const DREAM_INPUT_KEYS = ['enabled', 'intervalMs', 'batch', 'provider', 'model', 'preset', 'cwd'] as const
 
 /**
  * 覆盖保存 dream 参数节:body 里**出现过**的字段才写(部分覆盖语义)。
