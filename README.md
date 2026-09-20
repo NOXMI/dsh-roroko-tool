@@ -24,7 +24,7 @@ DSH 官方对「工作区指令」只提供一条路：把 `AGENTS.md` 追加到
 | `.` | `roroko-tool` | host 入口：挂载 `GET/POST /roroko-tool/state` 与 `GET /roroko-tool/presets` |
 | `./preinject` | `roroko-preinject` | **指令注入器**（系统段 + 消息段两条腿） |
 | `./data` | `roroko-data` | 素材库工具集：`roroko_datas_query` / `roroko_datas_lookup` / `roroko_datas_register` / `roroko_datas_state` |
-| `./memory` | `roroko-memory` | **经历记忆**：`roroko_mem_edit`（记一条）/ `roroko_mem_date`（按日期回查，默认今天 + 昨天）/ `roroko_mem_rough`（关键词检索）/ `roroko_mem_id`（按 id 取全文） |
+| `./memory` | `roroko-memory` | **经历记忆**：`roroko_mem_edit`（记一条 / 反思）/ `roroko_mem_date`（按日期回查，默认今天 + 昨天）/ `roroko_mem_rough`（关键词检索）/ `roroko_mem_id`（按 id 取全文）+ **`dream`**（趁没对话时让记忆自己消化一遍，设置页可开关） |
 | `./warn` | `roroko-warn` | 超量收敛警告（**尚未实现**） |
 | `./client` | — | Web 设置页（含 `-呻吟_X-` 展开的显示层节点） |
 
@@ -69,12 +69,19 @@ dsh plugin --profile <profile> add github:NOXMI/dsh-roroko-tool
 - id: roroko-data
   name: '@roroko-tool/dsh-roroko-tool/data'
 
-# 经历记忆(独立 sqlite;config 两项都有缺省值,不需要就整段省掉)
+# 经历记忆(独立 sqlite;config 各项都有缺省值,不需要就整段省掉)
 - id: roroko-memory
   name: '@roroko-tool/dsh-roroko-tool/memory'
   config:
     dbPath: '/var/www/api/database/roroko_memory.db'
     owner: persona
+    # dream:趁没对话时让记忆自己消化一遍(只在 config 里配也行,设置页里配也行)
+    dream:
+      enabled: true
+      provider: deepseek-official      # 不配 provider + model 就等于没开
+      model: deepseek-v4-flash         # ⚠️ 各机器的 model id 不同,读那台机自己的 settings.yaml
+      intervalMs: 14400000             # 4 小时
+      batch: 20
 ```
 
 > **preset 声明即开关**——不引用即不存在，没有第二个运行级开关。
@@ -179,17 +186,30 @@ GET  /roroko-tool/presets  → 扫 $DSH_HOME/.agent-presets 列出 preset 卡片
 - `roroko_mem_edit` `op=reflect` **反思已有那条**（`id`）：**整条覆盖 `content`** + 刷 `reflected_at`，`summary` 不传则保留原样，回执给「字数 旧 → 新」；`owner` / `kind` / `source` / `recalled` 一概不动。**观点变了或出现矛盾时用 `add` 另记一条 —— 不覆盖**（保留矛盾，不消解）
 - `roroko_mem_date` **按日期回查**：默认区间 = **今天 + 昨天**（会话开始时先调它）；区间为空时**明说"没有记忆"**，不给模型脑补的空间
 - `roroko_mem_rough` **关键词检索**：**汉字走字符 bigram + 覆盖度**、**拉丁/数字词走整词子串**（零向量、不分词，中文模糊、英文精确 —— 理由见下）→ 返回 `id / 时间 / 命中数 / 覆盖度 / 召回数 / 摘要`；`keywords` 空格或逗号分隔（≤8 个词，单字词也认）；**排序 = 命中数降序，召回数与新近度只作同分次序**（不让新鲜度偷偷爬回排序）；相关性下限 = 命中 ≥2 个 gram 或覆盖度 ≥0.5，够不上就**明说"没匹配上"**（跟"桶里没记忆"分两条文案）；命中条 `recalled += 1`
-  - 为什么拉丁词不走 bigram：字符二元组对字母没有区分度（`minGap` 切出的 `mi/in/ng/ga/ap` 里 `to`/`en`/`se` 在任何英文段落里都烂大街）—— 实测旧口径下 `minGap` 命中 30 条仅 1 条真相关、`ds-persona` 是 0/30；改整词子串后拉丁侧 **0 误命中 / 0 漏**，中文侧膨胀仍是 **1.00 倍 / 零漏**
+  - 为什么拉丁词不走 bigram：字符二元组对字母没有区分度（`to`/`en`/`se` 在任何英文段落里都烂大街），实测会把命中糊成一片；改整词子串后拉丁侧 **0 误命中 / 0 漏**，中文侧不受影响
 - `roroko_mem_id` **按 id 取全文**：只在摘要不足以判断时用；返回 `content` 全文 + `source`（回会话原文的唯一凭据）+ 最新召回计数（同样 +1）
 - 独立库，表只有一张 `memory`（默认 `/var/www/api/database/roroko_memory.db`）；**原文不入表**——DSH 会话文件就是原文仓库，`source` 指回去
 - **推只有 `MEMORY.md`**：记忆内容全靠工具**拉取**，不新增系统段注入 → 对 request-cache 零冲击
 - 写入纪律写在**工具描述**里（常驻 schema，每轮可见）：三问判据（人设层已有 → 不记；永久生效 → 去改人设文件；能改变未来某场景行为 → 记成「触发条件 → 应做」）+ 四类必记（边界演变 / 有效与无效的挑逗 / 未完成的钩子 / 自己的失手）
 - `owner` 走白名单式收窄（小写字母数字与 `. _ -`），检索**默认不跨桶**，要看全桶显式传 `owner=all`
-- `reflected_at` 就是**反思作业队列**：待办 = `WHERE reflected_at IS NULL ORDER BY created_at ASC`（第七刀 `dream` 按这个契约消费；`roroko_mem_date` 的「未反思 N」是同一队列的计数）
-- **`dream`（机制层，不发 schema）**：`config.dream` 开关 —— 周期性挑出待反思的记忆（`reflected_at IS NULL`，**`kind=log` 不在队列里**），调一次模型要一份 JSON 改写，逐条按 `reflect` 语义覆盖。**门禁只看 `reflected_at` 真落下去没**，没变就不推进队列（照抄 nanobot 的 diff 门禁语义）。默认 **4 小时 / 一批 20 条 / 单条截断 300 字**；未配 `provider` + `model` 就每次静默跳过（不报错、不烧 token）。审计落 `<库目录>/dream-log/<时间>.md`，**只记字数 diff，不记模型自述**
-  - config 形状：`dream: { enabled, intervalMs, batch, provider, model, maxTokens, logDir }` —— 全部可选，缺省见上
-  - **设置页「经历记忆与 dream」分区**可调开关 / provider / model / 间隔 / 批量，另有「立即整理一次」与状态回读（`GET/POST /roroko-tool/dream`）。面板值存 state **覆盖层**（字段级叠在 preset config 之上、**默认值一个都不写进 state**，免得把 config 压住）；**provider/model 改动立刻生效**，间隔改动在下一轮重新计时时生效 —— 都不必重启宿主
-  - 实现上**不建 agent 会话**：`GenerateOptions.system` 官方注释写明支持 one-shot caller，所以 dream 只调一次 `ctx.llm.stream`，模型回文本、我们自己写库（因此快照目录 / `.dream_cursor` / 受限工具集 / prune 全都不需要）
+- `reflected_at` 就是**反思作业队列**：待办 = `WHERE reflected_at IS NULL ORDER BY created_at ASC`（`roroko_mem_date` 的「未反思 N」是同一队列的计数）
+
+#### dream —— 趁没对话的时候，让记忆自己消化一遍
+
+记忆只写不改会越堆越臃肿，措辞也会飘。dream 干的事只有一件：把**还没反思过**的记忆挑出来交给模型重写一遍，覆盖回去，并记下「什么时候反思的」。
+
+- **挑哪些**：`reflected_at` 为空、且 **`kind ≠ log`**（导入的开发日志不算 —— 那是逐字流水，再让模型提炼一遍纯属白烧 token）
+- **什么时候跑**：默认每 **4 小时**一次，一批最多 **20 条**（单条喂进去时截断 300 字）；也可以在设置页点「**立即整理一次**」当场跑
+- **不会乱改**：不新增、不删除、不合并条目；**矛盾不抹平** —— 观点真的变了就另记一条（保留矛盾）；`owner` / `kind` / `source` / `recalled` 一概不动
+- **跑没跑成看什么**：只看 `reflected_at` 有没有**真落下去** —— 没落就不推进队列，下次原样再跑（回执会明说「完成，反思 N 条」还是「**没有记忆变更**」）
+- **花不花钱**：**没配 `provider` + `model` 就静默跳过**（不报错、也不烧 token）；队列为空时**一次模型都不调**
+- **去哪看结果**：`roroko_mem_date` 的「未反思 N」跟着减；每次整理的审计落在 `<库目录>/dream-log/<时间>.md`，**只记字数 diff，不记模型自述**（是文件说了什么，不是模型说自己干了什么）
+- ⚠️ **`maxTokens` 默认 8192**：带 thinking 的推理模型（如 `deepseek-v4-flash`）在 2048 下会把额度全花在 reasoning 上、**正文一个字都不吐** —— 换模型时留意这条
+
+**怎么开**（两种都行，面板优先）
+
+- config 形状：`dream: { enabled, intervalMs, batch, provider, model, maxTokens, logDir }` —— 全部可选；`provider` + `model` 不配齐就等于没开
+- **设置页「经历记忆与 dream」分区**：开关 / provider / model / 间隔 / 批量 + 「立即整理一次」+ 状态回读（`GET/POST /roroko-tool/dream`）。面板值存 state **覆盖层**、字段级叠在 preset config 之上（**默认值一个都不写进 state**，免得把 config 压住）；**provider / model 改完立刻生效**，间隔改动在下一轮重新计时时生效 —— 都不必重启宿主
 
 ---
 
