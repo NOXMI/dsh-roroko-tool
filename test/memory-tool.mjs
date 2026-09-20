@@ -82,6 +82,27 @@ ok(idBad.includes('id 非法'), 'id 非法返回人话')
 const idMissing = await tools[3].execute({ id: 999 })
 ok(idMissing.includes('没有 #999'), '不存在的 id 返回人话')
 
+// M4 反思(同一套真库;id 1 是上面落的 dev 那条)
+const reflectText = await tools[0].execute({ op: 'reflect', id: 1, content: '反思后的正文' })
+ok(reflectText.includes('已反思 #1'), 'reflect 真跑')
+ok(reflectText.includes('(未改)'), '不传 summary → 保留原值')
+const afterReflect = await tools[3].execute({ id: 1 })
+ok(afterReflect.includes('反思后的正文'), 'content 已被整条覆盖')
+ok(afterReflect.includes('已反思 '), 'reflected_at 已刷(不再是未反思)')
+ok(afterReflect.includes('summary: 工具层真跑'), 'summary 保留原值')
+
+const reflectNewSummary = await tools[0].execute({ op: 'reflect', id: 1, content: '再收一遍', summary: '新摘要' })
+ok(reflectNewSummary.includes('summary: 新摘要'), '传了 summary 就一起换')
+
+const reflectNoId = await tools[0].execute({ op: 'reflect', content: 'x' })
+ok(reflectNoId.includes('反思失败'), 'reflect 缺 id → 人话失败,不抛')
+const reflectMissingId = await tools[0].execute({ op: 'reflect', id: 999, content: 'x' })
+ok(reflectMissingId.includes('没有 #999'), 'reflect 不存在的 id → 人话')
+eq(tools[0].presentCall({ op: 'reflect', id: 5, content: 'c' }).title, '反思 #5', 'reflect 卡片标题与 add 分开')
+ok(tools[0].description.includes('整条覆盖'), 'edit 描述写明 reflect 是覆盖而非追加')
+ok(tools[0].description.includes('保留矛盾'), 'edit 描述带「矛盾不覆盖、另记一条」纪律')
+ok(tools[0].description.includes('先过三问'), 'add 的三问判据还留着')
+
 // 库路径不可写:挂载不能抛 —— 一个坏路径不该把 preset 挂载拖垮
 let threw = false
 try {

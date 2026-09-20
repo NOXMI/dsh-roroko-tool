@@ -175,7 +175,8 @@ GET  /roroko-tool/presets  → 扫 $DSH_HOME/.agent-presets 列出 preset 卡片
 
 ### 5.6 经历记忆（memory）
 
-- `roroko_mem_edit` **记一条**（`op=add`）：`content` 初摘要 + `summary` 二次摘要 + `owner` 分桶（`dev` / `persona`），`created_at` 由服务端按 **CST+0800** 生成；反思（`reflect`）尚未开放
+- `roroko_mem_edit` **写入与反思**：`op=add` 记一条（`content` 初摘要 + `summary` 二次摘要 + `owner` 分桶（`dev` / `persona`），`created_at` 由服务端按 **CST+0800** 生成）
+- `roroko_mem_edit` `op=reflect` **反思已有那条**（`id`）：**整条覆盖 `content`** + 刷 `reflected_at`，`summary` 不传则保留原样，回执给「字数 旧 → 新」；`owner` / `kind` / `source` / `recalled` 一概不动。**观点变了或出现矛盾时用 `add` 另记一条 —— 不覆盖**（保留矛盾，不消解）
 - `roroko_mem_date` **按日期回查**：默认区间 = **今天 + 昨天**（会话开始时先调它）；区间为空时**明说"没有记忆"**，不给模型脑补的空间
 - `roroko_mem_rough` **关键词检索**：**汉字走字符 bigram + 覆盖度**、**拉丁/数字词走整词子串**（零向量、不分词，中文模糊、英文精确 —— 理由见下）→ 返回 `id / 时间 / 命中数 / 覆盖度 / 召回数 / 摘要`；`keywords` 空格或逗号分隔（≤8 个词，单字词也认）；**排序 = 命中数降序，召回数与新近度只作同分次序**（不让新鲜度偷偷爬回排序）；相关性下限 = 命中 ≥2 个 gram 或覆盖度 ≥0.5，够不上就**明说"没匹配上"**（跟"桶里没记忆"分两条文案）；命中条 `recalled += 1`
   - 为什么拉丁词不走 bigram：字符二元组对字母没有区分度（`minGap` 切出的 `mi/in/ng/ga/ap` 里 `to`/`en`/`se` 在任何英文段落里都烂大街）—— 实测旧口径下 `minGap` 命中 30 条仅 1 条真相关、`ds-persona` 是 0/30；改整词子串后拉丁侧 **0 误命中 / 0 漏**，中文侧膨胀仍是 **1.00 倍 / 零漏**
@@ -184,6 +185,7 @@ GET  /roroko-tool/presets  → 扫 $DSH_HOME/.agent-presets 列出 preset 卡片
 - **推只有 `MEMORY.md`**：记忆内容全靠工具**拉取**，不新增系统段注入 → 对 request-cache 零冲击
 - 写入纪律写在**工具描述**里（常驻 schema，每轮可见）：三问判据（人设层已有 → 不记；永久生效 → 去改人设文件；能改变未来某场景行为 → 记成「触发条件 → 应做」）+ 四类必记（边界演变 / 有效与无效的挑逗 / 未完成的钩子 / 自己的失手）
 - `owner` 走白名单式收窄（小写字母数字与 `. _ -`），检索**默认不跨桶**，要看全桶显式传 `owner=all`
+- `reflected_at` 就是**反思作业队列**：待办 = `WHERE reflected_at IS NULL ORDER BY created_at ASC`（第七刀 `dream` 按这个契约消费；`roroko_mem_date` 的「未反思 N」是同一队列的计数）
 
 ---
 

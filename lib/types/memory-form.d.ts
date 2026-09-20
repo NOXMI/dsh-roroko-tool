@@ -76,6 +76,27 @@ export type AddResult = {
 };
 /** add 入参收窄:owner/content/summary 必填,kind/source 可省。 */
 export declare function normalizeAdd(raw: Record<string, unknown>): AddResult;
+/** 反思一条记忆的合法形状。 */
+export interface MemoryReflectInput {
+    id: number;
+    content: string;
+    /** 空串 = 保留原 summary 不动。 */
+    summary: string;
+}
+/** reflect 入参收窄结果。 */
+export type ReflectResult = {
+    input: MemoryReflectInput;
+    error?: undefined;
+} | {
+    input?: undefined;
+    error: string;
+};
+/**
+ * reflect 入参收窄:id 必需、content 必需(**整条覆盖,不是追加**)、summary 可省。
+ * 覆盖是设计稿定的(§五 5.3)——省掉历史版本,换表不膨胀;要留旧理解就别覆盖,
+ * 用 op=add 另记一条(「保留矛盾」铁律)。
+ */
+export declare function normalizeReflect(raw: Record<string, unknown>): ReflectResult;
 /** 库里读回来的一行(只列本工具用得到的列)。 */
 export interface MemoryRow {
     id: number;
@@ -90,6 +111,19 @@ export interface MemoryRow {
 }
 /** 写入回执:'已记 #id · 时间 · owner · kind'。 */
 export declare function renderAddResult(input: MemoryAddInput, id: number, createdAt: string): string;
+/** 反思回执入参。 */
+export interface RenderReflectInput {
+    id: number;
+    reflectedAt: string;
+    /** 覆盖前的 content 字数。 */
+    beforeChars: number;
+    afterChars: number;
+    summary: string;
+    /** true = 本次没动 summary。 */
+    summaryKept: boolean;
+}
+/** 反思回执:'已反思 #id · 时间 · 字数 旧→新' —— 一眼看出是**改写**不是新增。 */
+export declare function renderReflectResult(input: RenderReflectInput): string;
 /** 按日期回查的渲染入参。 */
 export interface RenderDateInput {
     rows: MemoryRow[];

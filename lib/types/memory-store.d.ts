@@ -8,7 +8,7 @@
  * 幂等。sqlite 不会自己建目录,所以先补父目录。
  */
 import { DatabaseSync } from 'node:sqlite';
-import { type MemoryAddInput } from './memory-form.js';
+import { type MemoryAddInput, type MemoryReflectInput } from './memory-form.js';
 /**
  * 开库 + 建表(幂等)。父目录不存在则补建 —— sqlite 遇缺目录直接报错。
  * 建表失败会让插件 apply 抛错 → 调用方自己 try/catch,别拖垮 preset 挂载。
@@ -20,6 +20,12 @@ export declare function runAdd(db: DatabaseSync, input: MemoryAddInput, now: Dat
     createdAt: string;
     text: string;
 };
+/**
+ * 反思一条记忆:直接覆盖 content(设计稿 §五 5.3,防膨胀)、刷 reflected_at,
+ * summary 传了才一起换。owner/kind/source/recalled 一概不动。
+ * 查不到 id 返回人话,不抛。
+ */
+export declare function runReflect(db: DatabaseSync, input: MemoryReflectInput, now: Date): string;
 /** 按日期回查入参。 */
 export interface DateQuery {
     from?: unknown;

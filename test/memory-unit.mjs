@@ -367,6 +367,53 @@ ok(store.runId(db, { id: 999 }).includes('没有 #999'), '不存在的 id 返回
 ok(store.runId(db, { id: 'x' }).includes('id 非法'), '非法 id 返回人话')
 ok(store.runId(db, { id: -1 }).includes('id 非法'), '负数 id 挡下')
 
+// ── 十二、反思(reflect) ────────────────────────────────────────────────────
+eq(
+  form.normalizeReflect({ id: 2, content: '  新结论  ', summary: ' 新摘要 ' }).input,
+  { id: 2, content: '新结论', summary: '新摘要' },
+  'reflect 入参逐个 trim',
+)
+eq(form.normalizeReflect({ id: '2', content: 'x' }).input, { id: 2, content: 'x', summary: '' }, 'id 收字符串数字;summary 可省(空串)')
+ok(form.normalizeReflect({ content: 'x' }).error !== undefined, 'reflect 缺 id → 报错')
+ok(form.normalizeReflect({ id: 0, content: 'x' }).error !== undefined, 'reflect id 0 → 报错')
+ok(form.normalizeReflect({ id: 2, content: '   ' }).error !== undefined, 'reflect 空 content → 报错')
+ok(
+  form.normalizeReflect({ id: 2, content: 'x', summary: 'y'.repeat(form.MEMORY_SUMMARY_MAX + 1) }).error !== undefined,
+  'reflect summary 超长 → 报错',
+)
+
+const reflectEcho = form.renderReflectResult({
+  id: 7, reflectedAt: '2026-09-20 16:00:00', beforeChars: 400, afterChars: 120, summary: 'S', summaryKept: false,
+})
+ok(reflectEcho.includes('已反思 #7 · 2026-09-20 16:00:00 CST'), '回执带 id 与 CST 时间')
+ok(reflectEcho.includes('字数 400 → 120'), '回执给字数变化 —— 一眼看出是改写不是新增')
+ok(
+  form.renderReflectResult({ id: 7, reflectedAt: 't', beforeChars: 1, afterChars: 1, summary: 'S', summaryKept: true }).includes('(未改)'),
+  '没动 summary 要标明',
+)
+
+// 真库:用第八节写下的 id=2(dev / kind=log / source=sess#1 / recalled=3)
+eq(db.prepare('SELECT reflected_at FROM memory WHERE id = 2').get().reflected_at, null, '反思前是未反思')
+const reflect1 = store.runReflect(db, { id: 2, content: '反思后的新内容', summary: '' }, t3)
+ok(reflect1.includes('已反思 #2'), '真库反思回执')
+const afterReflect = db.prepare('SELECT content, summary, kind, source, reflected_at, recalled FROM memory WHERE id = 2').get()
+eq(afterReflect.content, '反思后的新内容', 'content 被**整条覆盖**')
+eq(afterReflect.summary, '昨天', 'summary 没传 → 保留原值')
+eq(afterReflect.reflected_at, '2026-09-18 11:00:00', 'reflected_at 刷成 CST 口径')
+eq(afterReflect.kind, 'log', 'reflect 不动 kind')
+eq(afterReflect.source, 'sess#1', 'reflect 不动 provenance')
+eq(Number(afterReflect.recalled), 3, 'reflect 不动 recalled')
+ok(reflect1.includes('(未改)'), '回执标明 summary 未改')
+
+store.runReflect(db, { id: 2, content: '再收一遍', summary: '新的摘要' }, t3)
+eq(db.prepare('SELECT summary FROM memory WHERE id = 2').get().summary, '新的摘要', '传了 summary 就一起换')
+
+const dateAfterReflect = store.runDate(db, {}, t3)
+ok(dateAfterReflect.includes('未反思 1'), '反思过的那条不再算未反思(同区间的 persona 那条仍是)')
+ok(dateAfterReflect.includes('| 2 | 09-17 11:00 | log | 新的摘要 |  |'), '已反思的行不标旗')
+ok(store.runReflect(db, { id: 999, content: 'x', summary: '' }, t3).includes('没有 #999'), '反思不存在的 id 返回人话')
+ok(store.runReflect(db, { id: 2, content: 'x', summary: '' }, t3).includes('已反思 #2'), '同一条可反复反思(不新增条)')
+
 db.close()
 try {
   rmSync(dir, { recursive: true, force: true })

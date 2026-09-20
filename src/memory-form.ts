@@ -172,6 +172,36 @@ export function normalizeAdd(raw: Record<string, unknown>): AddResult {
   return { input: { owner, content: content.value, summary: summary.value, kind, source } }
 }
 
+/** 反思一条记忆的合法形状。 */
+export interface MemoryReflectInput {
+  id: number
+  content: string
+  /** 空串 = 保留原 summary 不动。 */
+  summary: string
+}
+
+/** reflect 入参收窄结果。 */
+export type ReflectResult =
+  | { input: MemoryReflectInput; error?: undefined }
+  | { input?: undefined; error: string }
+
+/**
+ * reflect 入参收窄:id 必需、content 必需(**整条覆盖,不是追加**)、summary 可省。
+ * 覆盖是设计稿定的(§五 5.3)——省掉历史版本,换表不膨胀;要留旧理解就别覆盖,
+ * 用 op=add 另记一条(「保留矛盾」铁律)。
+ */
+export function normalizeReflect(raw: Record<string, unknown>): ReflectResult {
+  const id = normalizeId(raw.id)
+  if (id === undefined) return { error: 'id 非法或缺失(要正整数;id 从检索或按日期回查的结果里拿)' }
+  const content = requiredText(raw.content, 'content', MEMORY_CONTENT_MAX)
+  if ('error' in content) return { error: content.error }
+  const summary = typeof raw.summary === 'string' ? raw.summary.trim() : ''
+  if (summary.length > MEMORY_SUMMARY_MAX) {
+    return { error: `summary 超长(${summary.length}>${MEMORY_SUMMARY_MAX} 字),先自己压一遍再来` }
+  }
+  return { input: { id, content: content.value, summary } }
+}
+
 /** 库里读回来的一行(只列本工具用得到的列)。 */
 export interface MemoryRow {
   id: number
@@ -197,6 +227,26 @@ export function renderAddResult(input: MemoryAddInput, id: number, createdAt: st
   if (input.source.length > 0) lines.push(`source: ${input.source}`)
   lines.push(`summary: ${input.summary}`)
   return lines.join('\n')
+}
+
+/** 反思回执入参。 */
+export interface RenderReflectInput {
+  id: number
+  reflectedAt: string
+  /** 覆盖前的 content 字数。 */
+  beforeChars: number
+  afterChars: number
+  summary: string
+  /** true = 本次没动 summary。 */
+  summaryKept: boolean
+}
+
+/** 反思回执:'已反思 #id · 时间 · 字数 旧→新' —— 一眼看出是**改写**不是新增。 */
+export function renderReflectResult(input: RenderReflectInput): string {
+  return [
+    `已反思 #${input.id} · ${input.reflectedAt} CST · 字数 ${input.beforeChars} → ${input.afterChars}`,
+    `summary: ${input.summary}${input.summaryKept ? '(未改)' : ''}`,
+  ].join('\n')
 }
 
 /** 按日期回查的渲染入参。 */

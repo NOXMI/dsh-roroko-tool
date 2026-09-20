@@ -12,8 +12,8 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
   MEMORY_DDL, MEMORY_PRAGMAS, fmtCst, normalizeId, normalizeLimit, renderAddResult, renderDate,
-  renderId, renderRough, resolveRange, scoreRough, splitKeywords,
-  type DateRange, type MemoryAddInput, type MemoryRow, type RoughHit,
+  renderId, renderReflectResult, renderRough, resolveRange, scoreRough, splitKeywords,
+  type DateRange, type MemoryAddInput, type MemoryReflectInput, type MemoryRow, type RoughHit,
 } from './memory-form.js'
 
 /** sqlite 行值类型收窄。 */
@@ -53,6 +53,33 @@ export function runAdd(
     )
   const id = Number(inserted.lastInsertRowid)
   return { id, createdAt, text: renderAddResult(input, id, createdAt) }
+}
+
+/**
+ * 反思一条记忆:直接覆盖 content(设计稿 §五 5.3,防膨胀)、刷 reflected_at,
+ * summary 传了才一起换。owner/kind/source/recalled 一概不动。
+ * 查不到 id 返回人话,不抛。
+ */
+export function runReflect(db: DatabaseSync, input: MemoryReflectInput, now: Date): string {
+  const row = db
+    .prepare(`SELECT ${MEMORY_COLUMNS} FROM memory WHERE id = ?`)
+    .get(input.id) as unknown as MemoryRow | undefined
+  if (row === undefined) {
+    return `没有 #${input.id} 这条记忆。reflect 只能改已有的;要记新的用 op=add。`
+  }
+  const reflectedAt = fmtCst(now)
+  const summaryKept = input.summary.length === 0
+  const summary = summaryKept ? row.summary : input.summary
+  db.prepare('UPDATE memory SET content = ?, summary = ?, reflected_at = ? WHERE id = ?')
+    .run(input.content, summary, reflectedAt, input.id)
+  return renderReflectResult({
+    id: input.id,
+    reflectedAt,
+    beforeChars: (row.content ?? '').length,
+    afterChars: input.content.length,
+    summaryKept,
+    summary,
+  })
 }
 
 /** 按日期回查入参。 */
