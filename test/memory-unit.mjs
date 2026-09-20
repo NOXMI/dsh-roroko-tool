@@ -181,12 +181,15 @@ eq(form.splitKeywords('w1 w2 w3 w4 w5 w6 w7 w8 w9').length, form.MEMORY_ROUGH_MA
 eq(form.splitKeywords('妈 记'), ['妈', '记'], '单字词留着,不走切词丢弃')
 
 eq([...form.textGrams('测试')].sort(), ['测', '测试', '试'].sort(), '文本侧收单字 + 二元组')
-eq([...form.textGrams('a-b')].sort(), ['a', 'ab', 'b'], '标点剔除后再取二元组(不产生 a- / -b)')
+eq([...form.textGrams('a-b')], [], '拉丁/数字不进汉字二元组(改走整词子串)')
 eq([...form.textGrams('')], [], '空串没有 gram')
 eq([...form.queryGrams(['测试'])], ['测试'], '查询侧多字词只取二元组,不掺单字')
 eq([...form.queryGrams(['记忆召回'])].sort(), ['忆召', '召回', '记忆'].sort(), '长词切相邻二元组')
 eq([...form.queryGrams(['妈'])], ['妈'], '单字词退化成单字 gram')
 eq([...form.queryGrams([' '])], [], '切不出字符的词贡献不了 gram')
+eq([...form.queryGrams(['minGap'])], [], '拉丁词不产汉字 gram')
+eq(form.queryLatinWords(['mingap', '记忆']), ['mingap'], '拉丁词单独收集,含汉字的词跳过')
+eq(form.queryLatinWords(['0.1.6', 'xsec_token']), ['0.1.6', 'xsec_token'], '数字与下划线词原样进子串匹配')
 
 // ── 十、打分 / 相关性下限 / 排序 ───────────────────────────────────────────
 const mk = (id, summary, created_at, recalled = 0, content = '') => ({
@@ -256,6 +259,29 @@ const byContent = form.scoreRough({
   limit: 5,
 })
 eq(byContent.length, 1, 'summary 没中但 content 中了 → 仍然算命中')
+
+// 拉丁词走整词子串 —— 旧口径(字符二元组)下英文术语精度只有 3%~10%
+const latinRows = [
+  mk(20, '机制结论 28', '2026-09-18 10:00:00', 0, '服务器小内存构建要加 NODE_OPTIONS,否则 build client 会 OOM'),
+  mk(21, '最短间隔 minGap', '2026-09-18 10:00:00', 0, 'state 自动注入加了 minGap,默认 4 轮'),
+]
+const latinHit = form.scoreRough({ rows: latinRows, keywords: form.splitKeywords('minGap'), limit: 5 })
+eq(latinHit.map(hit => hit.id), [21], '拉丁词整词子串:只中真含该词的条')
+eq(latinHit[0].cover, 1, '拉丁查询的分母 = 词数')
+eq(form.scoreRough({ rows: latinRows, keywords: form.splitKeywords('ds-persona'), limit: 5 }), [], '库里没有的词不再乱中(旧口径会因 to/en/se 误命中)')
+eq(form.scoreRough({ rows: latinRows, keywords: form.splitKeywords('MINimal'), limit: 5 }), [], '拉丁词大小写无关,且不做部分误中')
+
+const mixed = form.scoreRough({ rows: latinRows, keywords: form.splitKeywords('minGap 间隔'), limit: 5 })
+eq(mixed.map(hit => hit.id), [21], '中英混合查询照常工作')
+eq(mixed[0].hits, 2, '中英各中一个')
+eq(mixed[0].cover, 1, '分母 = 汉字 gram + 拉丁词')
+
+const versionHit = form.scoreRough({
+  rows: [mk(23, '升级', '2026-09-18 10:00:00', 0, 'DSH 升到 0.1.6-alpha.1')],
+  keywords: form.splitKeywords('0.1.6'),
+  limit: 5,
+})
+eq(versionHit.map(hit => hit.id), [23], '版本号这种数字串也走子串')
 
 eq(form.normalizeLimit(undefined), form.MEMORY_ROUGH_DEFAULT_LIMIT, 'limit 缺省 = 默认条数')
 eq(form.normalizeLimit(0), form.MEMORY_ROUGH_DEFAULT_LIMIT, 'limit ≤0 回落默认')

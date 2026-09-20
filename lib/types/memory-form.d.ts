@@ -119,15 +119,21 @@ export declare const MEMORY_ROUGH_MIN_COVER = 0.5;
  */
 export declare function splitKeywords(raw: unknown): string[];
 /**
- * 文本侧 gram 索引:单字与相邻二元组**都收** —— 这样单字关键词也走同一条命中路径。
+ * 文本侧 gram 索引:汉字单字与相邻二元组**都收** —— 这样单字关键词也走同一条命中路径。
  * 只影响池子大小,不影响查询侧分母。
  */
 export declare function textGrams(text: string): Set<string>;
 /**
- * 查询侧 gram:每个词独立生成 —— 单字词收单字,多字词只收相邻二元组
+ * 查询侧汉字 gram:每个词独立生成 —— 单字词收单字,多字词只收相邻二元组
  * (**不收单词字**,否则单字命中会把覆盖度冲淡)。
  */
 export declare function queryGrams(keywords: string[]): Set<string>;
+/**
+ * 查询侧拉丁/数字词:不含汉字的词整条拿去子串匹配(大小写无关)。
+ * `xsec_token` / `minGap` / `0.1.6` 这类术语只有这样才查得准;代价是 `0.1` 会把
+ * `0.1.2` 与 `0.1.6` 一起拉出来(可接受,摘要一眼能分)。
+ */
+export declare function queryLatinWords(keywords: string[]): string[];
 /** 一条命中的检索结果。 */
 export interface RoughHit {
     id: number;
@@ -147,7 +153,7 @@ export interface RoughInput {
     limit: number;
 }
 /**
- * 字符 bigram + 覆盖度打分(零依赖、不分词、中文直接可用;取代向量召回)。
+ * 汉字 bigram + 拉丁整词 + 覆盖度打分(零依赖、不分词,中文模糊、英文精确;取代向量召回)。
  *
  * 排序:命中数降序 → 召回数降序 → created_at 降序 → id 降序。
  * ⚠️ cover 与 hits 同一个分母,两者必然同序 —— **score 只是给人看的归一化值**,

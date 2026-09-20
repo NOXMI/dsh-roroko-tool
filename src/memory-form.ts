@@ -255,8 +255,14 @@ export const MEMORY_ROUGH_MIN_COVER = 0.5
 /** 关键词分隔符:空白与中英文逗号顿号分号斜杠竖线。 */
 const KEYWORD_SEP = /[\s,，、;；/|]+/
 
-/** 参与 gram 的字符:小写字母数字 + CJK 基本区;标点空白 emoji 一律剔除,免得污染二元组。 */
-const GRAM_CHARS = /[0-9a-z\u4e00-\u9fff]/g
+/**
+ * CJK 判定与提取。
+ * ⚠️ 拉丁/数字**不进二元组** —— 字符二元组对拉丁字母没有区分度(`minGap` 切出的
+ * `mi/in/ng/ga/ap` 里,`to`/`en`/`se` 在任何英文段落里都烂大街)。实测旧口径下
+ * `minGap` 命中 30 条里真相关只有 1 条、`ds-persona` 是 0/30。拉丁词改走整词子串。
+ */
+const CJK_CHARS = /[\u4e00-\u9fff]/g
+const CJK_TEST = /[\u4e00-\u9fff]/
 
 /**
  * 切关键词:按分隔符切、转小写、去重、保序,超上限截断。
@@ -276,17 +282,17 @@ export function splitKeywords(raw: unknown): string[] {
   return words
 }
 
-/** 归一化并抽出参与 gram 的字符(顺序保留)。 */
-function gramChars(text: string): string {
-  return text.toLowerCase().match(GRAM_CHARS)?.join('') ?? ''
+/** 抽出词里的汉字序列(顺序保留)。 */
+function cjkChars(text: string): string {
+  return text.match(CJK_CHARS)?.join('') ?? ''
 }
 
 /**
- * 文本侧 gram 索引:单字与相邻二元组**都收** —— 这样单字关键词也走同一条命中路径。
+ * 文本侧 gram 索引:汉字单字与相邻二元组**都收** —— 这样单字关键词也走同一条命中路径。
  * 只影响池子大小,不影响查询侧分母。
  */
 export function textGrams(text: string): Set<string> {
-  const chars = gramChars(text)
+  const chars = cjkChars(text)
   const grams = new Set<string>()
   for (let i = 0; i < chars.length; i++) {
     grams.add(chars[i])
@@ -296,13 +302,13 @@ export function textGrams(text: string): Set<string> {
 }
 
 /**
- * 查询侧 gram:每个词独立生成 —— 单字词收单字,多字词只收相邻二元组
+ * 查询侧汉字 gram:每个词独立生成 —— 单字词收单字,多字词只收相邻二元组
  * (**不收单词字**,否则单字命中会把覆盖度冲淡)。
  */
 export function queryGrams(keywords: string[]): Set<string> {
   const grams = new Set<string>()
   for (const word of keywords) {
-    const chars = gramChars(word)
+    const chars = cjkChars(word)
     if (chars.length === 0) continue
     if (chars.length === 1) {
       grams.add(chars)
@@ -311,6 +317,21 @@ export function queryGrams(keywords: string[]): Set<string> {
     for (let i = 0; i + 1 < chars.length; i++) grams.add(chars.slice(i, i + 2))
   }
   return grams
+}
+
+/**
+ * 查询侧拉丁/数字词:不含汉字的词整条拿去子串匹配(大小写无关)。
+ * `xsec_token` / `minGap` / `0.1.6` 这类术语只有这样才查得准;代价是 `0.1` 会把
+ * `0.1.2` 与 `0.1.6` 一起拉出来(可接受,摘要一眼能分)。
+ */
+export function queryLatinWords(keywords: string[]): string[] {
+  const words: string[] = []
+  for (const word of keywords) {
+    if (CJK_TEST.test(word)) continue
+    const normalized = word.trim()
+    if (normalized.length > 0) words.push(normalized)
+  }
+  return words
 }
 
 /** 一条命中的检索结果。 */
@@ -334,7 +355,7 @@ export interface RoughInput {
 }
 
 /**
- * 字符 bigram + 覆盖度打分(零依赖、不分词、中文直接可用;取代向量召回)。
+ * 汉字 bigram + 拉丁整词 + 覆盖度打分(零依赖、不分词,中文模糊、英文精确;取代向量召回)。
  *
  * 排序:命中数降序 → 召回数降序 → created_at 降序 → id 降序。
  * ⚠️ cover 与 hits 同一个分母,两者必然同序 —— **score 只是给人看的归一化值**,
@@ -342,14 +363,21 @@ export interface RoughInput {
  */
 export function scoreRough(input: RoughInput): RoughHit[] {
   const grams = queryGrams(input.keywords)
-  if (grams.size === 0) return []
+  const words = queryLatinWords(input.keywords)
+  const total = grams.size + words.length
+  if (total === 0) return []
   const hits: RoughHit[] = []
   for (const row of input.rows) {
-    const pool = textGrams(`${row.summary ?? ''}\n${row.content ?? ''}`)
+    const plain = `${row.summary ?? ''}\n${row.content ?? ''}`
+    const pool = textGrams(plain)
     let matched = 0
     for (const gram of grams) if (pool.has(gram)) matched++
+    if (words.length > 0) {
+      const lower = plain.toLowerCase()
+      for (const word of words) if (lower.includes(word)) matched++
+    }
     if (matched === 0) continue
-    const cover = matched / grams.size
+    const cover = matched / total
     if (matched < MEMORY_ROUGH_MIN_HITS && cover < MEMORY_ROUGH_MIN_COVER) continue
     hits.push({
       id: Number(row.id),
