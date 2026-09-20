@@ -26,12 +26,15 @@ import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { DatabaseSync } from 'node:sqlite'
 import { RorokoMemoryDefaultDbPath, RorokoMemoryDefaultOwner } from './settings.js'
 import {
-  MEMORY_OWNERS, MEMORY_ROUGH_DEFAULT_LIMIT, MEMORY_ROUGH_MAX_LIMIT, normalizeAdd, normalizeOwner,
-  normalizeReflect,
+  MEMORY_OWNERS, MEMORY_ROUGH_DEFAULT_LIMIT, MEMORY_ROUGH_MAX_LIMIT, fmtCst, normalizeAdd,
+  normalizeOwner, normalizeReflect,
 } from './memory-form.js'
 import { openMemoryDb, runAdd, runDate, runId, runReflect, runRough } from './memory-store.js'
 import { normalizeDreamConfig, type DreamConfig } from './memory-dream-form.js'
-import { defaultDreamLogDir, runDreamOnce, startDreamTimer, type DreamDeps } from './memory-dream.js'
+import {
+  defaultDreamLogDir, dreamRuntime, runDreamOnce, startDreamTimer,
+  type DreamDeps, type DreamRunResult,
+} from './memory-dream.js'
 
 export const name = 'roroko-memory'
 
@@ -123,10 +126,30 @@ function applyDream(ctx: Context, dbPath: string, owner: string, config: RorokoM
     callModel: prompt => callModelOnce(llm, dream, prompt),
   }
 
+  /**
+   * 跑一次并把结果贴到共享面 —— 定时器与手动触发共用同一条路,顺便防并发
+   * (同一时刻只允许一个 dream 在跑,免得两轮同时写同一条记忆)。
+   */
+  const runOnce = async (): Promise<DreamRunResult> => {
+    if (dreamRuntime.running) {
+      return { queued: 0, skippedLogs: 0, proposed: 0, changed: [], note: '上一次还在跑,本次跳过' }
+    }
+    dreamRuntime.running = true
+    try {
+      const result = await runDreamOnce(deps)
+      dreamRuntime.last = { ...result, at: fmtCst(new Date()) }
+      return result
+    } finally {
+      dreamRuntime.running = false
+    }
+  }
+  dreamRuntime.config = dream
+  dreamRuntime.run = runOnce
+
   const timer = startDreamTimer({
     intervalMs: dream.intervalMs,
     run: async () => {
-      const result = await runDreamOnce(deps)
+      const result = await runOnce()
       if (result.error !== undefined) ctx.logger?.warn?.(`[roroko-memory] dream: ${result.note}`)
       else ctx.logger?.info?.(`[roroko-memory] dream: ${result.note}`)
     },

@@ -159,6 +159,67 @@ eq(
 )
 ok(existsSync(home.statePath), 'state 文件仍然存在')
 
+// ── dream:状态与手动触发(运行面由 memory 子插件注册,这里手工塞同一个模块级对象)
+const { dreamRuntime } = await import('../lib/memory-dream.js')
+
+response = await call('GET', '/roroko-tool/dream')
+eq(response.status, 200, 'GET /roroko-tool/dream → 200')
+body = response.json()
+eq(body.enabled, false, '★ 没接 dream 时如实回 enabled=false(不假装)')
+eq(body.running, false, 'running=false')
+eq(body.last, null, '没有历史结果')
+
+eq(
+  (await call('POST', '/roroko-tool/dream', {
+    headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+  })).status,
+  403,
+  'dream POST 异源 → 403',
+)
+eq((await call('POST', '/roroko-tool/dream')).status, 403, 'dream POST 无 Origin → 403')
+eq(
+  (await call('POST', '/roroko-tool/dream', { headers: { 'content-type': 'application/json', origin } })).status,
+  400,
+  'dream 未启用时 POST → 400(人话拒绝,不是静默成功)',
+)
+
+// 接上运行面:与子插件注册的是同一个模块级对象
+dreamRuntime.config = {
+  enabled: true, intervalMs: 14400000, batch: 20,
+  provider: 'deepseek', model: 'deepseek-chat', maxTokens: 2048, logDir: '',
+}
+let dreamCalls = 0
+dreamRuntime.run = async () => {
+  dreamCalls++
+  const result = {
+    queued: 2, skippedLogs: 85, proposed: 1, changed: [7], note: '完成,反思 1 条', at: '2026-09-20 16:00:00',
+  }
+  dreamRuntime.last = result
+  return result
+}
+
+response = await call('GET', '/roroko-tool/dream')
+body = response.json()
+eq(body.enabled, true, '接上后 enabled=true')
+eq(body.configured, true, 'provider/model 配齐 → configured=true')
+eq(body.provider, 'deepseek', '回显 provider')
+eq(body.intervalMs, 14400000, '回显间隔')
+
+response = await call('POST', '/roroko-tool/dream', { headers: { 'content-type': 'application/json', origin } })
+eq(response.status, 200, '手动触发 → 200')
+eq(response.json().ok, true, '回执 ok=true')
+eq(response.json().result.changed, [7], '回执带门禁真落库的 id')
+eq(dreamCalls, 1, '真跑了一次')
+
+response = await call('GET', '/roroko-tool/dream')
+eq(response.json().last.changed, [7], 'last 记下了最近一次结果')
+
+// 方法边界 + 清理共享面(别把"已启用"留给别的套件)
+eq((await call('PUT', '/roroko-tool/dream')).status, 405, 'dream 非 GET/POST → 405')
+delete dreamRuntime.config
+delete dreamRuntime.run
+delete dreamRuntime.last
+
 await server.close()
 home.cleanup()
 process.exit(done('routes HTTP 集成'))
