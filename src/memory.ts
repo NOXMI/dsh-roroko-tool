@@ -32,7 +32,7 @@ import {
 import { openMemoryDb, runAdd, runDate, runId, runReflect, runRough } from './memory-store.js'
 import { normalizeDreamConfig, type DreamConfig } from './memory-dream-form.js'
 import {
-  defaultDreamLogDir, dreamRuntime, runDreamOnce, startDreamTimer,
+  claimDreamStart, defaultDreamLogDir, dreamRuntime, runDreamOnce, startDreamTimer,
   type DreamDeps, type DreamRunResult,
 } from './memory-dream.js'
 
@@ -105,6 +105,11 @@ async function callModelOnce(llm: LlmLike, dream: DreamConfig, prompt: string): 
 function applyDream(ctx: Context, dbPath: string, owner: string, config: RorokoMemoryConfig): void {
   const dream = normalizeDreamConfig(config.dream)
   if (!dream.enabled) return
+  // 进程级去重:同一个库只跑一份定时器(插件按 preset/会话装配,apply 可能被调多次)
+  if (!claimDreamStart(dbPath)) {
+    ctx.logger?.info?.(`[roroko-memory] dream 已在管 ${dbPath},本次不重复启动定时器`)
+    return
+  }
   const llm = (ctx as unknown as { get?: (key: string) => unknown }).get?.('llm') as LlmLike | undefined
   if (llm === undefined || typeof llm.stream !== 'function') {
     ctx.logger?.info?.('[roroko-memory] dream 未启动:llm 服务不可用')

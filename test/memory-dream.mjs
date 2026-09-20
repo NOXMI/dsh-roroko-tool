@@ -213,6 +213,11 @@ eq(form.DREAM_TICK_MS, 60 * 60 * 1000, '分段长度 1 小时')
 eq(form.DREAM_SKIP_KINDS.includes('log'), true, '日志在跳过清单里')
 eq(dream.defaultDreamLogDir('/a/b/mem.db').endsWith(['dream', 'log'].join('-')), true, '审计目录默认落在库旁边')
 
+// 进程级去重:插件按 preset/会话装配,apply 可能被调多次 —— 同一个库只许起一份定时器
+eq(dream.claimDreamStart('/tmp/lib-a.db'), true, '首次认领启动权成功')
+eq(dream.claimDreamStart('/tmp/lib-a.db'), false, '同一个库第二次认领被拒(不重复起定时器)')
+eq(dream.claimDreamStart('/tmp/lib-b.db'), true, '不同库各自认领互不影响')
+
 // ── 七、渲染 ────────────────────────────────────────────────────────────────
 const outcomeText = form.renderDreamOutcome({ queued: 3, skippedLogs: 85, proposed: 2, changed: [7, 9], note: '完成,反思 2 条' })
 ok(outcomeText.includes('队列 3 条'), '回执带队列数')

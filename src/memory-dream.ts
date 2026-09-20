@@ -69,6 +69,22 @@ export interface DreamRuntime {
 /** 模块级共享面;route 层直接读,永远不为空。 */
 export const dreamRuntime: DreamRuntime = { running: false }
 
+/**
+ * 已启动过定时器的库(进程级去重)。
+ *
+ * ⚠️ 插件是**按 preset / 会话装配**的 —— 同一次宿主生命周期里 apply 可能被调用多次。
+ * 不加这道闸,每个会话都会起一份定时器,4 小时后一起醒:重复烧 token、并发写同一个库。
+ * 同一个库只认第一个实例(后续调用只刷新共享面上的配置)。
+ */
+const startedDbs = new Set<string>()
+
+/** 认领一个库的 dream 启动权;已被认领过则返回 false。 */
+export function claimDreamStart(dbPath: string): boolean {
+  if (startedDbs.has(dbPath)) return false
+  startedDbs.add(dbPath)
+  return true
+}
+
 /** 取本桶所有候选行(时间升序,让"最久没反思的"自然排在前面)。 */
 function loadRows(dbPath: string, owner: string): MemoryRow[] {
   const db = openMemoryDb(dbPath)

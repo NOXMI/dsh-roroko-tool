@@ -40,6 +40,8 @@ export interface DreamRuntime {
 }
 /** 模块级共享面;route 层直接读,永远不为空。 */
 export declare const dreamRuntime: DreamRuntime;
+/** 认领一个库的 dream 启动权;已被认领过则返回 false。 */
+export declare function claimDreamStart(dbPath: string): boolean;
 /**
  * 跑一次 dream。**任何异常都在这里收住**并当成结果返回 —— 调用方(定时器)
  * 不该因为一次整理失败而死掉。
