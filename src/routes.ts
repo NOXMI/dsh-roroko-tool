@@ -206,7 +206,7 @@ export function registerStateRoutes(webServer: WebServerLike): () => void {
             dbPath?: unknown
             /** state 短条自动注入开关 { rounds, every, afterTool }。 */
             autoinject?: unknown
-            /** dream 覆盖层(字段可选):{ enabled, intervalMs, batch, provider, model, maxTokens, logDir }。 */
+            /** dream 覆盖层(字段可选):{ enabled, intervalMs, batch, provider, model }。 */
             dream?: unknown
             enabled?: unknown
           }
@@ -327,7 +327,6 @@ export function registerStateRoutes(webServer: WebServerLike): () => void {
             model: config?.model ?? '',
             intervalMs: config?.intervalMs ?? 0,
             batch: config?.batch ?? 0,
-            logDir: config?.logDir ?? '',
             running: dreamRuntime.running,
             last: dreamRuntime.last ?? null,
           })

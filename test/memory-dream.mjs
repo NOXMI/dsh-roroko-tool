@@ -56,7 +56,9 @@ eq(form.DREAM_DEFAULT_INTERVAL_MS, 4 * 60 * 60 * 1000, '默认间隔 4 小时(�
 const cfgEmpty = form.normalizeDreamConfig({})
 eq(cfgEmpty.intervalMs, 4 * 60 * 60 * 1000, '★ 未给 intervalMs → 默认 4 小时(不是下限 5 分钟)')
 eq(cfgEmpty.batch, 20, '★ 未给 batch → 默认 20(不是下限 1)')
-eq(cfgEmpty.maxTokens, 8192, '★ 未给 maxTokens → 默认 8192(推理模型要够用,2048 会被 thinking 吃满)')
+eq(form.DREAM_DEFAULT_MAX_TOKENS, 8192, '★ maxTokens 从配置项降回常量:8192(推理模型要够用,2048 会被 thinking 吃满)')
+eq('maxTokens' in cfgEmpty, false, '★ 配置里不再有 maxTokens(常量说了算)')
+eq('logDir' in cfgEmpty, false, '★ 配置里不再有 logDir(审计固定落库旁边)')
 eq(form.normalizeDreamConfig(undefined).intervalMs, 4 * 60 * 60 * 1000, 'undefined 配置 → 全默认')
 eq(form.normalizeDreamConfig({ intervalMs: '7200000' }).intervalMs, 7200000, '字符串数字也认')
 eq(form.normalizeDreamConfig({ intervalMs: '' }).intervalMs, 4 * 60 * 60 * 1000, '空串 → 默认')
@@ -113,7 +115,6 @@ const deps = over => ({
   provider: 'deepseek',
   model: 'deepseek-chat',
   batch: 20,
-  maxTokens: 1024,
   logDir: join(dir, 'dream-log'),
   now: () => t,
   callModel: async () => {

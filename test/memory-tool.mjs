@@ -1,9 +1,12 @@
 /**
- * memory.js(工具注册层)测试:preset 声明 → 注册两把工具 → 真跑 execute。
+ * memory.js(工具注册层)测试:preset 声明 → 注册四把工具 → 真跑 execute。
  *
  * memory.js 顶层 import 了 dsh-tools 的值(defineTool),所以**必须带替身钩子**:
  *   node --import ./test/helpers/register-stubs.mjs test/memory-tool.mjs
  * (在 Windows 上 --import 要给 file:// URL —— 统一由 run-all.mjs 拼。)
+ *
+ * 2026-09-21 减法后:工具**不再收 owner / kind 参数**,桶固定取 preset config ——
+ * 本套件因此改成"同一库挂两份不同 owner 的插件,验两边互不串门"。
  *
  * 纯逻辑与库访问另见 memory-unit.mjs(那套零替身,谁都能直接跑)。
  */
@@ -17,11 +20,11 @@ const { ok, eq, done } = makeAsserts()
 const { apply } = await import('../lib/memory.js')
 
 const dir = mkdtempSync(join(tmpdir(), 'roroko-memtool-'))
+const dbPath = join(dir, 'data', 'roroko_memory.db') // 故意多一层目录:顺带验挂载即建库能自己补父目录
 const tools = []
 const ctx = { tools: { register(tool) { tools.push(tool) } } }
 
-// 故意多一层目录:顺带验挂载即建库能自己补父目录
-apply(ctx, { dbPath: join(dir, 'data', 'roroko_memory.db'), owner: 'dev' })
+apply(ctx, { dbPath, owner: 'dev' })
 
 eq(
   tools.map(tool => tool.name),
@@ -36,53 +39,71 @@ ok(tools[2].description.includes('不许据此编造记忆'), 'rough 描述带�
 ok(tools[3].description.includes('别一次捞一堆'), 'id 描述限制批量滥取')
 eq(tools[2].presentCall({ keywords: '记忆 召回' }).title, '检索记忆 · 记忆 召回', 'rough 卡片标题带关键词')
 
+// ── 参数面:减法后不该再有 owner / kind ─────────────────────────────────────
+for (const [index, name] of [[0, 'edit'], [1, 'date'], [2, 'rough'], [3, 'id']]) {
+  ok(!('owner' in tools[index].parameters), `★ ${name} 的参数表里没有 owner(桶由 preset 决定)`)
+}
+ok(!('kind' in tools[0].parameters), '★ edit 的参数表里没有 kind(分类概念已撤)')
+ok(!tools[0].description.includes('owner=all'), '★ edit 描述不再提跨桶')
+ok(!tools[2].description.includes('bigram'), '★ rough 描述不再提打分口径')
+
 const addText = await tools[0].execute({ op: 'add', content: '工具层真跑:落一条', summary: '工具层真跑' })
-ok(addText.includes('已记 #1'), 'add 走真库真写(owner 缺省回落 preset 配置)')
+ok(addText.includes('已记 #1'), 'add 走真库真写')
+ok(addText.includes('owner=dev'), '★ 桶固定取 preset 配置')
+eq(addText.includes('kind'), false, '★ 回执不再回显 kind')
 
 const listText = await tools[1].execute({})
 ok(listText.includes('工具层真跑'), 'date 默认区间读回今天那条')
-ok(listText.includes('owner=dev'), 'owner 缺省 = preset 配置的桶')
+ok(listText.includes('owner=dev'), 'date 表头带桶名')
 
-const personaText = await tools[0].execute({ op: 'add', owner: 'persona', content: '角色桶一条', summary: '角色桶' })
-ok(personaText.includes('owner=persona'), '显式 owner 覆盖 preset 配置')
-
-const onlyDev = await tools[1].execute({ owner: 'dev' })
-ok(onlyDev.includes('条数 1') && !onlyDev.includes('角色桶'), 'owner 过滤挡掉别的桶')
-const allText = await tools[1].execute({ owner: 'all' })
-ok(allText.includes('条数 2'), 'owner=all 看全桶')
-
-const badOwner = await tools[1].execute({ owner: '妈妈' })
-ok(badOwner.includes('owner 非法'), '工具层挡非法 owner(不抛)')
 const badAdd = await tools[0].execute({ op: 'add', content: '   ', summary: 'y' })
 ok(badAdd.includes('写入失败'), '空 content 返回人话失败,不抛')
 
-// M2 两把:检索与按 id 取全文(走同一套真库)
+// ── 检索:两个词全都要命中 ──────────────────────────────────────────────────
 const roughText = await tools[2].execute({ keywords: '工具层' })
 ok(roughText.includes('工具层真跑'), 'rough 真跑命中已落的那条')
-ok(roughText.includes('候选 1 条'), 'rough 候选只算 preset 桶里的(dev 1 条)')
-ok(roughText.includes('owner=dev'), 'rough owner 缺省 = preset 桶')
+ok(roughText.includes('桶内 1 条'), '★ 回执给桶内条数')
+ok(roughText.includes('owner=dev'), 'rough 表头带桶名')
 
-const roughAll = await tools[2].execute({ keywords: '角色桶', owner: 'all' })
-ok(roughAll.includes('| 2 |') && !roughAll.includes('角色桶一条'), 'owner=all 跨桶检索到 persona 那条(表格只给 summary,不给 content)')
-ok(roughAll.includes('owner=(全部)'), 'all 时表头明示')
+const roughAnd = await tools[2].execute({ keywords: '工具层 真跑' })
+ok(roughAnd.includes('工具层真跑'), '两个词都出现 → 命中')
+const roughMiss = await tools[2].execute({ keywords: '工具层 不存在的词' })
+ok(roughMiss.includes('没有匹配上'), '★ 有一个词对不上 → 整条不命中(全都要)')
 
 const roughEmpty = await tools[2].execute({ keywords: '   ' })
 ok(roughEmpty.includes('关键词为空'), '空关键词返回人话,不抛')
-const roughBadOwner = await tools[2].execute({ keywords: 'x', owner: '妈妈' })
-ok(roughBadOwner.includes('owner 非法'), 'rough 挡非法 owner(不抛)')
 const roughNomatch = await tools[2].execute({ keywords: '和记忆完全不沾边的xyzzy' })
 ok(roughNomatch.includes('没有匹配上'), '没匹配上明说,不让模型脑补')
 
 const idText = await tools[3].execute({ id: 1 })
 ok(idText.includes('记忆 #1'), 'id 真跑取到全文')
 ok(idText.includes('工具层真跑:落一条'), '取到的是 content 全文')
-ok(idText.includes('召回 2'), '第一次被 rough 命中过,召回数跟着走')
+ok(!idText.includes('召回'), '★ 全文渲染不再提召回数')
 const idBad = await tools[3].execute({ id: 'x' })
 ok(idBad.includes('id 非法'), 'id 非法返回人话')
 const idMissing = await tools[3].execute({ id: 999 })
 ok(idMissing.includes('没有 #999'), '不存在的 id 返回人话')
 
-// M4 反思(同一套真库;id 1 是上面落的 dev 那条)
+// ── 同一个库挂另一个桶:两边互不串门 ──────────────────────────────────────
+const personaTools = []
+apply({ tools: { register(tool) { personaTools.push(tool) } } }, { dbPath, owner: 'persona' })
+const personaAdd = await personaTools[0].execute({ op: 'add', content: '角色桶一条', summary: '角色桶' })
+ok(personaAdd.includes('owner=persona'), '★ 换一份 preset config → 写进另一个桶')
+
+const devList = await tools[1].execute({})
+ok(!devList.includes('角色桶'), '★ dev 桶查不到 persona 的记录')
+const personaList = await personaTools[1].execute({})
+ok(personaList.includes('角色桶'), '★ persona 桶自己看得到')
+ok(!personaList.includes('工具层真跑'), '★ 反向也不串')
+
+const devRough = await tools[2].execute({ keywords: '角色桶' })
+ok(devRough.includes('没有匹配上'), '★ 检索也被桶挡住')
+ok((await personaTools[2].execute({ keywords: '角色桶' })).includes('角色桶'), '★ 另一桶检索得到')
+
+const crossId = await personaTools[3].execute({ id: 1 })
+ok(crossId.includes('没有 #1'), '★ 按 id 也只看本桶(跨桶取不到)')
+
+// ── 反思(同一套真库;id 1 是上面落的 dev 那条) ────────────────────────────
 const reflectText = await tools[0].execute({ op: 'reflect', id: 1, content: '反思后的正文' })
 ok(reflectText.includes('已反思 #1'), 'reflect 真跑')
 ok(reflectText.includes('(未改)'), '不传 summary → 保留原值')

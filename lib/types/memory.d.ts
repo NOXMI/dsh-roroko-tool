@@ -30,8 +30,8 @@ export interface RorokoMemoryConfig {
     dbPath?: string;
     /** 缺省 owner 桶(工具不传 owner 时用它);缺省回落 dev。 */
     owner?: string;
-    /** dream 配置(enabled / intervalMs / batch / provider / model / maxTokens / logDir)。 */
+    /** dream 配置(enabled / intervalMs / batch / provider / model)。 */
     dream?: unknown;
 }
-/** 注册两把记忆工具;preset 声明本插件即注册。 */
+/** 注册四把记忆工具;preset 声明本插件即注册。 */
 export declare function apply(ctx: Context, config?: RorokoMemoryConfig): void;

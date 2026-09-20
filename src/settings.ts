@@ -164,8 +164,6 @@ export interface RorokoDreamState {
   batch?: number
   provider?: string
   model?: string
-  maxTokens?: number
-  logDir?: string
 }
 
 /** 四工具参数键(与 HTTP payload 一致)。 */
@@ -342,12 +340,12 @@ export function normalizeDreamState(value: unknown): RorokoDreamState {
   const section = value as Record<string, unknown>
   const out: RorokoDreamState = {}
   if (typeof section.enabled === 'boolean') out.enabled = section.enabled
-  const ints: Array<'intervalMs' | 'batch' | 'maxTokens'> = ['intervalMs', 'batch', 'maxTokens']
+  const ints: Array<'intervalMs' | 'batch'> = ['intervalMs', 'batch']
   for (const key of ints) {
     const raw = section[key]
     if (typeof raw === 'number' && Number.isFinite(raw)) out[key] = Math.floor(raw)
   }
-  const strings: Array<'provider' | 'model' | 'logDir'> = ['provider', 'model', 'logDir']
+  const strings: Array<'provider' | 'model'> = ['provider', 'model']
   for (const key of strings) {
     const raw = section[key]
     if (typeof raw === 'string') out[key] = raw.trim()

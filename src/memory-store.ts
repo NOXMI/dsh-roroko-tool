@@ -1,19 +1,22 @@
 /**
- * roroko 记忆库访问层:开库建表 / 写入 / 按日期回查。
+ * roroko 记忆库访问层:开库建表 / 写入 / 按日期回查 / 关键词检索。
  *
  * 只依赖 `node:sqlite` 与 memory-form.ts(纯逻辑),**不 import DSH 运行时包** ——
  * 测试可以直接 import 本产物真跑临时库,不需要替身钩子。
  *
  * 连接策略:每次 execute 独立开关一条连接(与 roroko_datas_* 同款);开库即建表,
  * 幂等。sqlite 不会自己建目录,所以先补父目录。
+ *
+ * 减法(2026-09-21):检索从"全表取回 + bigram 打分"改成**一条 SQL**(每个关键词都要
+ * 命中,LIKE 包含匹配);删掉召回计数与 owner 分桶开关。桶由调用方固定传进来。
  */
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
-  MEMORY_DDL, MEMORY_PRAGMAS, fmtCst, normalizeId, normalizeLimit, renderAddResult, renderDate,
-  renderId, renderReflectResult, renderRough, resolveRange, scoreRough, splitKeywords,
-  type DateRange, type MemoryAddInput, type MemoryReflectInput, type MemoryRow, type RoughHit,
+  MEMORY_DDL, MEMORY_PRAGMAS, escapeLike, fmtCst, normalizeId, normalizeLimit, renderAddResult,
+  renderDate, renderId, renderReflectResult, renderRough, resolveRange, splitKeywords,
+  type DateRange, type MemoryAddInput, type MemoryReflectInput, type MemoryRow,
 } from './memory-form.js'
 
 /** sqlite 行值类型收窄。 */
@@ -57,7 +60,7 @@ export function runAdd(
 
 /**
  * 反思一条记忆:直接覆盖 content(设计稿 §五 5.3,防膨胀)、刷 reflected_at,
- * summary 传了才一起换。owner/kind/source/recalled 一概不动。
+ * summary 传了才一起换。owner/kind/source 一概不动。
  * 查不到 id 返回人话,不抛。
  */
 export function runReflect(db: DatabaseSync, input: MemoryReflectInput, now: Date): string {
@@ -82,105 +85,88 @@ export function runReflect(db: DatabaseSync, input: MemoryReflectInput, now: Dat
   })
 }
 
-/** 按日期回查入参。 */
+/** 按日期回查入参(区间两端)。 */
 export interface DateQuery {
   from?: unknown
   to?: unknown
-  /** undefined = 全部桶(不跨桶是默认纪律,这里是显式放宽口)。 */
-  owner?: string
 }
 
 /**
  * 按日期回查:拿 created_at 前 10 位(纯日期)做字符串比较,避开时间部分。
  * 区间非法时返回人话错误,不抛 —— 工具执行失败会污染整轮。
  */
-export function runDate(db: DatabaseSync, query: DateQuery, now: Date): string {
+export function runDate(db: DatabaseSync, query: DateQuery, owner: string, now: Date): string {
   const resolved = resolveRange(query.from, query.to, now)
   if (resolved.range === undefined) return `区间非法: ${resolved.error}`
   const range: DateRange = resolved.range
-  const where = ['substr(created_at, 1, 10) >= ?', 'substr(created_at, 1, 10) <= ?']
-  const params: Array<string> = [range.from, range.to]
-  if (query.owner !== undefined && query.owner.length > 0) {
-    where.push('owner = ?')
-    params.push(query.owner)
-  }
   const rows = db
     .prepare(
-      `SELECT id, owner, summary, created_at, reflected_at, recalled, kind FROM memory
-       WHERE ${where.join(' AND ')} ORDER BY created_at ASC, id ASC`,
+      `SELECT id, owner, summary, created_at, reflected_at, kind FROM memory
+       WHERE owner = ? AND substr(created_at, 1, 10) >= ? AND substr(created_at, 1, 10) <= ?
+       ORDER BY created_at ASC, id ASC`,
     )
-    .all(...params) as unknown as MemoryRow[]
-  return renderDate({ rows, range, owner: query.owner, now })
+    .all(owner, range.from, range.to) as unknown as MemoryRow[]
+  return renderDate({ rows, range, owner })
 }
 
 /** 检索 / 取全文 / dream 共用的列(改动这里要顺手看一眼各处渲染)。 */
-export const MEMORY_COLUMNS = 'id, owner, content, summary, created_at, reflected_at, recalled, source, kind'
+export const MEMORY_COLUMNS = 'id, owner, content, summary, created_at, reflected_at, source, kind'
 
-/** 按 owner 取候选行:owner 有值就过滤,否则全桶(是否全桶由调用方决定)。 */
-function selectCandidates(db: DatabaseSync, owner?: string): MemoryRow[] {
-  const base = `SELECT ${MEMORY_COLUMNS} FROM memory`
-  const tail = ' ORDER BY created_at DESC, id DESC'
-  const scoped = owner !== undefined && owner.length > 0
-  const statement = db.prepare(scoped ? `${base} WHERE owner = ?${tail}` : `${base}${tail}`)
-  const rows = scoped ? statement.all(owner) : statement.all()
-  return rows as unknown as MemoryRow[]
-}
-
-/** 召回计数 +1 —— **只给真正被取用的条**,落选的候选不该因一次检索就涨计数。 */
-function bumpRecalled(db: DatabaseSync, ids: number[]): void {
-  if (ids.length === 0) return
-  const statement = db.prepare('UPDATE memory SET recalled = recalled + 1 WHERE id = ?')
-  for (const id of ids) statement.run(id)
+/** 桶内条数(区分"桶里没记忆"和"没匹配上")。 */
+function countOwner(db: DatabaseSync, owner: string): number {
+  const row = db.prepare('SELECT count(*) AS n FROM memory WHERE owner = ?').get(owner) as unknown as Row | undefined
+  return Number(row?.n ?? 0) || 0
 }
 
 /** 关键词检索入参。 */
 export interface RoughQuery {
   keywords?: unknown
-  /** undefined = 全部桶。 */
-  owner?: string
   limit?: unknown
 }
 
 /**
- * 关键词模糊检索(字符 bigram + 覆盖度):候选先按 owner 全取回来,再在内存里打分。
- * 记忆量级是千级,全取比在 SQL 里做匹配更简单,也把打分逻辑留在纯函数里好测。
+ * 关键词检索:**一条 SQL**,每个关键词都要在 content 或 summary 里出现(LIKE 包含匹配,
+ * 通配符已转义)。命中按时间倒序取 limit 条 —— 没有打分、没有相似度、没有召回计数。
  * 关键词切不出东西时返回人话,不抛(工具抛错会污染整轮)。
  */
-export function runRough(db: DatabaseSync, query: RoughQuery): string {
+export function runRough(db: DatabaseSync, query: RoughQuery, owner: string): string {
   const keywords = splitKeywords(query.keywords)
   if (keywords.length === 0) return '关键词为空:给一句要检索的话或几个词(空格分隔)。'
-  const rows = selectCandidates(db, query.owner)
-  const hits: RoughHit[] = scoreRough({ rows, keywords, limit: normalizeLimit(query.limit) })
-  bumpRecalled(db, hits.map(hit => hit.id))
-  // 库里已 +1,渲染跟着走,免得回执与库对不上
-  for (const hit of hits) hit.recalled += 1
-  return renderRough({ hits, keywords, owner: query.owner, candidates: rows.length })
+  const candidates = countOwner(db, owner)
+  if (candidates === 0) return renderRough({ rows: [], keywords, owner, candidates })
+  const where: string[] = []
+  const params: SqlValue[] = [owner]
+  for (const word of keywords) {
+    where.push("(content LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\')")
+    const pattern = `%${escapeLike(word)}%`
+    params.push(pattern, pattern)
+  }
+  const rows = db
+    .prepare(
+      `SELECT id, owner, summary, created_at, reflected_at, kind FROM memory
+       WHERE owner = ? AND ${where.join(' AND ')}
+       ORDER BY created_at DESC, id DESC LIMIT ?`,
+    )
+    .all(...params, normalizeLimit(query.limit)) as unknown as MemoryRow[]
+  return renderRough({ rows, keywords, owner, candidates })
 }
 
 /** 按 id 取全文入参。 */
 export interface IdQuery {
   id?: unknown
-  /** 有值就校验归属;不给 = 不限桶(id 全局唯一,调用方负责拿对)。 */
-  owner?: string
 }
 
 /**
- * 按 id 取一条的完整内容(摘要不足以判断时才用),顺带 recalled += 1。
- * 查不到返回人话,不抛。
+ * 按 id 取一条的完整内容(摘要不足以判断时才用)。只在**本桶**里找,查不到返回人话,不抛。
  */
-export function runId(db: DatabaseSync, query: IdQuery): string {
+export function runId(db: DatabaseSync, query: IdQuery, owner: string): string {
   const id = normalizeId(query.id)
   if (id === undefined) {
     return `id 非法: ${String(query.id)}(要正整数;id 从检索或按日期回查的结果里拿)`
   }
-  const owner = query.owner !== undefined && query.owner.length > 0 ? query.owner : undefined
-  const sql = `SELECT ${MEMORY_COLUMNS} FROM memory WHERE id = ?${owner === undefined ? '' : ' AND owner = ?'}`
-  const row = (owner === undefined
-    ? db.prepare(sql).get(id)
-    : db.prepare(sql).get(id, owner)) as unknown as MemoryRow | undefined
-  if (row === undefined) {
-    return `没有 #${id} 这条记忆${owner === undefined ? '' : `(owner=${owner})`}。`
-  }
-  db.prepare('UPDATE memory SET recalled = recalled + 1 WHERE id = ?').run(id)
-  return renderId({ row, recalled: (Number(row.recalled) || 0) + 1 })
+  const row = db
+    .prepare(`SELECT ${MEMORY_COLUMNS} FROM memory WHERE id = ? AND owner = ?`)
+    .get(id, owner) as unknown as MemoryRow | undefined
+  if (row === undefined) return `没有 #${id} 这条记忆(owner=${owner})。`
+  return renderId({ row })
 }

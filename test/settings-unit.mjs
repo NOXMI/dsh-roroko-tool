@@ -28,7 +28,12 @@ eq(
   '只留出现过的合法字段(trim / 取整 / 丢未知键)',
 )
 eq(normalizeDreamState({ enabled: 'yes', intervalMs: 'x' }), {}, '类型不对的字段一律丢')
-eq(normalizeDreamState({ enabled: false, logDir: '/tmp/d' }), { enabled: false, logDir: '/tmp/d' }, '布尔与字符串照收')
+eq(normalizeDreamState({ enabled: false, provider: 'p' }), { enabled: false, provider: 'p' }, '布尔与字符串照收')
+eq(
+  normalizeDreamState({ maxTokens: 2048, logDir: '/tmp/d' }),
+  {},
+  '★ 减法后 maxTokens / logDir 不再是配置项:传了也当未知键丢掉',
+)
 eq(normalizeState({ dream: { provider: 'p' } }).dream, { provider: 'p' }, 'normalizeState 认 dream 节')
 eq(normalizeState({}).dream, {}, '没有 dream 节时回落空桶')
 

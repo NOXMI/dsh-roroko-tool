@@ -125,8 +125,6 @@ export interface RorokoDreamState {
     batch?: number;
     provider?: string;
     model?: string;
-    maxTokens?: number;
-    logDir?: string;
 }
 /** 四工具参数键(与 HTTP payload 一致)。 */
 export type RorokoToolKey = 'preinject' | 'data' | 'warn' | 'mark' | 'dream';

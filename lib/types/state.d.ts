@@ -82,8 +82,6 @@ export interface RorokoDreamConfigInput {
     batch?: unknown;
     provider?: unknown;
     model?: unknown;
-    maxTokens?: unknown;
-    logDir?: unknown;
 }
 /**
  * 覆盖保存 dream 参数节:body 里**出现过**的字段才写(部分覆盖语义)。

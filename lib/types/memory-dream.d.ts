@@ -8,7 +8,6 @@ export interface DreamDeps {
     model: string;
     /** 一次取多少条。 */
     batch: number;
-    maxTokens: number;
     /** 审计目录;空串 = 不落盘。 */
     logDir: string;
     /** 调一次模型拿纯文本回复(接线层用 ctx.llm.stream 拼装)。 */

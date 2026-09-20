@@ -9,6 +9,15 @@
  *   - 存库格式与 soul.db 的 datetime('now','localtime') 一致:'YYYY-MM-DD HH:mm:ss'
  *   - 日期查询拿 created_at 前 10 位做字符串比较,不拼 '23:59:59' 落边界
  *   - 默认区间 = **今天 + 昨天**(直接承接既有记忆纪律「今天 + 昨天必读」)
+ *
+ * 减法(2026-09-21,阿一拍板"工具就只是简单的 sqlite 工具"):
+ *   - 检索**只剩一条 SQL**(关键词全都要命中,LIKE 包含匹配):删掉整套汉字 bigram
+ *     打分 / 覆盖度 / 命中数 / 拉丁整词分流 —— 那些概念模型用不上,人也维护不动
+ *   - **删召回计数**(recalled):它只当排序次序用,还让同一次查询的结果顺序漂移
+ *     (字段仍留在库里,旧库不需要迁移,只是代码不再读写)
+ *   - **删 owner 分桶开关**(owner=all / 工具入参 owner):桶固定取 preset 配的那个
+ *   - **删 kind 入参**:kind 只剩一个用途 —— 标记导入的历史流水(`log`),由导入脚本
+ *     直接写库,模型侧不再暴露分类概念
  */
 
 /** 东八区固定偏移(毫秒)。 */
@@ -113,14 +122,8 @@ export const MEMORY_CONTENT_MAX = 2000
 /** summary(二次摘要)上限。 */
 export const MEMORY_SUMMARY_MAX = 300
 
-/** kind 上限。 */
-export const MEMORY_KIND_MAX = 32
-
 /** source(provenance:会话 id + 事件 seq)上限。 */
 export const MEMORY_SOURCE_MAX = 200
-
-/** 已知 owner 桶(不强制枚举,只作描述与默认值;将来加角色不必改代码)。 */
-export const MEMORY_OWNERS = ['dev', 'persona'] as const
 
 /** 默认 owner 桶(本机开发侧)。 */
 export const MEMORY_DEFAULT_OWNER = 'dev'
@@ -128,6 +131,7 @@ export const MEMORY_DEFAULT_OWNER = 'dev'
 /**
  * owner 收窄:小写字母数字开头,可带 . _ -,≤32 字。
  * 拒绝中文/空格/大写 —— 桶名会被当成过滤键,污串一进库就再难收拾。
+ * 工具侧不再收 owner 入参,这里只服务于 preset config。
  */
 export function normalizeOwner(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined
@@ -142,6 +146,7 @@ export interface MemoryAddInput {
   owner: string
   content: string
   summary: string
+  /** 内部字段:只有导入历史流水的脚本会写 'log';工具侧不再暴露。 */
   kind: string
   source: string
 }
@@ -157,19 +162,18 @@ function requiredText(raw: unknown, label: string, max: number): { value: string
   return { value }
 }
 
-/** add 入参收窄:owner/content/summary 必填,kind/source 可省。 */
+/** add 入参收窄:owner/content/summary 必填,source 可省;kind 固定留空(导入脚本自己填)。 */
 export function normalizeAdd(raw: Record<string, unknown>): AddResult {
   const owner = normalizeOwner(raw.owner)
   if (owner === undefined) {
-    return { error: `owner 非法或缺失(只收小写字母数字与 . _ -,≤${MEMORY_OWNER_MAX} 字;常用桶: ${MEMORY_OWNERS.join(' / ')})` }
+    return { error: `owner 非法或缺失(只收小写字母数字与 . _ -,≤${MEMORY_OWNER_MAX} 字)` }
   }
   const content = requiredText(raw.content, 'content', MEMORY_CONTENT_MAX)
   if ('error' in content) return { error: content.error }
   const summary = requiredText(raw.summary, 'summary', MEMORY_SUMMARY_MAX)
   if ('error' in summary) return { error: summary.error }
-  const kind = typeof raw.kind === 'string' ? raw.kind.trim().slice(0, MEMORY_KIND_MAX) : ''
   const source = typeof raw.source === 'string' ? raw.source.trim().slice(0, MEMORY_SOURCE_MAX) : ''
-  return { input: { owner, content: content.value, summary: summary.value, kind, source } }
+  return { input: { owner, content: content.value, summary: summary.value, kind: '', source } }
 }
 
 /** 反思一条记忆的合法形状。 */
@@ -210,7 +214,6 @@ export interface MemoryRow {
   summary: string
   created_at: string
   reflected_at: string | null
-  recalled: number
   kind: string | null
   source?: string | null
 }
@@ -220,10 +223,15 @@ function cell(text: unknown): string {
   return String(text ?? '').replaceAll('|', '/').replaceAll('\n', ' ')
 }
 
-/** 写入回执:'已记 #id · 时间 · owner · kind'。 */
+/** 时间列截成 'MM-DD HH:mm'。 */
+function shortStamp(stamp: unknown): string {
+  const text = String(stamp ?? '')
+  return text.length >= 16 ? text.slice(5, 16) : text
+}
+
+/** 写入回执:'已记 #id · 时间 · owner'。 */
 export function renderAddResult(input: MemoryAddInput, id: number, createdAt: string): string {
   const lines = [`已记 #${id} · ${createdAt} CST · owner=${input.owner}`]
-  if (input.kind.length > 0) lines.push(`kind: ${input.kind}`)
   if (input.source.length > 0) lines.push(`source: ${input.source}`)
   lines.push(`summary: ${input.summary}`)
   return lines.join('\n')
@@ -253,9 +261,7 @@ export function renderReflectResult(input: RenderReflectInput): string {
 export interface RenderDateInput {
   rows: MemoryRow[]
   range: DateRange
-  /** 生效的 owner 过滤值;undefined = 全部桶。 */
-  owner?: string
-  now: Date
+  owner: string
 }
 
 /**
@@ -264,30 +270,26 @@ export interface RenderDateInput {
  */
 export function renderDate(input: RenderDateInput): string {
   const { rows, range, owner } = input
-  const scope = owner === undefined ? 'owner=(全部)' : `owner=${owner}`
-  const head = `## 记忆 · ${range.from} ~ ${range.to} · ${scope}`
+  const head = `## 记忆 · ${range.from} ~ ${range.to} · owner=${owner}`
   if (rows.length === 0) {
     return `${head}\n该区间没有记忆。换个区间,或先 \`roroko_mem_edit\` op=add 落一条。`
   }
   const unreflected = rows.filter(row => row.reflected_at === null || row.reflected_at === '').length
-  const recalled = rows.reduce((sum, row) => sum + (Number(row.recalled) || 0), 0)
   const lines = [
     head,
-    `条数 ${rows.length} · 未反思 ${unreflected} · 累计召回 ${recalled}`,
+    `条数 ${rows.length} · 未反思 ${unreflected}`,
     '',
     '| id | 时间 | 类别 | 摘要 | 标记 |',
     '|---|---|---|---|---|',
   ]
   for (const row of rows) {
-    const stamp = String(row.created_at ?? '')
-    const short = stamp.length >= 16 ? stamp.slice(5, 16) : stamp
     const flags = row.reflected_at === null || row.reflected_at === '' ? '未反思' : ''
-    lines.push(`| ${row.id} | ${short} | ${cell(row.kind)} | ${cell(row.summary)} | ${flags} |`)
+    lines.push(`| ${row.id} | ${shortStamp(row.created_at)} | ${cell(row.kind)} | ${cell(row.summary)} | ${flags} |`)
   }
   return lines.join('\n')
 }
 
-/** 关键词词数上限(词越多命中越稀,靠相关性下限挡噪声)。 */
+/** 单次检索喂进 SQL 的关键词个数上限(词越多命中越稀)。 */
 export const MEMORY_ROUGH_MAX_KEYWORDS = 8
 
 /** 检索默认返回条数。 */
@@ -296,27 +298,12 @@ export const MEMORY_ROUGH_DEFAULT_LIMIT = 5
 /** 检索返回条数上限。 */
 export const MEMORY_ROUGH_MAX_LIMIT = 20
 
-/** 相关性下限:命中的去重 gram 数。 */
-export const MEMORY_ROUGH_MIN_HITS = 2
-
-/** 相关性下限:覆盖度(与 MEMORY_ROUGH_MIN_HITS 命中其一即放行)。 */
-export const MEMORY_ROUGH_MIN_COVER = 0.5
-
 /** 关键词分隔符:空白与中英文逗号顿号分号斜杠竖线。 */
 const KEYWORD_SEP = /[\s,，、;；/|]+/
 
 /**
- * CJK 判定与提取。
- * ⚠️ 拉丁/数字**不进二元组** —— 字符二元组对拉丁字母没有区分度(`minGap` 切出的
- * `mi/in/ng/ga/ap` 里,`to`/`en`/`se` 在任何英文段落里都烂大街)。实测旧口径下
- * `minGap` 命中 30 条里真相关只有 1 条、`ds-persona` 是 0/30。拉丁词改走整词子串。
- */
-const CJK_CHARS = /[\u4e00-\u9fff]/g
-const CJK_TEST = /[\u4e00-\u9fff]/
-
-/**
  * 切关键词:按分隔符切、转小写、去重、保序,超上限截断。
- * 单字词留着 —— 它走单字 gram,仍然搜得到。
+ * 词原样拿去 SQL 做包含匹配 —— 不做分词、不做相似度。
  */
 export function splitKeywords(raw: unknown): string[] {
   if (typeof raw !== 'string') return []
@@ -332,119 +319,12 @@ export function splitKeywords(raw: unknown): string[] {
   return words
 }
 
-/** 抽出词里的汉字序列(顺序保留)。 */
-function cjkChars(text: string): string {
-  return text.match(CJK_CHARS)?.join('') ?? ''
-}
-
 /**
- * 文本侧 gram 索引:汉字单字与相邻二元组**都收** —— 这样单字关键词也走同一条命中路径。
- * 只影响池子大小,不影响查询侧分母。
+ * 转义 LIKE 的通配符 —— 关键词里的 % _ \ 必须当普通字符,否则
+ * `100%` 会变成"以 100 开头的一切"。
  */
-export function textGrams(text: string): Set<string> {
-  const chars = cjkChars(text)
-  const grams = new Set<string>()
-  for (let i = 0; i < chars.length; i++) {
-    grams.add(chars[i])
-    if (i + 1 < chars.length) grams.add(chars.slice(i, i + 2))
-  }
-  return grams
-}
-
-/**
- * 查询侧汉字 gram:每个词独立生成 —— 单字词收单字,多字词只收相邻二元组
- * (**不收单词字**,否则单字命中会把覆盖度冲淡)。
- */
-export function queryGrams(keywords: string[]): Set<string> {
-  const grams = new Set<string>()
-  for (const word of keywords) {
-    const chars = cjkChars(word)
-    if (chars.length === 0) continue
-    if (chars.length === 1) {
-      grams.add(chars)
-      continue
-    }
-    for (let i = 0; i + 1 < chars.length; i++) grams.add(chars.slice(i, i + 2))
-  }
-  return grams
-}
-
-/**
- * 查询侧拉丁/数字词:不含汉字的词整条拿去子串匹配(大小写无关)。
- * `xsec_token` / `minGap` / `0.1.6` 这类术语只有这样才查得准;代价是 `0.1` 会把
- * `0.1.2` 与 `0.1.6` 一起拉出来(可接受,摘要一眼能分)。
- */
-export function queryLatinWords(keywords: string[]): string[] {
-  const words: string[] = []
-  for (const word of keywords) {
-    if (CJK_TEST.test(word)) continue
-    const normalized = word.trim()
-    if (normalized.length > 0) words.push(normalized)
-  }
-  return words
-}
-
-/** 一条命中的检索结果。 */
-export interface RoughHit {
-  id: number
-  summary: string
-  created_at: string
-  recalled: number
-  kind: string | null
-  /** 命中的去重 gram 数。 */
-  hits: number
-  /** 覆盖度 = hits / 查询 gram 总数(0~1)。 */
-  cover: number
-}
-
-/** 检索打分入参:候选行(已按 owner 过滤)+ 关键词 + 条数上限。 */
-export interface RoughInput {
-  rows: MemoryRow[]
-  keywords: string[]
-  limit: number
-}
-
-/**
- * 汉字 bigram + 拉丁整词 + 覆盖度打分(零依赖、不分词,中文模糊、英文精确;取代向量召回)。
- *
- * 排序:命中数降序 → 召回数降序 → created_at 降序 → id 降序。
- * ⚠️ cover 与 hits 同一个分母,两者必然同序 —— **score 只是给人看的归一化值**,
- * 主排序就是命中数;新近度与召回数只做同分次序(守住「新鲜度不参与排序」的铁律)。
- */
-export function scoreRough(input: RoughInput): RoughHit[] {
-  const grams = queryGrams(input.keywords)
-  const words = queryLatinWords(input.keywords)
-  const total = grams.size + words.length
-  if (total === 0) return []
-  const hits: RoughHit[] = []
-  for (const row of input.rows) {
-    const plain = `${row.summary ?? ''}\n${row.content ?? ''}`
-    const pool = textGrams(plain)
-    let matched = 0
-    for (const gram of grams) if (pool.has(gram)) matched++
-    if (words.length > 0) {
-      const lower = plain.toLowerCase()
-      for (const word of words) if (lower.includes(word)) matched++
-    }
-    if (matched === 0) continue
-    const cover = matched / total
-    if (matched < MEMORY_ROUGH_MIN_HITS && cover < MEMORY_ROUGH_MIN_COVER) continue
-    hits.push({
-      id: Number(row.id),
-      summary: row.summary ?? '',
-      created_at: String(row.created_at ?? ''),
-      recalled: Number(row.recalled) || 0,
-      kind: row.kind ?? null,
-      hits: matched,
-      cover,
-    })
-  }
-  hits.sort((a, b) =>
-    b.hits - a.hits
-    || b.recalled - a.recalled
-    || (a.created_at === b.created_at ? 0 : a.created_at < b.created_at ? 1 : -1)
-    || b.id - a.id)
-  return hits.slice(0, input.limit)
+export function escapeLike(word: string): string {
+  return word.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')
 }
 
 /** limit 收窄:非数字或 ≤0 → 默认;超上限 → 上限;小数取整。 */
@@ -463,35 +343,32 @@ export function normalizeId(raw: unknown): number | undefined {
 
 /** 检索结果的渲染入参。 */
 export interface RenderRoughInput {
-  hits: RoughHit[]
+  /** SQL 命中的行(已按时间倒序、已截断到 limit)。 */
+  rows: MemoryRow[]
   keywords: string[]
-  /** 生效的 owner 过滤值;undefined = 全桶。 */
-  owner?: string
-  /** 候选条数(过滤后、打分前)—— 用来区分"桶里没记忆"和"没匹配上"。 */
+  owner: string
+  /** 桶内总条数 —— 用来区分"桶里没记忆"和"没匹配上"。 */
   candidates: number
 }
 
 /** 渲染检索结果。**查不到要明说**,别留给模型"好像有"的余地。 */
 export function renderRough(input: RenderRoughInput): string {
-  const { hits, keywords, owner, candidates } = input
-  const scope = owner === undefined ? 'owner=(全部)' : `owner=${owner}`
-  const head = `## 记忆检索 · "${keywords.join(' ')}" · ${scope}`
+  const { rows, keywords, owner, candidates } = input
+  const head = `## 记忆检索 · "${keywords.join(' ')}" · owner=${owner}`
   if (candidates === 0) return `${head}\n该桶还没有记忆。先用 \`roroko_mem_edit\` op=add 落一条。`
-  if (hits.length === 0) {
-    return `${head}\n没有匹配上的记忆(候选 ${candidates} 条)—— 是关键词没对上,不等于没有。\n`
-      + '换更贴的词,或用 `roroko_mem_date` 按日期回查。**别据此编造记忆。**'
+  if (rows.length === 0) {
+    return `${head}\n没有匹配上的记忆(桶内 ${candidates} 条)—— 关键词是全都要命中的,少给一个词再试。\n`
+      + '也可以改用 `roroko_mem_date` 按日期回查。**别据此编造记忆。**'
   }
   const lines = [
     head,
-    `命中 ${hits.length} 条 · 候选 ${candidates} 条`,
+    `命中 ${rows.length} 条 · 桶内 ${candidates} 条`,
     '',
-    '| id | 时间 | 命中 | 覆盖 | 召回 | 摘要 |',
-    '|---|---|---|---|---|---|',
+    '| id | 时间 | 类别 | 摘要 |',
+    '|---|---|---|---|',
   ]
-  for (const hit of hits) {
-    const stamp = hit.created_at
-    const short = stamp.length >= 16 ? stamp.slice(5, 16) : stamp
-    lines.push(`| ${hit.id} | ${short} | ${hit.hits} | ${hit.cover.toFixed(3)} | ${hit.recalled} | ${cell(hit.summary)} |`)
+  for (const row of rows) {
+    lines.push(`| ${row.id} | ${shortStamp(row.created_at)} | ${cell(row.kind)} | ${cell(row.summary)} |`)
   }
   lines.push('', '要看完整内容用 `roroko_mem_id`;摘要够判断就别多取一次。')
   return lines.join('\n')
@@ -500,26 +377,27 @@ export function renderRough(input: RenderRoughInput): string {
 /** 按 id 取全文的渲染入参。 */
 export interface RenderIdInput {
   row: MemoryRow
-  /** 本次取用后的召回计数(库里已经 +1,渲染要跟库一致)。 */
-  recalled: number
 }
 
 /** 渲染单条记忆全文(含 provenance,方便回会话原文)。 */
 export function renderId(input: RenderIdInput): string {
-  const { row, recalled } = input
+  const { row } = input
   const flags = row.reflected_at === null || row.reflected_at === '' || row.reflected_at === undefined
     ? '未反思'
     : `已反思 ${row.reflected_at}`
   const lines = [
-    `## 记忆 #${row.id} · owner=${row.owner} · ${row.created_at} CST · 召回 ${recalled} · ${flags}`,
+    `## 记忆 #${row.id} · owner=${row.owner} · ${row.created_at} CST · ${flags}`,
   ]
-  if (typeof row.kind === 'string' && row.kind.length > 0) lines.push(`kind: ${row.kind}`)
   if (typeof row.source === 'string' && row.source.length > 0) lines.push(`source: ${row.source}`)
   lines.push('', row.content ?? '', '', `summary: ${row.summary}`)
   return lines.join('\n')
 }
 
-/** 建表语句(设计稿 §四原文;幂等,每次开库都跑一遍)。 */
+/**
+ * 建表语句(设计稿 §四原文;幂等,每次开库都跑一遍)。
+ * ⚠️ `recalled` 列仍然保留:2026-09-21 删掉了召回计数逻辑,但**不动表结构** ——
+ * 老库不需要迁移,新库多一个没人读的列,代价为零。
+ */
 export const MEMORY_DDL: string[] = [
   `CREATE TABLE IF NOT EXISTS memory (
   id            INTEGER PRIMARY KEY,

@@ -201,7 +201,7 @@ eq(
 // 接上运行面:与子插件注册的是同一个模块级对象
 dreamRuntime.config = {
   enabled: true, intervalMs: 14400000, batch: 20,
-  provider: 'deepseek', model: 'deepseek-chat', maxTokens: 2048, logDir: '',
+  provider: 'deepseek', model: 'deepseek-chat',
 }
 let dreamCalls = 0
 dreamRuntime.run = async () => {

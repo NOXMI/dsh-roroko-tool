@@ -182,17 +182,18 @@ GET  /roroko-tool/presets  → 扫 $DSH_HOME/.agent-presets 列出 preset 卡片
 
 ### 5.6 经历记忆（memory）
 
-- `roroko_mem_edit` **写入与反思**：`op=add` 记一条（`content` 初摘要 + `summary` 二次摘要 + `owner` 分桶（`dev` / `persona`），`created_at` 由服务端按 **CST+0800** 生成）
-- `roroko_mem_edit` `op=reflect` **反思已有那条**（`id`）：**整条覆盖 `content`** + 刷 `reflected_at`，`summary` 不传则保留原样，回执给「字数 旧 → 新」；`owner` / `kind` / `source` / `recalled` 一概不动。**观点变了或出现矛盾时用 `add` 另记一条 —— 不覆盖**（保留矛盾，不消解）
+- `roroko_mem_edit` **写入与反思**：`op=add` 记一条（`content` 初摘要 + `summary` 二次摘要，`created_at` 由服务端按 **CST+0800** 生成）
+- `roroko_mem_edit` `op=reflect` **反思已有那条**（`id`）：**整条覆盖 `content`** + 刷 `reflected_at`，`summary` 不传则保留原样，回执给「字数 旧 → 新」；`owner` / `kind` / `source` 一概不动。**观点变了或出现矛盾时用 `add` 另记一条 —— 不覆盖**（保留矛盾，不消解）
 - `roroko_mem_date` **按日期回查**：默认区间 = **今天 + 昨天**（会话开始时先调它）；区间为空时**明说"没有记忆"**，不给模型脑补的空间
-- `roroko_mem_rough` **关键词检索**：**汉字走字符 bigram + 覆盖度**、**拉丁/数字词走整词子串**（零向量、不分词，中文模糊、英文精确 —— 理由见下）→ 返回 `id / 时间 / 命中数 / 覆盖度 / 召回数 / 摘要`；`keywords` 空格或逗号分隔（≤8 个词，单字词也认）；**排序 = 命中数降序，召回数与新近度只作同分次序**（不让新鲜度偷偷爬回排序）；相关性下限 = 命中 ≥2 个 gram 或覆盖度 ≥0.5，够不上就**明说"没匹配上"**（跟"桶里没记忆"分两条文案）；命中条 `recalled += 1`
-  - 为什么拉丁词不走 bigram：字符二元组对字母没有区分度（`to`/`en`/`se` 在任何英文段落里都烂大街），实测会把命中糊成一片；改整词子串后拉丁侧 **0 误命中 / 0 漏**，中文侧不受影响
-- `roroko_mem_id` **按 id 取全文**：只在摘要不足以判断时用；返回 `content` 全文 + `source`（回会话原文的唯一凭据）+ 最新召回计数（同样 +1）
+- `roroko_mem_rough` **关键词检索**：**一条 SQL + LIKE 包含匹配**（`content` 或 `summary` 里出现过就算命中）→ 返回 `id / 时间 / 类别 / 摘要`；`keywords` 空格或逗号分隔（≤8 个词，**每个词都要命中**才返回该条）；通配符 `% _ \` **会转义**（不会把 `100%` 当成"以 100 开头的一切"）；查不到就**明说"没匹配上"**（跟"桶里没有记忆"分两条文案）
+- `roroko_mem_id` **按 id 取全文**：只在摘要不足以判断时用；返回 `content` 全文 + `source`（回会话原文的唯一凭据）
 - 独立库，表只有一张 `memory`（默认 `/var/www/api/database/roroko_memory.db`）；**原文不入表**——DSH 会话文件就是原文仓库，`source` 指回去
 - **推只有 `MEMORY.md`**：记忆内容全靠工具**拉取**，不新增系统段注入 → 对 request-cache 零冲击
 - 写入纪律写在**工具描述**里（常驻 schema，每轮可见）：三问判据（人设层已有 → 不记；永久生效 → 去改人设文件；能改变未来某场景行为 → 记成「触发条件 → 应做」）+ 四类必记（边界演变 / 有效与无效的挑逗 / 未完成的钩子 / 自己的失手）
-- `owner` 走白名单式收窄（小写字母数字与 `. _ -`），检索**默认不跨桶**，要看全桶显式传 `owner=all`
+- `owner` 只在 preset config 里配（小写字母数字与 `. _ -` 白名单），**工具面不暴露桶参数** → 一个 preset 只看得到自己那个桶
+- `kind` 只在库里有意义：**只有导入历史流水的脚本会写 `log`**（dream 靠它跳过流水），工具面不暴露分类
 - `reflected_at` 就是**反思作业队列**：待办 = `WHERE reflected_at IS NULL ORDER BY created_at ASC`（`roroko_mem_date` 的「未反思 N」是同一队列的计数）
+- **2026-09-21 减法**（"工具就只是简单的 sqlite 工具"）：检索删掉汉字 bigram 打分 / 覆盖度 / 命中数与排序权重，退回**一条 SQL**；删掉召回计数 `recalled`（列仍留在表里、代码不读写，老库不用迁移）；删掉 `owner=all` 与工具级 `owner` 参数；删掉 `kind` 入参；dream 的 `maxTokens` / `logDir` 从配置项降回内置常量
 
 #### dream —— 趁没对话的时候，让记忆自己消化一遍
 
@@ -200,15 +201,15 @@ GET  /roroko-tool/presets  → 扫 $DSH_HOME/.agent-presets 列出 preset 卡片
 
 - **挑哪些**：`reflected_at` 为空、且 **`kind ≠ log`**（导入的开发日志不算 —— 那是逐字流水，再让模型提炼一遍纯属白烧 token）
 - **什么时候跑**：默认每 **4 小时**一次，一批最多 **20 条**（单条喂进去时截断 300 字）；也可以在设置页点「**立即整理一次**」当场跑
-- **不会乱改**：不新增、不删除、不合并条目；**矛盾不抹平** —— 观点真的变了就另记一条（保留矛盾）；`owner` / `kind` / `source` / `recalled` 一概不动
+- **不会乱改**：不新增、不删除、不合并条目；**矛盾不抹平** —— 观点真的变了就另记一条（保留矛盾）；`owner` / `kind` / `source` 一概不动
 - **跑没跑成看什么**：只看 `reflected_at` 有没有**真落下去** —— 没落就不推进队列，下次原样再跑（回执会明说「完成，反思 N 条」还是「**没有记忆变更**」）
 - **花不花钱**：**没配 `provider` + `model` 就静默跳过**（不报错、也不烧 token）；队列为空时**一次模型都不调**
 - **去哪看结果**：`roroko_mem_date` 的「未反思 N」跟着减；每次整理的审计落在 `<库目录>/dream-log/<时间>.md`，**只记字数 diff，不记模型自述**（是文件说了什么，不是模型说自己干了什么）
-- ⚠️ **`maxTokens` 默认 8192**：带 thinking 的推理模型（如 `deepseek-v4-flash`）在 2048 下会把额度全花在 reasoning 上、**正文一个字都不吐** —— 换模型时留意这条
+- ⚠️ **单次调用的 `maxTokens` 是内置常量 8192**（不再是配置项）：带 thinking 的推理模型（如 `deepseek-v4-flash`）在 2048 下会把额度全花在 reasoning 上、**正文一个字都不吐** —— 换模型时留意这条
 
 **怎么开**（两种都行，面板优先）
 
-- config 形状：`dream: { enabled, intervalMs, batch, provider, model, maxTokens, logDir }` —— 全部可选；`provider` + `model` 不配齐就等于没开
+- config 形状：`dream: { enabled, intervalMs, batch, provider, model }` —— 全部可选；`provider` + `model` 不配齐就等于没开
 - **设置页「经历记忆与 dream」分区**：开关 / provider / model / 间隔 / 批量 + 「立即整理一次」+ 状态回读（`GET/POST /roroko-tool/dream`）。面板值存 state **覆盖层**、字段级叠在 preset config 之上（**默认值一个都不写进 state**，免得把 config 压住）；**provider / model 改完立刻生效**，间隔改动在下一轮重新计时时生效 —— 都不必重启宿主
 
 ---

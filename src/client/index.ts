@@ -127,8 +127,6 @@ interface DreamWire {
   batch?: number
   provider?: string
   model?: string
-  maxTokens?: number
-  logDir?: string
 }
 
 /** GET /roroko-tool/dream 的运行时状态(与 host route 一致)。 */
@@ -141,7 +139,6 @@ interface DreamStatusWire {
   model: string
   intervalMs: number
   batch: number
-  logDir: string
   running: boolean
   last: { note: string; changed: number[]; queued: number; skippedLogs: number; at: string } | null
 }
