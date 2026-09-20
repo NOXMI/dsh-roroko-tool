@@ -52,6 +52,20 @@ eq(form.DREAM_ENTRY_MAX, 300, '单条截断 300(照抄 nanobot)')
 eq(form.DREAM_DEFAULT_BATCH, 20, '批量 20(照抄 nanobot)')
 eq(form.DREAM_DEFAULT_INTERVAL_MS, 4 * 60 * 60 * 1000, '默认间隔 4 小时(照抄 nanobot)')
 
+// ── 二之二、配置归一化(★ 空串必须回落默认,不是夹到下限)
+const cfgEmpty = form.normalizeDreamConfig({})
+eq(cfgEmpty.intervalMs, 4 * 60 * 60 * 1000, '★ 未给 intervalMs → 默认 4 小时(不是下限 5 分钟)')
+eq(cfgEmpty.batch, 20, '★ 未给 batch → 默认 20(不是下限 1)')
+eq(cfgEmpty.maxTokens, 2048, '未给 maxTokens → 默认 2048')
+eq(form.normalizeDreamConfig(undefined).intervalMs, 4 * 60 * 60 * 1000, 'undefined 配置 → 全默认')
+eq(form.normalizeDreamConfig({ intervalMs: '7200000' }).intervalMs, 7200000, '字符串数字也认')
+eq(form.normalizeDreamConfig({ intervalMs: '' }).intervalMs, 4 * 60 * 60 * 1000, '空串 → 默认')
+eq(form.normalizeDreamConfig({ intervalMs: 1 }).intervalMs, 300000, '过小值夹到下限')
+eq(form.normalizeDreamConfig({ intervalMs: 99 * 60 * 60 * 1000 }).intervalMs, 24 * 60 * 60 * 1000, '过大值夹到上限')
+eq(form.normalizeDreamConfig({ batch: 999 }).batch, 50, '批量夹到上限')
+eq(form.normalizeDreamConfig({ provider: ' deepseek ' }).provider, 'deepseek', 'provider 去空白')
+eq(form.normalizeDreamConfig({ enabled: false }).enabled, false, 'enabled 照收')
+
 // ── 三、回复解析 ────────────────────────────────────────────────────────────
 eq(
   form.parseDreamReply('[{"id":2,"content":"新正文","summary":"新摘要"}]', [2]).edits,
