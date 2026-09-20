@@ -78,17 +78,19 @@ function applyDream(ctx: Context, dbPath: string, owner: string, config: RorokoM
   const resolveDream = (): DreamConfig => normalizeDreamConfig({ ...presetDream, ...loadStateSync().dream })
 
   if (!resolveDream().enabled) return
-  // 进程级去重:同一个库只跑一份定时器(插件按 preset/会话装配,apply 可能被调多次)
-  if (!claimDreamStart(dbPath)) {
-    ctx.logger?.info?.(`[roroko-memory] dream 已在管 ${dbPath},本次不重复启动定时器`)
-    return
-  }
   const get = (key: string): unknown => (ctx as unknown as { get?: (k: string) => unknown }).get?.(key)
   const agents = get('agents') as DreamAgentsLike | undefined
   const sessions = get('sessions') as DreamSessionsLike | undefined
   const presets = get('agentPresets') as DreamPresetsLike | undefined
+  // ⚠️ 顺序要紧:**先确认能起会话,再认领启动权** —— 反过来会让一次"服务还没就绪"的
+  // 装配白占掉认领名额,之后所有装配都被去重闸挡住,dream 永远接不上(2026-09-21 踩到)。
   if (agents === undefined || sessions === undefined) {
     ctx.logger?.info?.('[roroko-memory] dream 未启动:agents/sessions 服务不可用')
+    return
+  }
+  // 进程级去重:同一个库只跑一份定时器(插件按 preset/会话装配,apply 可能被调多次)
+  if (!claimDreamStart(dbPath)) {
+    ctx.logger?.info?.(`[roroko-memory] dream 已在管 ${dbPath},本次不重复启动定时器`)
     return
   }
   if (presets === undefined) {

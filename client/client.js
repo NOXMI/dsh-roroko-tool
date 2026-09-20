@@ -1978,7 +1978,7 @@ window.__ModuleLoader__.load({
 					marginTop: 10,
 					fontSize: "0.8em",
 					color: "var(--dsw-text-secondary, #888)"
-				} }, status === null ? statusError === null ? "状态: 读取中…" : `状态读取失败: ${statusError}` : `状态: ${status.enabled ? "已接上" : "未接上(插件未声明 / agents·sessions 不可用)"} · 模型 ${status.configured ? `${status.provider}/${status.model}` : "(未配,每次跳过)"} · preset ${status.preset.length > 0 ? status.preset : "(部署默认)"} · 间隔 ${Math.round(status.intervalMs / 36e5)} 小时 · 批量 ${status.batch}${status.running ? " · 正在跑" : ""}`),
+				} }, status === null ? statusError === null ? "状态: 读取中…" : `状态读取失败: ${statusError}` : `状态: ${status.enabled ? "已接上" : "未接上"}${status.enabled ? "" : status.hint ?? "(插件未声明 / agents·sessions 不可用)"} · 模型 ${status.configured ? `${status.provider}/${status.model}` : "(未配,每次跳过)"} · preset ${status.preset.length > 0 ? status.preset : "(部署默认)"} · 间隔 ${Math.round(status.intervalMs / 36e5)} 小时 · 批量 ${status.batch}${status.running ? " · 正在跑" : ""}`),
 				last !== null ? (0, react.createElement)("div", { style: {
 					marginTop: 4,
 					fontSize: "0.8em",

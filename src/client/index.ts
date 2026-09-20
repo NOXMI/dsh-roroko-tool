@@ -146,6 +146,8 @@ interface DreamStatusWire {
   preset: string
   cwd: string
   running: boolean
+  /** 未接上的原因(host 给的提示)。 */
+  hint?: string
   last: { note: string; changed: number[]; queued: number; skippedLogs: number; at: string } | null
 }
 
@@ -1025,7 +1027,8 @@ function DreamPanel(props: {
       h('div', { style: { marginTop: 10, fontSize: '0.8em', color: 'var(--dsw-text-secondary, #888)' } },
         status === null
           ? (statusError === null ? '状态: 读取中…' : `状态读取失败: ${statusError}`)
-          : `状态: ${status.enabled ? '已接上' : '未接上(插件未声明 / agents·sessions 不可用)'}`
+          : `状态: ${status.enabled ? '已接上' : '未接上'}`
+            + `${status.enabled ? '' : (status.hint ?? '(插件未声明 / agents·sessions 不可用)')}`
             + ` · 模型 ${status.configured ? `${status.provider}/${status.model}` : '(未配,每次跳过)'}`
             + ` · preset ${status.preset.length > 0 ? status.preset : '(部署默认)'}`
             + ` · 间隔 ${Math.round(status.intervalMs / 3600000)} 小时 · 批量 ${status.batch}`

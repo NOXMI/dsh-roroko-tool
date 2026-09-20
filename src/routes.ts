@@ -330,6 +330,10 @@ export function registerStateRoutes(webServer: WebServerLike): () => void {
             preset: config?.preset ?? '',
             cwd: config?.cwd ?? '',
             running: dreamRuntime.running,
+            // 未接上时的最常见原因:宿主重启后还没有任何会话装配过声明 roroko-memory 的 preset
+            hint: config === undefined
+              ? '定时器未启动:还没有会话装配过 roroko-memory(新建或打开一个会话即可;dream 的接线跟着 preset 装配走)'
+              : '',
             last: dreamRuntime.last ?? null,
           })
           return
