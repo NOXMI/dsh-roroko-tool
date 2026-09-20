@@ -32,3 +32,27 @@ export interface DateQuery {
  * 区间非法时返回人话错误,不抛 —— 工具执行失败会污染整轮。
  */
 export declare function runDate(db: DatabaseSync, query: DateQuery, now: Date): string;
+/** 关键词检索入参。 */
+export interface RoughQuery {
+    keywords?: unknown;
+    /** undefined = 全部桶。 */
+    owner?: string;
+    limit?: unknown;
+}
+/**
+ * 关键词模糊检索(字符 bigram + 覆盖度):候选先按 owner 全取回来,再在内存里打分。
+ * 记忆量级是千级,全取比在 SQL 里做匹配更简单,也把打分逻辑留在纯函数里好测。
+ * 关键词切不出东西时返回人话,不抛(工具抛错会污染整轮)。
+ */
+export declare function runRough(db: DatabaseSync, query: RoughQuery): string;
+/** 按 id 取全文入参。 */
+export interface IdQuery {
+    id?: unknown;
+    /** 有值就校验归属;不给 = 不限桶(id 全局唯一,调用方负责拿对)。 */
+    owner?: string;
+}
+/**
+ * 按 id 取一条的完整内容(摘要不足以判断时才用),顺带 recalled += 1。
+ * 查不到返回人话,不抛。
+ */
+export declare function runId(db: DatabaseSync, query: IdQuery): string;

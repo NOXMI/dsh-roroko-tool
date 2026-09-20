@@ -24,7 +24,7 @@ DSH 官方对「工作区指令」只提供一条路：把 `AGENTS.md` 追加到
 | `.` | `roroko-tool` | host 入口：挂载 `GET/POST /roroko-tool/state` 与 `GET /roroko-tool/presets` |
 | `./preinject` | `roroko-preinject` | **指令注入器**（系统段 + 消息段两条腿） |
 | `./data` | `roroko-data` | 素材库工具集：`roroko_datas_query` / `roroko_datas_lookup` / `roroko_datas_register` / `roroko_datas_state` |
-| `./memory` | `roroko-memory` | **经历记忆**：`roroko_mem_edit`（记一条）/ `roroko_mem_date`（按日期回查，默认今天 + 昨天） |
+| `./memory` | `roroko-memory` | **经历记忆**：`roroko_mem_edit`（记一条）/ `roroko_mem_date`（按日期回查，默认今天 + 昨天）/ `roroko_mem_rough`（关键词检索）/ `roroko_mem_id`（按 id 取全文） |
 | `./warn` | `roroko-warn` | 超量收敛警告（**尚未实现**） |
 | `./client` | — | Web 设置页（含 `-呻吟_X-` 展开的显示层节点） |
 
@@ -177,6 +177,8 @@ GET  /roroko-tool/presets  → 扫 $DSH_HOME/.agent-presets 列出 preset 卡片
 
 - `roroko_mem_edit` **记一条**（`op=add`）：`content` 初摘要 + `summary` 二次摘要 + `owner` 分桶（`dev` / `persona`），`created_at` 由服务端按 **CST+0800** 生成；反思（`reflect`）尚未开放
 - `roroko_mem_date` **按日期回查**：默认区间 = **今天 + 昨天**（会话开始时先调它）；区间为空时**明说"没有记忆"**，不给模型脑补的空间
+- `roroko_mem_rough` **关键词检索**：字符 **bigram + 覆盖度**打分（零向量、不分词，中文直接可用）→ 返回 `id / 时间 / 命中数 / 覆盖度 / 召回数 / 摘要`；`keywords` 空格或逗号分隔（≤8 个词，单字词也认，标点一律剔除后再取二元组）；**排序 = 命中数降序，召回数与新近度只作同分次序**（不让新鲜度偷偷爬回排序）；相关性下限 = 命中 ≥2 个 gram 或覆盖度 ≥0.5，够不上就**明说"没匹配上"**（跟"桶里没记忆"分两条文案）；命中条 `recalled += 1`
+- `roroko_mem_id` **按 id 取全文**：只在摘要不足以判断时用；返回 `content` 全文 + `source`（回会话原文的唯一凭据）+ 最新召回计数（同样 +1）
 - 独立库，表只有一张 `memory`（默认 `/var/www/api/database/roroko_memory.db`）；**原文不入表**——DSH 会话文件就是原文仓库，`source` 指回去
 - **推只有 `MEMORY.md`**：记忆内容全靠工具**拉取**，不新增系统段注入 → 对 request-cache 零冲击
 - 写入纪律写在**工具描述**里（常驻 schema，每轮可见）：三问判据（人设层已有 → 不记；永久生效 → 去改人设文件；能改变未来某场景行为 → 记成「触发条件 → 应做」）+ 四类必记（边界演变 / 有效与无效的挑逗 / 未完成的钩子 / 自己的失手）

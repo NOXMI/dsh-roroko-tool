@@ -86,6 +86,7 @@ export interface MemoryRow {
     reflected_at: string | null;
     recalled: number;
     kind: string | null;
+    source?: string | null;
 }
 /** 写入回执:'已记 #id · 时间 · owner · kind'。 */
 export declare function renderAddResult(input: MemoryAddInput, id: number, createdAt: string): string;
@@ -102,6 +103,80 @@ export interface RenderDateInput {
  * 标记列只标「未反思」(reflected_at 为空),它就是将来的反思作业队列。
  */
 export declare function renderDate(input: RenderDateInput): string;
+/** 关键词词数上限(词越多命中越稀,靠相关性下限挡噪声)。 */
+export declare const MEMORY_ROUGH_MAX_KEYWORDS = 8;
+/** 检索默认返回条数。 */
+export declare const MEMORY_ROUGH_DEFAULT_LIMIT = 5;
+/** 检索返回条数上限。 */
+export declare const MEMORY_ROUGH_MAX_LIMIT = 20;
+/** 相关性下限:命中的去重 gram 数。 */
+export declare const MEMORY_ROUGH_MIN_HITS = 2;
+/** 相关性下限:覆盖度(与 MEMORY_ROUGH_MIN_HITS 命中其一即放行)。 */
+export declare const MEMORY_ROUGH_MIN_COVER = 0.5;
+/**
+ * 切关键词:按分隔符切、转小写、去重、保序,超上限截断。
+ * 单字词留着 —— 它走单字 gram,仍然搜得到。
+ */
+export declare function splitKeywords(raw: unknown): string[];
+/**
+ * 文本侧 gram 索引:单字与相邻二元组**都收** —— 这样单字关键词也走同一条命中路径。
+ * 只影响池子大小,不影响查询侧分母。
+ */
+export declare function textGrams(text: string): Set<string>;
+/**
+ * 查询侧 gram:每个词独立生成 —— 单字词收单字,多字词只收相邻二元组
+ * (**不收单词字**,否则单字命中会把覆盖度冲淡)。
+ */
+export declare function queryGrams(keywords: string[]): Set<string>;
+/** 一条命中的检索结果。 */
+export interface RoughHit {
+    id: number;
+    summary: string;
+    created_at: string;
+    recalled: number;
+    kind: string | null;
+    /** 命中的去重 gram 数。 */
+    hits: number;
+    /** 覆盖度 = hits / 查询 gram 总数(0~1)。 */
+    cover: number;
+}
+/** 检索打分入参:候选行(已按 owner 过滤)+ 关键词 + 条数上限。 */
+export interface RoughInput {
+    rows: MemoryRow[];
+    keywords: string[];
+    limit: number;
+}
+/**
+ * 字符 bigram + 覆盖度打分(零依赖、不分词、中文直接可用;取代向量召回)。
+ *
+ * 排序:命中数降序 → 召回数降序 → created_at 降序 → id 降序。
+ * ⚠️ cover 与 hits 同一个分母,两者必然同序 —— **score 只是给人看的归一化值**,
+ * 主排序就是命中数;新近度与召回数只做同分次序(守住「新鲜度不参与排序」的铁律)。
+ */
+export declare function scoreRough(input: RoughInput): RoughHit[];
+/** limit 收窄:非数字或 ≤0 → 默认;超上限 → 上限;小数取整。 */
+export declare function normalizeLimit(raw: unknown): number;
+/** id 收窄:正整数(兼容模型传字符串数字);不合法返回 undefined。 */
+export declare function normalizeId(raw: unknown): number | undefined;
+/** 检索结果的渲染入参。 */
+export interface RenderRoughInput {
+    hits: RoughHit[];
+    keywords: string[];
+    /** 生效的 owner 过滤值;undefined = 全桶。 */
+    owner?: string;
+    /** 候选条数(过滤后、打分前)—— 用来区分"桶里没记忆"和"没匹配上"。 */
+    candidates: number;
+}
+/** 渲染检索结果。**查不到要明说**,别留给模型"好像有"的余地。 */
+export declare function renderRough(input: RenderRoughInput): string;
+/** 按 id 取全文的渲染入参。 */
+export interface RenderIdInput {
+    row: MemoryRow;
+    /** 本次取用后的召回计数(库里已经 +1,渲染要跟库一致)。 */
+    recalled: number;
+}
+/** 渲染单条记忆全文(含 provenance,方便回会话原文)。 */
+export declare function renderId(input: RenderIdInput): string;
 /** 建表语句(设计稿 §四原文;幂等,每次开库都跑一遍)。 */
 export declare const MEMORY_DDL: string[];
 /** 开库即生效的连接级 pragma:WAL 抗并发、busy_timeout 别一撞就抛。 */

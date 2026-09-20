@@ -182,6 +182,7 @@ export interface MemoryRow {
   reflected_at: string | null
   recalled: number
   kind: string | null
+  source?: string | null
 }
 
 /** 表格单元格:竖线会打断 markdown 表,换成斜杠。 */
@@ -233,6 +234,210 @@ export function renderDate(input: RenderDateInput): string {
     const flags = row.reflected_at === null || row.reflected_at === '' ? '未反思' : ''
     lines.push(`| ${row.id} | ${short} | ${cell(row.kind)} | ${cell(row.summary)} | ${flags} |`)
   }
+  return lines.join('\n')
+}
+
+/** 关键词词数上限(词越多命中越稀,靠相关性下限挡噪声)。 */
+export const MEMORY_ROUGH_MAX_KEYWORDS = 8
+
+/** 检索默认返回条数。 */
+export const MEMORY_ROUGH_DEFAULT_LIMIT = 5
+
+/** 检索返回条数上限。 */
+export const MEMORY_ROUGH_MAX_LIMIT = 20
+
+/** 相关性下限:命中的去重 gram 数。 */
+export const MEMORY_ROUGH_MIN_HITS = 2
+
+/** 相关性下限:覆盖度(与 MEMORY_ROUGH_MIN_HITS 命中其一即放行)。 */
+export const MEMORY_ROUGH_MIN_COVER = 0.5
+
+/** 关键词分隔符:空白与中英文逗号顿号分号斜杠竖线。 */
+const KEYWORD_SEP = /[\s,，、;；/|]+/
+
+/** 参与 gram 的字符:小写字母数字 + CJK 基本区;标点空白 emoji 一律剔除,免得污染二元组。 */
+const GRAM_CHARS = /[0-9a-z\u4e00-\u9fff]/g
+
+/**
+ * 切关键词:按分隔符切、转小写、去重、保序,超上限截断。
+ * 单字词留着 —— 它走单字 gram,仍然搜得到。
+ */
+export function splitKeywords(raw: unknown): string[] {
+  if (typeof raw !== 'string') return []
+  const seen = new Set<string>()
+  const words: string[] = []
+  for (const part of raw.split(KEYWORD_SEP)) {
+    const word = part.trim().toLowerCase()
+    if (word.length === 0 || seen.has(word)) continue
+    seen.add(word)
+    words.push(word)
+    if (words.length >= MEMORY_ROUGH_MAX_KEYWORDS) break
+  }
+  return words
+}
+
+/** 归一化并抽出参与 gram 的字符(顺序保留)。 */
+function gramChars(text: string): string {
+  return text.toLowerCase().match(GRAM_CHARS)?.join('') ?? ''
+}
+
+/**
+ * 文本侧 gram 索引:单字与相邻二元组**都收** —— 这样单字关键词也走同一条命中路径。
+ * 只影响池子大小,不影响查询侧分母。
+ */
+export function textGrams(text: string): Set<string> {
+  const chars = gramChars(text)
+  const grams = new Set<string>()
+  for (let i = 0; i < chars.length; i++) {
+    grams.add(chars[i])
+    if (i + 1 < chars.length) grams.add(chars.slice(i, i + 2))
+  }
+  return grams
+}
+
+/**
+ * 查询侧 gram:每个词独立生成 —— 单字词收单字,多字词只收相邻二元组
+ * (**不收单词字**,否则单字命中会把覆盖度冲淡)。
+ */
+export function queryGrams(keywords: string[]): Set<string> {
+  const grams = new Set<string>()
+  for (const word of keywords) {
+    const chars = gramChars(word)
+    if (chars.length === 0) continue
+    if (chars.length === 1) {
+      grams.add(chars)
+      continue
+    }
+    for (let i = 0; i + 1 < chars.length; i++) grams.add(chars.slice(i, i + 2))
+  }
+  return grams
+}
+
+/** 一条命中的检索结果。 */
+export interface RoughHit {
+  id: number
+  summary: string
+  created_at: string
+  recalled: number
+  kind: string | null
+  /** 命中的去重 gram 数。 */
+  hits: number
+  /** 覆盖度 = hits / 查询 gram 总数(0~1)。 */
+  cover: number
+}
+
+/** 检索打分入参:候选行(已按 owner 过滤)+ 关键词 + 条数上限。 */
+export interface RoughInput {
+  rows: MemoryRow[]
+  keywords: string[]
+  limit: number
+}
+
+/**
+ * 字符 bigram + 覆盖度打分(零依赖、不分词、中文直接可用;取代向量召回)。
+ *
+ * 排序:命中数降序 → 召回数降序 → created_at 降序 → id 降序。
+ * ⚠️ cover 与 hits 同一个分母,两者必然同序 —— **score 只是给人看的归一化值**,
+ * 主排序就是命中数;新近度与召回数只做同分次序(守住「新鲜度不参与排序」的铁律)。
+ */
+export function scoreRough(input: RoughInput): RoughHit[] {
+  const grams = queryGrams(input.keywords)
+  if (grams.size === 0) return []
+  const hits: RoughHit[] = []
+  for (const row of input.rows) {
+    const pool = textGrams(`${row.summary ?? ''}\n${row.content ?? ''}`)
+    let matched = 0
+    for (const gram of grams) if (pool.has(gram)) matched++
+    if (matched === 0) continue
+    const cover = matched / grams.size
+    if (matched < MEMORY_ROUGH_MIN_HITS && cover < MEMORY_ROUGH_MIN_COVER) continue
+    hits.push({
+      id: Number(row.id),
+      summary: row.summary ?? '',
+      created_at: String(row.created_at ?? ''),
+      recalled: Number(row.recalled) || 0,
+      kind: row.kind ?? null,
+      hits: matched,
+      cover,
+    })
+  }
+  hits.sort((a, b) =>
+    b.hits - a.hits
+    || b.recalled - a.recalled
+    || (a.created_at === b.created_at ? 0 : a.created_at < b.created_at ? 1 : -1)
+    || b.id - a.id)
+  return hits.slice(0, input.limit)
+}
+
+/** limit 收窄:非数字或 ≤0 → 默认;超上限 → 上限;小数取整。 */
+export function normalizeLimit(raw: unknown): number {
+  const value = typeof raw === 'number' ? raw : Number(String(raw ?? '').trim())
+  if (!Number.isFinite(value) || value <= 0) return MEMORY_ROUGH_DEFAULT_LIMIT
+  return Math.min(Math.floor(value), MEMORY_ROUGH_MAX_LIMIT)
+}
+
+/** id 收窄:正整数(兼容模型传字符串数字);不合法返回 undefined。 */
+export function normalizeId(raw: unknown): number | undefined {
+  const value = typeof raw === 'number' ? raw : Number(String(raw ?? '').trim())
+  if (!Number.isInteger(value) || value <= 0) return undefined
+  return value
+}
+
+/** 检索结果的渲染入参。 */
+export interface RenderRoughInput {
+  hits: RoughHit[]
+  keywords: string[]
+  /** 生效的 owner 过滤值;undefined = 全桶。 */
+  owner?: string
+  /** 候选条数(过滤后、打分前)—— 用来区分"桶里没记忆"和"没匹配上"。 */
+  candidates: number
+}
+
+/** 渲染检索结果。**查不到要明说**,别留给模型"好像有"的余地。 */
+export function renderRough(input: RenderRoughInput): string {
+  const { hits, keywords, owner, candidates } = input
+  const scope = owner === undefined ? 'owner=(全部)' : `owner=${owner}`
+  const head = `## 记忆检索 · "${keywords.join(' ')}" · ${scope}`
+  if (candidates === 0) return `${head}\n该桶还没有记忆。先用 \`roroko_mem_edit\` op=add 落一条。`
+  if (hits.length === 0) {
+    return `${head}\n没有匹配上的记忆(候选 ${candidates} 条)—— 是关键词没对上,不等于没有。\n`
+      + '换更贴的词,或用 `roroko_mem_date` 按日期回查。**别据此编造记忆。**'
+  }
+  const lines = [
+    head,
+    `命中 ${hits.length} 条 · 候选 ${candidates} 条`,
+    '',
+    '| id | 时间 | 命中 | 覆盖 | 召回 | 摘要 |',
+    '|---|---|---|---|---|---|',
+  ]
+  for (const hit of hits) {
+    const stamp = hit.created_at
+    const short = stamp.length >= 16 ? stamp.slice(5, 16) : stamp
+    lines.push(`| ${hit.id} | ${short} | ${hit.hits} | ${hit.cover.toFixed(3)} | ${hit.recalled} | ${cell(hit.summary)} |`)
+  }
+  lines.push('', '要看完整内容用 `roroko_mem_id`;摘要够判断就别多取一次。')
+  return lines.join('\n')
+}
+
+/** 按 id 取全文的渲染入参。 */
+export interface RenderIdInput {
+  row: MemoryRow
+  /** 本次取用后的召回计数(库里已经 +1,渲染要跟库一致)。 */
+  recalled: number
+}
+
+/** 渲染单条记忆全文(含 provenance,方便回会话原文)。 */
+export function renderId(input: RenderIdInput): string {
+  const { row, recalled } = input
+  const flags = row.reflected_at === null || row.reflected_at === '' || row.reflected_at === undefined
+    ? '未反思'
+    : `已反思 ${row.reflected_at}`
+  const lines = [
+    `## 记忆 #${row.id} · owner=${row.owner} · ${row.created_at} CST · 召回 ${recalled} · ${flags}`,
+  ]
+  if (typeof row.kind === 'string' && row.kind.length > 0) lines.push(`kind: ${row.kind}`)
+  if (typeof row.source === 'string' && row.source.length > 0) lines.push(`source: ${row.source}`)
+  lines.push('', row.content ?? '', '', `summary: ${row.summary}`)
   return lines.join('\n')
 }
 
