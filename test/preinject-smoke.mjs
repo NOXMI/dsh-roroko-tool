@@ -87,7 +87,7 @@ const text = out?.messages?.[0]?.content?.[0]?.text ?? ''
 check(out?.kind === 'enter', '进入 step 的决策被保留')
 check(out?.messages?.length === 1, '注入了一条 user 消息')
 check(text.includes('[roroko-preinject]') && text.includes('TEST-AGENTS-2'), '消息带签名与工作区指令')
-check(out?.messages?.[0]?.source?.plugin === 'roroko-preinject', '消息 source 标了插件名')
+check(out?.messages?.[0]?.source?.kind === 'roroko-preinject', '消息 source 标了插件名')
 
 const again = await preStep?.(session, decide)
 check(again?.messages?.length === 0, '同一会话第二次不再重复注入')
@@ -95,3 +95,4 @@ check(again?.messages?.length === 0, '同一会话第二次不再重复注入')
 await rm(root, { recursive: true, force: true })
 console.log(problems.length === 0 ? '\n全部通过' : `\n${problems.length} 项未通过`)
 process.exit(problems.length === 0 ? 0 : 1)
+

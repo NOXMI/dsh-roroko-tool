@@ -226,8 +226,9 @@ export function mount(ctx: Context, rawConfig: PreinjectConfig = {}): void {
     if (sessionId !== undefined) await markInjected(file, sessionId)
     const message = createUserMessage({
       content: [{ type: 'text', text }],
-      source: { kind: 'plugin', plugin: moduleName },
+      source: { kind: moduleName },
     })
     return { ...decision, messages: [message, ...(decision.messages ?? [])] }
   })
 }
+
