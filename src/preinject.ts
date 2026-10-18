@@ -18,6 +18,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Context } from '@deepseek-ai/cordis'
+import { registerMount } from './state.js'
 
 /** 子模块标识：只用于日志与消息来源签名，不是独立插件。 */
 export const moduleName = 'roroko-preinject'
@@ -191,6 +192,16 @@ export function mount(ctx: Context, rawConfig: PreinjectConfig = {}): void {
   const file = stateFile(root)
 
   surface.effect(
+    () => registerMount({
+      root,
+      identityFiles: config.identityFiles ?? DEFAULTS.identityFiles,
+      workspaceFiles: config.workspaceFiles ?? DEFAULTS.workspaceFiles,
+      includeWorkspace: config.includeWorkspace === true,
+    }),
+    'preinject.status()',
+  )
+
+  surface.effect(
     () => surface.systemPrompt.variable(VARIABLE, () => systemText(config, root)),
     'preinject.variable()',
   )
@@ -231,5 +242,6 @@ export function mount(ctx: Context, rawConfig: PreinjectConfig = {}): void {
     return { ...decision, messages: [message, ...(decision.messages ?? [])] }
   })
 }
+
 
 

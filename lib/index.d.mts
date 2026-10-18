@@ -21,6 +21,8 @@ interface PreinjectConfig {
 //#endregion
 //#region src/index.d.ts
 declare const name = "roroko-tool";
+/** 本包版本（设置页显示用）。 */
+declare const version = "0.1.0";
 /** 插件配置：一层桶对应一个子模块；桶设成 false 即不挂载。 */
 interface RorokoToolConfig {
   preinject?: PreinjectConfig | boolean;
@@ -32,4 +34,4 @@ interface RorokoToolConfig {
  */
 declare function apply(ctx: Context, config?: RorokoToolConfig): void;
 //#endregion
-export { RorokoToolConfig, apply, name };
+export { RorokoToolConfig, apply, name, version };

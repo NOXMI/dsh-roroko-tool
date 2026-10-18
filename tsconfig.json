@@ -10,8 +10,11 @@
     "declarationDir": "lib/types",
     "skipLibCheck": true,
     "esModuleInterop": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
     "types": ["node"]
   },
   "include": ["src"],
   "exclude": ["src/client"]
 }
+

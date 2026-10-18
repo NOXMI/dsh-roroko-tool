@@ -13,11 +13,18 @@
  *
  * 子模块只在配置桶**存在**时才挂载：bundle 层那条不带 config 的宿主行因此什么
  * 模块都不挂（否则会在全局 scope 抢 persona 位，与 prompt registry 冲突）。
+ *
+ * 宿主职责：webServer 可用时挂两条设置页数据路由（GET /roroko-tool/state、
+ * POST /roroko-tool/reset），与子模块互不依赖。
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { mount as mountPreinject, type PreinjectConfig } from './preinject.js'
+import { registerStateRoutes, type WebServerLike } from './routes.js'
 
 export const name = 'roroko-tool'
+
+/** 本包版本（设置页显示用）。 */
+export const version = '0.1.0'
 
 /** 插件配置：一层桶对应一个子模块；桶设成 false 即不挂载。 */
 export interface RorokoToolConfig {
@@ -38,6 +45,12 @@ interface InjectSurface {
  */
 export function apply(ctx: Context, config: RorokoToolConfig = {}): void {
   const surface = ctx as unknown as InjectSurface
+
+  surface.inject(['webServer'], (scope) => {
+    const server = (scope as unknown as { webServer: WebServerLike }).webServer
+    ;(scope as unknown as { effect(fn: () => unknown, label?: string): unknown })
+      .effect(() => registerStateRoutes(server, version), 'roroko-tool: 设置页路由')
+  })
 
   const preinject = config.preinject
   if (preinject !== undefined && preinject !== false && preinject?.enabled !== false) {
