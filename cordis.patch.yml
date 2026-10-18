@@ -1,4 +1,70 @@
-# dsh bundle patch: inserts this plugin into a profile's layer stack.
+# dsh bundle patch：洛洛可全家桶
+#
+# 1) 宿主行 —— 挂在 profile 层，占住 id，将来承载 routes / state / 设置页后端。
+#    不带 config，所以不会挂任何子模块（子模块只在配置桶存在时挂载）。
+# 2) 预设行 —— 声明「洛洛可」preset；persona 位由 roroko-tool/preinject 接管，
+#    不挂官方 dsh-persona，也不挂 dsh-agent-instructions（工作区指令自己读）。
 - insert:
     - id: roroko-tool
       name: '@roroko-tool/dsh-roroko-tool'
+
+- insert:
+    - id: preset-roroko
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: roroko
+        name: 洛洛可
+        description: 洛洛可自用形态——双段注入 + 编码工具集，persona 位由 roroko-tool 占用。
+        order: 30
+        plugins:
+          - id: roroko-tool
+            name: '@roroko-tool/dsh-roroko-tool'
+            config:
+              preinject:
+                identityFiles: [IDENTITY.md]
+                workspaceFiles: [AGENTS.md]
+                suppressHarnessIdentity: true
+
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              search: true
+              fetch: true
+              searchMaxResults: 5
+              searchMaxQueries: 1
+              searchTimeoutMs: 60000
+              fetchTimeoutMs: 30000
+              fetchMaxOutputChars: 20000
+
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'

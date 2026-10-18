@@ -1,46 +1,48 @@
 /**
- * @roroko-tool/dsh-roroko-tool — 洛洛可全家桶插件大包。
+ * @roroko-tool/dsh-roroko-tool —— 洛洛可全家桶。
  *
- * host 默认入口提供 profile bundle 骨架:挂载子插件参数覆盖 HTTP route
- * (GET/POST /roroko-tool/state),client 设置页经同源 fetch 编辑参数。
+ * 设计：**一个插件、一行声明**，子模块在包内按需挂载，不对外暴露子路径。
  *
- * 设计沿革:
- * - 2026-09-02:原"纯电箱"设计经 settings 服务把 schema register 到 DSH
- *   settings namespace、client 用 settingsScope 双向同步——被官方 loopback
- *   写限制证伪(远程浏览器 settings 写 memory no-op)。改为 dshmarket 同款
- *   范式:状态自存 profile 目录 state 文件 + webServer HTTP route。
- * - 2026-09-03:四工具 enabled 运行级开关退役——agent preset 声明哪个子
- *   插件,装配就带哪个功能;state 只存参数覆盖(设置页编辑),预设 config
- *   兜底。运行级动态启停会改变会话工具集/注入,打爆 request-cache。
+ *   preset 里只写：
+ *     - id: roroko-tool
+ *       name: '@roroko-tool/dsh-roroko-tool'
+ *       config: { preinject: { … } }
  *
- * 子插件入口:
- *   ./preinject — 一次性注入器:preset 声明即启用,注入参数读 state 覆盖。
- *   ./data      — 素材库查询/注册 + soul_state 读写四工具,preset 声明即注册。
- *   ./warn / ./mark — 占位未迁入。
+ * 每个子模块用 ctx.inject(['服务'], scope => mount(scope, cfg)) 起独立子 fiber：
+ * 某个服务缺席只会让那个子模块不激活，不拖累兄弟模块，也不用静态 inject 求并集。
+ *
+ * 子模块只在配置桶**存在**时才挂载：bundle 层那条不带 config 的宿主行因此什么
+ * 模块都不挂（否则会在全局 scope 抢 persona 位，与 prompt registry 冲突）。
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { registerStateRoutes, type WebServerLike } from './routes.js'
+import { mount as mountPreinject, type PreinjectConfig } from './preinject.js'
 
 export const name = 'roroko-tool'
 
-export const pkgName = '@roroko-tool/dsh-roroko-tool'
-export const version = '0.0.0'
+/** 插件配置：一层桶对应一个子模块；桶设成 false 即不挂载。 */
+export interface RorokoToolConfig {
+  preinject?: PreinjectConfig | boolean
+  // datas?: DatasConfig | boolean
+  // memory?: MemoryConfig | boolean
+  // onahole?: OnaholeConfig | boolean
+}
 
-/** host ctx 最小面:webServer 注入 + effect 生命周期。 */
-interface HostContextSurface {
-  inject?(services: string[], callback: (scoped: { webServer: WebServerLike }) => void): void
-  effect?(callback: () => unknown, label?: string): void
+interface InjectSurface {
+  inject(services: string[], callback: (scope: Context) => void): unknown
 }
 
 /**
- * roroko-tool 宿主(profile 层)。
- *
- * 挂载参数覆盖 HTTP route;webServer 服务不可用(非 web profile)时静默跳过。
+ * 插件入口。
+ * @param ctx - 本行插件所在的上下文（profile 层或 preset scope）。
+ * @param config - 见 {@link RorokoToolConfig}。
  */
-export function apply(ctx: Context): void {
-  const host = ctx as unknown as HostContextSurface
-  host.inject?.(['webServer'], (scoped) => {
-    const dispose = registerStateRoutes(scoped.webServer)
-    host.effect?.(() => dispose, 'roroko-tool: state routes')
-  })
+export function apply(ctx: Context, config: RorokoToolConfig = {}): void {
+  const surface = ctx as unknown as InjectSurface
+
+  const preinject = config.preinject
+  if (preinject !== undefined && preinject !== false && preinject?.enabled !== false) {
+    surface.inject(['systemPrompt'], (scope) => {
+      mountPreinject(scope, preinject === true ? {} : preinject)
+    })
+  }
 }

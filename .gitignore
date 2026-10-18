@@ -1,5 +1,6 @@
 node_modules/
-lib/
+*.log
 MEMORY.md
 PLAYER.md
 memory/
+.dsh-local/

@@ -1,90 +1,54 @@
 {
   "name": "@roroko-tool/dsh-roroko-tool",
-  "description": "洛洛可全家桶插件大包(agent 侧子插件 + client 设置页)",
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "洛洛可全家桶：单插件入口 + 多子模块（preinject / datas / memory / onahole）",
   "type": "module",
-  "main": "lib/index.js",
-  "types": "lib/types/index.d.ts",
+  "main": "lib/index.mjs",
+  "types": "lib/index.d.mts",
   "exports": {
     ".": {
-      "types": "./lib/types/index.d.ts",
-      "default": "./lib/index.js"
+      "types": "./lib/index.d.mts",
+      "default": "./lib/index.mjs"
     },
-    "./preinject": {
-      "types": "./lib/types/preinject.d.ts",
-      "default": "./lib/preinject.js"
-    },
-    "./data": {
-      "types": "./lib/types/data.d.ts",
-      "default": "./lib/data.js"
-    },
-    "./warn": {
-      "types": "./lib/types/warn.d.ts",
-      "default": "./lib/warn.js"
-    },
-    "./client": "./client/client.js",
-    "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
   "files": [
     "lib",
-    "client",
     "cordis.patch.yml",
     "src"
   ],
+  "engines": {
+    "dsh": ">=0.2.1-rc.2 <0.3.0"
+  },
   "dsh": {
-    "client": {
-      "platform": "web",
-      "inject": [
-        "@deepseek-ai/dsh-client-connection",
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-ui-slots"
-      ]
-    },
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
   },
-  "license": "MIT",
+  "scripts": {
+    "build": "tsdown"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-agent": "^0.0.1-rc.1",
-    "@deepseek-ai/dsh-llm": "^0.0.1-rc.1",
-    "@deepseek-ai/dsh-session": "^0.0.1-rc.1",
-    "@deepseek-ai/dsh-system-prompt": "^0.1.2-rc.1",
-    "@deepseek-ai/dsh-tools": "^0.0.1-rc.1",
-    "@deepseek-ai/schemastery": "^3.18.1"
+    "@deepseek-ai/dsh-agent": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-session": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "^0.2.1-rc.2"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/dsh-agent": {
-      "optional": true
-    },
-    "@deepseek-ai/dsh-llm": {
-      "optional": true
-    },
-    "@deepseek-ai/dsh-session": {
-      "optional": true
-    },
-    "@deepseek-ai/dsh-system-prompt": {
-      "optional": true
-    },
-    "@deepseek-ai/dsh-tools": {
-      "optional": true
-    }
+    "@deepseek-ai/dsh-agent": { "optional": true },
+    "@deepseek-ai/dsh-llm": { "optional": true },
+    "@deepseek-ai/dsh-session": { "optional": true },
+    "@deepseek-ai/dsh-system-prompt": { "optional": true }
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-agent": "link:E:/DSH/deepseek-harness/packages/core/agent",
-    "@deepseek-ai/dsh-client-ui-primitives": "link:E:/DSH/deepseek-harness/packages/client/ui-primitives",
-    "@deepseek-ai/dsh-llm": "link:E:/DSH/deepseek-harness/packages/llm/llm",
-    "@deepseek-ai/dsh-session": "link:E:/DSH/deepseek-harness/packages/core/session",
-    "@deepseek-ai/dsh-system-prompt": "link:E:/DSH/deepseek-harness/packages/core/system-prompt",
-    "@deepseek-ai/dsh-tools": "link:E:/DSH/deepseek-harness/packages/core/tools",
+    "@deepseek-ai/dsh-agent": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-session": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.2",
     "@types/node": "^22.20.0",
-    "@types/react": "^19.2.18",
-    "react": "^19.2.8",
     "tsdown": "^0.22.14",
     "typescript": "^5.6.0"
-  }
+  },
+  "license": "MIT"
 }

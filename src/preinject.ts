@@ -1,429 +1,217 @@
 /**
- * roroko-preinject — 工作区指令双段落点注入器(roroko-tool 电箱子功能)。
+ * roroko-preinject —— 双段注入子模块。
  *
- * 自独立旧插件 dsh-roroko-preinject 收编迁入 roroko-tool 大包(2026-09-02),
- * 2026-09-04 拆成两条腿:系统段进系统提示词,消息段进 user 消息。
+ * 系统段：注册 `deployment:persona-prefix`（顶掉官方 persona），section 文本只放
+ *         宏 `{{roroko_preinject_system}}`，正文由 variable provider 每次装配现读文件。
+ *         这样文件正文里的花括号不会进插值扫描路径，改文件下一步就生效。
+ * 消息段：`agent/pre-step` 注入一条带本插件签名的 user 消息，每会话一次。
  *
- * ── 系统段(system section)──────────────────────────────────────────────
+ * 文件归属：
+ *   身份文件 —— 相对的按 root（默认 $DSH_HOME/roroko）解析，跟预设走，不跟工作区。
+ *   工作区文件 —— 相对的按会话 cwd 解析，跟项目走。
  *
- * 文件内容进系统提示词:常驻、不占消息位、不被 compaction 折叠、每步现读。
- * 实现是「变量承载 + section 引用宏」两件套 —— 内容由 systemPrompt.variable
- * 提供(provider 每次装配按当前 agent 的会话 cwd 现读文件),section 的 text
- * 只写一个字面宏 `{{roroko_preinject_system}}`。
- *
- * 为什么绕这一道:renderPrompt 的 `{{}}` 插值是严格的,未知变量/空值/畸形
- * 引用一律抛错,文件正文里但凡有一个成组的 `{{xxx}}` 就直接打崩装配。而
- * "替换进去的值不会被二次扫描"是 renderPrompt 的明文语义 —— 内容走变量就
- * 天然免疫,文件正文里写什么花括号都安全。
- *
- * provider 三条硬规矩,缺一条都会打崩整个 turn:
- *   1. 内部 try/catch 兜底:provider 抛错会冒到 assemble();
- *   2. 读不到内容返回 `''` 而非 `undefined`:后者被判定「变量无值」同样抛错;
- *   3. header/footer 一并拼进变量值:留在 section 文本里就仍在插值扫描路径上。
- * 空串会让 renderPrompt 把该 section 整个 filter 掉 —— 未配置即零污染。
- *
- * 已知限制:section 的 order 在 apply(preset 挂载)时读一次,改 order 需要
- * 重新挂载 preset;文件清单则由 provider 每次装配现读 state,改了立刻生效。
- *
- * ── 消息段(user message)────────────────────────────────────────────────
- *
- * 文件合并成一条 user 消息,首个 entering step 注入一次,落库 `user/message`。
- *
- * The one-shot guard is durable-log-driven: once the injected message is
- * appended to the session log (agent.ts appends `decision.messages` as
- * `user/message` on step/start), every later pre-step — including a resumed
- * session after a process restart — finds it in `session.log` and skips
- * re-injection. Compaction folding the injection away naturally re-injects.
- * 系统段不落 log,不参与判重。
- *
- * 判重实现说明(2026-09-03 修复):曾尝试扫 `session.surface.nodes` 和
- * `session.events` 均失败——surface 是依赖 sessionProjections 的增量投影,
- * events 是 getter 在 agent preset 层访问实测为 undefined。改为直接遍历
- * `session.log`(Session 内部持久事件数组,seq 即索引,resume 后即完整),
- * 找带本插件 source 签名的 user/message,有则说明已注入过。实测:同一会话
- * 连续多 turn + 进程重启恢复后均不再重复注入。
- *
- * 参数三层(2026-09-11 四改):内置默认 ← preset 接线 `config` ← host state
- * 覆盖。覆盖层按会话的 agent preset id 取桶(state.presets[<id>]),具体桶叠在
- * 公共桶(common)之上;只有字段「缺失」才算未覆盖,空清单/空串都是显式设定。
- * 参数只影响注入内容,不改工具目录,不破坏 request-cache。
+ * 判重：$DSH_HOME/roroko/state/injected.json 记 sessionId，跨重启有效。
  */
-
 import { readFileSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
-import type { Context } from '@deepseek-ai/cordis'
-import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { Session } from '@deepseek-ai/dsh-session'
-import type { AssembleContext } from '@deepseek-ai/dsh-system-prompt'
-import { PERSONA_SECTION } from '@deepseek-ai/dsh-system-prompt'
-import { dshHomeDirectory, loadState, loadStateSync } from './state.js'
-import { resolvePresetOverride, RorokoPreinjectDefaults } from './settings.js'
-import type { RorokoFilesPlacement, RorokoPreinjectOverride } from './settings.js'
+import type { Context } from '@deepseek-ai/cordis'
 
-export const name = 'roroko-preinject'
+/** 子模块标识：只用于日志与消息来源签名，不是独立插件。 */
+export const moduleName = 'roroko-preinject'
 
-/** 系统段 section 名(同层唯一;scoped 注册会 shadow 同名全局段)。 */
-const SYSTEM_SECTION = 'roroko:preinject'
+/** 抢占的槽位名（等同 PERSONA_PREFIX_SECTION）。 */
+const SECTION_NAME = 'deployment:persona-prefix'
+/** 官方固定开场白段名，order -1000。 */
+const HARNESS_IDENTITY = 'harness:identity'
+const VARIABLE = 'roroko_preinject_system'
+const MARK = '[roroko-preinject]'
 
-/** 系统段内容承载变量名(必须匹配 ^[a-z][a-z0-9_]*$)。 */
-const SYSTEM_VARIABLE = 'roroko_preinject_system'
-
-/** 系统提示词注册表必须就绪,才能注册 section 与变量。 */
-export const inject = ['systemPrompt']
-
-/** 接线 config(系统段 + 消息段的 preset 声明源,state 覆盖优先)。 */
-export interface RorokoPreinjectConfig {
-  /**
-   * 接管 `deployment:persona` 槽位(带 complete,独占整个系统提示词),而非注册
-   * 独立段。默认 false —— 未配置时用独立段名,即便被既有 complete 段压掉也不冲突。
-   * 开启前必须先从 preset 删掉 `dsh-persona` 那行:同一 scope 内注册同名 section
-   * 会直接抛错,agent 装配失败。
-   */
-  personaSection?: boolean
-  /**
-   * 系统段文本的头部引子。字面拼进 section 文本,因此会走 renderPrompt 的严格
-   * 插值 —— 可以写 `{{cwd}}` / `{{model}}` / `{{provider}}` 这类已注册宏,但写错
-   * 一个未注册名就会当场抛错打崩装配。留空则整段只有正文。
-   */
-  personaHead?: string
-  /** 接管 persona 槽位时是否保留动态运行时上下文快照(默认保留;对应 dsh-persona 的 includeRuntimeContext)。 */
-  includeRuntimeContext?: boolean
-  /** 系统段:待注入系统提示词的文件名(注入顺序)。 */
-  systemFiles?: string[]
-  /** 系统段基准 order(state 未覆盖时生效;接管 persona 槽位时固定用 DEPLOYMENT_PERSONA 的序位)。 */
-  systemOrder?: number
-  /** 系统段:内容前插入的文本。 */
-  systemHeader?: string
-  /** 系统段:内容后插入的文本。 */
-  systemFooter?: string
-  /** 消息段:待注入 user 消息的文件名(注入顺序)。 */
-  files?: string[]
-  /** 消息段:是否整体包一层 <system-reminder>…</system-reminder>。 */
-  wrapInSystemReminder?: boolean
-  /** 消息段:内容前插入的文本。 */
-  header?: string
-  /** 消息段:内容后插入的文本。 */
-  footer?: string
-  /**
-   * 消息段落点:本批用户消息之后(默认,与官方 agent-instructions 同位)还是之前。
-   * 想要"进 system 提示词"就把文件写进 `systemFiles` —— 那是另一条清单。
-   */
-  filesPlacement?: RorokoFilesPlacement
-  /** 消息段是否每个文件各注入一条(默认 false = 全部合并成一条)。 */
-  splitFiles?: boolean
+export interface PreinjectConfig {
+  /** false 时不挂载本模块。 */
+  enabled?: boolean
+  /** 身份文件根目录，默认 $DSH_HOME/roroko。 */
+  root?: string
+  /** 身份文件（相对 root）。 */
+  identityFiles?: string[]
+  /** 工作区指令文件（相对会话 cwd）。 */
+  workspaceFiles?: string[]
+  /** 系统段是否拼入工作区文件。 */
+  includeWorkspace?: boolean
+  /** 消息段是否包 <system-reminder>。 */
+  wrap?: boolean
+  /** 顶掉 "You are an AI agent powered by DeepSeek Harness." 这个开场白。 */
+  suppressHarnessIdentity?: boolean
 }
 
-/** 合并 header + 内容 + footer(两段共用同一套拼接语义)。 */
-function buildInjectionText(
-  content: string,
-  config: {
-    wrapInSystemReminder?: boolean
-    header?: string
-    footer?: string
-  },
-): string {
-  const sections = [config.header?.trim(), content, config.footer?.trim()]
-    .filter((part): part is string => part !== undefined && part.length > 0)
-  const body = sections.join('\n\n')
-  return config.wrapInSystemReminder === true
-    ? `<system-reminder>\n${body}\n</system-reminder>`
-    : body
+const DEFAULTS: Required<Omit<PreinjectConfig, 'enabled' | 'root'>> = {
+  identityFiles: ['IDENTITY.md'],
+  workspaceFiles: ['AGENTS.md'],
+  includeWorkspace: true,
+  wrap: true,
+  suppressHarnessIdentity: true,
 }
 
-/** 路径宏:${presetDir} 指会话 preset 目录,${dshHome} 指 DSH 家,${cwd} 指会话工作目录。 */
-const PRESET_DIR_MACRO = '${presetDir}'
-const DSH_HOME_MACRO = '${dshHome}'
-const CWD_MACRO = '${cwd}'
-
-/** DSH 官方 preset id 契约(与 agent-presets discovery 同一正则):id 当路径段用,必须受限。 */
-const PRESET_ID_RE = /^[a-z0-9][a-z0-9-]*$/
-
-/** DSH 官方用户 preset 根目录名(与 @deepseek-ai/dsh-agent-presets 的 USER_PRESET_DIR 一致)。 */
-const USER_PRESET_DIR = '.agent-presets'
-
-/**
- * 解析单条注入路径;返回 undefined 表示这条跳过(空串,或宏拿不到值)。
- *
- * 支持写法:
- *   ${presetDir}/IDENTITY.md  → <dshHome>/.agent-presets/<会话 preset id>/
- *   ${dshHome}/roroko/X.md    → $DSH_HOME(缺省 ~/.dsh)
- *   ~/shared/X.md             → 用户主目录
- *   其他相对路径               → 相对会话 cwd(与旧行为一致)
- *   绝对路径                   → path.resolve 原样返回(天然支持)
- *
- * 限制:${presetDir} 用的是推导路径 —— 官方 shipped root 或自定义 root 下的
- * preset 不在此列,那类 preset 请直接写绝对路径。
- */
-export function resolveInjectionPath(
-  raw: string,
-  cwd: string,
-  presetId: string | undefined,
-): string | undefined {
-  const trimmed = raw.trim()
-  if (trimmed.length === 0) return undefined
-
-  let text = trimmed
-  if (text.includes(PRESET_DIR_MACRO)) {
-    // 会话没有 preset(或 id 不合法)时拼不出目录 —— 整条跳过,绝不猜路径。
-    if (presetId === undefined || !PRESET_ID_RE.test(presetId)) return undefined
-    text = text.replaceAll(PRESET_DIR_MACRO, join(dshHomeDirectory(), USER_PRESET_DIR, presetId))
-  }
-  if (text.includes(DSH_HOME_MACRO)) text = text.replaceAll(DSH_HOME_MACRO, dshHomeDirectory())
-  if (text.includes(CWD_MACRO)) text = text.replaceAll(CWD_MACRO, cwd)
-  if (text === '~') return homedir()
-  if (text.startsWith('~/') || text.startsWith('~\\')) return join(homedir(), text.slice(2))
-  return resolve(cwd, text)
+/** ctx 上本模块用到的最小面（避免绑死具体类型）。 */
+interface PromptSurface {
+  variable(name: string, provider: (context: unknown) => string | undefined): () => void
+  section(section: {
+    name: string
+    order: number
+    text: string
+    interpolate?: boolean
+    complete?: boolean
+  }): () => void
+  getSectionOrder(name: 'DEPLOYMENT_PERSONA_PREFIX' | 'HARNESS_IDENTITY'): number
+  suppressRuntimeContext?(): () => void
 }
 
-/** 同步读并合并文件(系统段用;section/变量 provider 都是同步函数,不能 await)。 */
-function loadMergedTextSync(baseDir: string, files: readonly string[], presetId: string | undefined): string {
-  const parts: string[] = []
-  for (const file of files) {
-    const target = resolveInjectionPath(file, baseDir, presetId)
-    if (target === undefined) continue
-    try {
-      const text = readFileSync(target, 'utf8')
-      if (text.trim().length > 0) parts.push(text.trim())
-    } catch {
-      // Missing or unreadable files are skipped; the rest still inject.
+interface PreStepDecision {
+  kind: 'reject' | 'enter'
+  messages?: unknown[]
+}
+
+interface PreStepPayload {
+  agent: {
+    session?: {
+      id?: string
+      header?: { id?: string; cwd?: string }
     }
   }
-  return parts.join('\n\n')
 }
 
-/** 异步读并合并文件(消息段用,跑在 pre-step 里)。 */
-async function loadMergedText(baseDir: string, files: readonly string[], presetId: string | undefined): Promise<string> {
-  const parts: string[] = []
-  for (const file of files) {
-    const target = resolveInjectionPath(file, baseDir, presetId)
-    if (target === undefined) continue
-    try {
-      const text = await readFile(target, 'utf8')
-      if (text.trim().length > 0) parts.push(text.trim())
-    } catch {
-      // Missing or unreadable files are skipped; the rest still inject.
-    }
-  }
-  return parts.join('\n\n')
+interface Surface {
+  systemPrompt: PromptSurface
+  effect(callback: () => unknown, label?: string): unknown
+  on(
+    event: 'agent/pre-step',
+    listener: (payload: PreStepPayload, next: () => Promise<PreStepDecision>) => Promise<PreStepDecision>,
+  ): unknown
 }
 
-/**
- * 每文件一份文本(splitFiles=true 时用),顺序与清单一致。
- * 读不到/空白文件直接跳过,不占位 —— 与合并模式同一套"缺失静默跳过"约定。
- */
-async function loadFileTexts(baseDir: string, files: readonly string[], presetId: string | undefined): Promise<string[]> {
-  const out: string[] = []
-  for (const file of files) {
-    const target = resolveInjectionPath(file, baseDir, presetId)
-    if (target === undefined) continue
-    try {
-      const text = await readFile(target, 'utf8')
-      if (text.trim().length > 0) out.push(text.trim())
-    } catch {
-      // Missing or unreadable files are skipped; the rest still inject.
-    }
-  }
-  return out
-}
+const dshHome = (): string => process.env.DSH_HOME ?? join(homedir(), '.dsh')
 
-/**
- * 计算注入位置:紧跟本插件"认领"的那批用户消息之后(默认,与官方
- * agent-instructions 同位),或之前。
- *
- * claimedIndex<0(本步没有认领到任何用户消息)时一律落到数组开头 —— 此刻
- * "之后"没有可依附的对象,而且 toSpliced 收负数会从尾部倒数,不夹住就会把
- * 注入插到消息流中间。
- */
-export function injectionIndex(claimedIndex: number, placement: RorokoFilesPlacement): number {
-  if (claimedIndex < 0) return 0
-  return placement === 'before-user' ? claimedIndex : claimedIndex + 1
-}
-
-/**
- * 合并系统段参数:内置默认 ← preset 接线 config ← state 覆盖(字段级)。
- *
- * 2026-09-11 四改统一了覆盖语义:字段「缺失」才算未覆盖;字段存在即显式设定,
- * 空清单/空串就是"这一段不注入"。旧版那种 length>0 判据会让用户没法把清单
- * 清空,也让布尔字段(见下)完全失声。
- */
-function resolveSystemParams(
-  config: RorokoPreinjectConfig,
-  override: RorokoPreinjectOverride,
-): { files: string[]; header: string; footer: string } {
-  return {
-    files: override.systemFiles ?? config.systemFiles ?? RorokoPreinjectDefaults.systemFiles,
-    header: override.systemHeader ?? config.systemHeader ?? RorokoPreinjectDefaults.systemHeader,
-    footer: override.systemFooter ?? config.systemFooter ?? RorokoPreinjectDefaults.systemFooter,
-  }
-}
-
-/**
- * 解析系统段 section 的 order:state 覆盖 → preset config → 内置默认。
- *
- * 注意 order 在 apply(preset 挂载)时读一次,那时**没有会话**,所以只认公共桶
- * (common)的覆盖,per-preset 桶里的 systemOrder 读不到;要改 order 就得重挂载
- * preset。文件清单则相反 —— provider 每次装配现读,按会话 preset 精确取桶。
- */
-function resolveSystemOrder(config: RorokoPreinjectConfig, override: RorokoPreinjectOverride): number {
-  return override.systemOrder ?? config.systemOrder ?? RorokoPreinjectDefaults.systemOrder
-}
-
-/**
- * 系统段内容 provider:按当前装配的 agent 现读会话 cwd 下的文件。
- *
- * 三条兜底见文件头:整段 try/catch、失败返回空串、header/footer 拼进值。
- * 覆盖层按会话的 agent preset 取桶(具体桶叠公共桶),与消息段同一套解析。
- */
-function systemTextProvider(config: RorokoPreinjectConfig, context: AssembleContext): string {
+function readSync(path: string): string {
   try {
-    // 诊断场合的装配没有 agent;此时不注入。
-    const agent = context.agent
-    const cwd = agent?.session.header.cwd
-    if (cwd === undefined) return ''
-    const override = resolvePresetOverride(loadStateSync(), agent?.session.header.agentPreset)
-    const params = resolveSystemParams(config, override)
-    const content = loadMergedTextSync(cwd, params.files, agent?.session.header.agentPreset)
-    if (content.length === 0) return ''
-    return buildInjectionText(content, params)
+    return readFileSync(path, 'utf8')
   } catch {
-    // provider 抛错会冒到 assemble 打崩整个 turn;兜底成空串(该 section 被丢弃)。
     return ''
   }
 }
 
-/**
- * 合并消息段参数:内置默认 ← preset config ← state 覆盖(字段级)。
- *
- * 修掉的旧 bug:wrap 原先写 `override.wrapInSystemReminder ?? config.…`,而
- * normalize 后的 override 恒为布尔,`??` 右侧永不生效 —— preset config 里写的
- * wrapInSystemReminder: true 会被 state 的 false 静静吃掉。现在 override 是
- * 部分对象,字段缺失才是未覆盖,wrap 与其他字段语义一致。
- */
-function resolveInjectParams(
-  config: RorokoPreinjectConfig,
-  override: RorokoPreinjectOverride,
-): {
-  files: string[]
-  wrap: boolean
-  header: string
-  footer: string
-  placement: RorokoFilesPlacement
-  split: boolean
-} {
-  return {
-    files: override.files ?? config.files ?? RorokoPreinjectDefaults.files,
-    wrap: override.wrapInSystemReminder
-      ?? config.wrapInSystemReminder
-      ?? RorokoPreinjectDefaults.wrapInSystemReminder,
-    header: override.header ?? config.header ?? RorokoPreinjectDefaults.header,
-    footer: override.footer ?? config.footer ?? RorokoPreinjectDefaults.footer,
-    placement: override.filesPlacement ?? config.filesPlacement ?? RorokoPreinjectDefaults.filesPlacement,
-    split: override.splitFiles ?? config.splitFiles ?? RorokoPreinjectDefaults.splitFiles,
+async function readAsync(path: string): Promise<string> {
+  try {
+    return await readFile(path, 'utf8')
+  } catch {
+    return ''
+  }
+}
+
+function resolveList(list: readonly string[], base: string): string[] {
+  return list.map(path => (isAbsolute(path) ? path : resolve(base, path)))
+}
+
+function mergeTexts(texts: readonly string[]): string {
+  return texts
+    .map(text => text.trim())
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+/** 系统段正文：身份文件 + 工作区文件，每次装配现读。 */
+function systemText(config: PreinjectConfig, root: string): string {
+  const identity = mergeTexts(resolveList(config.identityFiles ?? DEFAULTS.identityFiles, root).map(readSync))
+  const workspace = config.includeWorkspace === false
+    ? ''
+    : mergeTexts(resolveList(config.workspaceFiles ?? DEFAULTS.workspaceFiles, process.cwd()).map(readSync))
+  return [identity, workspace].filter(Boolean).join('\n\n---\n\n')
+}
+
+/** 消息段正文：只放工作区文件。 */
+async function userSegmentText(config: PreinjectConfig, cwd: string): Promise<string> {
+  const files = config.workspaceFiles ?? DEFAULTS.workspaceFiles
+  const workspace = mergeTexts(await Promise.all(resolveList(files, cwd).map(readAsync)))
+  if (!workspace) return ''
+  const body = `${MARK} 本工作区指令（${files.join(', ')}）：\n\n${workspace}`
+  return config.wrap === false ? body : `<system-reminder>\n${body}\n</system-reminder>`
+}
+
+function stateFile(root: string): string {
+  return join(root, 'state', 'injected.json')
+}
+
+async function loadInjected(file: string): Promise<Set<string>> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(file, 'utf8'))
+    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+async function markInjected(file: string, sessionId: string): Promise<void> {
+  const set = await loadInjected(file)
+  if (set.has(sessionId)) return
+  set.add(sessionId)
+  try {
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file, JSON.stringify([...set]), 'utf8')
+  } catch {
+    // 判重失败不影响注入本身
   }
 }
 
 /**
- * Whether this session's durable log already carries a roroko-preinject
- * injection. Scans the whole persisted event log for a user/message whose
- * source carries this plugin's signature. Survives process restarts — unlike a
- * process-local WeakSet — because the log is the durable source of truth.
+ * 挂载本子模块。由 host 在自己的 ctx 上调用，不单独占一行插件。
+ * @param ctx - 宿主上下文（通常是 preset scope 里的子 fiber）。
+ * @param rawConfig - 子模块配置（preset 的 config.preinject）。
  */
-function hasInjected(session: Session): boolean {
-  // session.log 是内部事件数组(seq 即索引);session.events 是 getter,在 agent
-  // preset 层实测访问为 undefined(见 2026-09-03 排查),改用 log 直读。
-  const sess = session as unknown as { log?: unknown }
-  const rawLog = sess.log
-  if (!Array.isArray(rawLog)) return false
-  for (const event of rawLog as Array<{
-    type?: string
-    data?: { source?: { kind?: string; plugin?: string } }
-  }>) {
-    if (event?.type === 'user/message'
-      && event.data?.source?.kind === 'plugin'
-      && event.data.source.plugin === name) return true
-  }
-  return false
-}
+export function mount(ctx: Context, rawConfig: PreinjectConfig = {}): void {
+  const surface = ctx as unknown as Surface
+  const config: PreinjectConfig = { ...DEFAULTS, ...rawConfig }
+  const root = rawConfig.root ?? join(dshHome(), 'roroko')
+  const file = stateFile(root)
 
-/**
- * section 文本组装:personaHead 字面拼入(因此走 renderPrompt 的严格插值,
- * 可写 {{cwd}} 这类已注册宏),正文则用变量宏引用(走变量承载,文件里的
- * {{}} 不会被二次扫描)。head 为空则整段只剩正文宏。
- */
-function buildSectionText(config: RorokoPreinjectConfig): string {
-  const head = config.personaHead?.trim() ?? ''
-  return head.length > 0 ? `${head}\n\n{{${SYSTEM_VARIABLE}}}` : `{{${SYSTEM_VARIABLE}}}`
-}
-
-export function apply(ctx: Context, config: RorokoPreinjectConfig = {}): void {
-  // ── 系统段:变量承载正文 + section 引用宏 ──
-  // 变量先注册;求值发生在装配时,注册先后不影响结果,但先有值再有引用更直白。
-  ctx.effect(
-    () => ctx.systemPrompt.variable(SYSTEM_VARIABLE, context => systemTextProvider(config, context)),
-    'roroko-preinject.variable()',
+  surface.effect(
+    () => surface.systemPrompt.variable(VARIABLE, () => systemText(config, root)),
+    'preinject.variable()',
   )
-
-  // 接管 persona 槽位时与 dsh-persona 同层同名,注册会抛错 —— 所以开启前
-  // 必须先从 preset 删掉那行。接管后带 complete,独占整个系统提示词。
-  const personaSection = config.personaSection === true
-  // order 是挂载期参数:此刻还没有会话,只认公共桶(common)覆盖 ——
-  // per-preset 桶里的 systemOrder 读不到,改了要重挂载 preset 才生效。
-  const order = personaSection
-    ? ctx.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA')
-    : resolveSystemOrder(config, resolvePresetOverride(loadStateSync(), undefined))
-  ctx.effect(
-    () => ctx.systemPrompt.section({
-      name: personaSection ? PERSONA_SECTION : SYSTEM_SECTION,
-      order,
-      text: buildSectionText(config),
-      ...personaSection ? { complete: true } : {},
+  surface.effect(
+    () => surface.systemPrompt.section({
+      name: SECTION_NAME,
+      order: surface.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA_PREFIX'),
+      text: `{{${VARIABLE}}}`,
     }),
-    'roroko-preinject.section()',
+    'preinject.section()',
   )
-  if (personaSection && config.includeRuntimeContext === false) {
-    ctx.systemPrompt.suppressRuntimeContext()
+
+  if (config.suppressHarnessIdentity !== false) {
+    surface.effect(
+      () => surface.systemPrompt.section({
+        name: HARNESS_IDENTITY,
+        order: surface.systemPrompt.getSectionOrder('HARNESS_IDENTITY'),
+        text: '',
+      }),
+      'preinject.suppressHarnessIdentity()',
+    )
   }
 
-  // ── 消息段:原一次性注入逻辑 ──
-  ctx.on('agent/pre-step', async ({ agent, messages }, next): Promise<PreStepDecision> => {
+  surface.on('agent/pre-step', async (payload, next) => {
     const decision = await next()
     if (decision.kind !== 'enter') return decision
-    // 一次性注入判重:已注入过的会话跳过(见 hasInjected)。
-    if (hasInjected(agent.session)) return decision
-
-    const cwd = agent.session.header.cwd ?? process.cwd()
-    // 覆盖层按会话的 agent preset 取桶:具体桶叠在公共桶之上(与系统段同一套解析)。
-    const presetId = agent.session.header.agentPreset
-    const override = resolvePresetOverride(await loadState(), presetId)
-    const params = resolveInjectParams(config, override)
-
-    // 拆分策略:每文件一条时各自包壳;默认把所有文件合并成一条。
-    const contents = params.split
-      ? await loadFileTexts(cwd, params.files, presetId)
-      : [await loadMergedText(cwd, params.files, presetId)]
-    const payloads = contents
-      .filter(content => content.length > 0)
-      .map(content => buildInjectionText(content, {
-        wrapInSystemReminder: params.wrap,
-        header: params.header,
-        footer: params.footer,
-      }))
-    if (payloads.length === 0) return decision
-
-    const injected = payloads.map(text => createUserMessage({
+    const session = payload.agent.session
+    const sessionId = session?.id ?? session?.header?.id
+    if (sessionId !== undefined && (await loadInjected(file)).has(sessionId)) return decision
+    const cwd = session?.header?.cwd ?? process.cwd()
+    const text = await userSegmentText(config, cwd)
+    if (!text) return decision
+    if (sessionId !== undefined) await markInjected(file, sessionId)
+    const message = createUserMessage({
       content: [{ type: 'text', text }],
-      source: { kind: 'plugin', plugin: name },
-    }))
-
-    // 落点:本插件认领的用户消息批次之后(默认,与 agent-instructions 同位)或之前。
-    const lastClaimedIndex = decision.messages.findLastIndex(message => messages.includes(message))
-    const entered = decision.messages.toSpliced(
-      injectionIndex(lastClaimedIndex, params.placement), 0, ...injected,
-    )
-
-    return { ...decision, messages: entered }
+      source: { kind: 'plugin', plugin: moduleName },
+    })
+    return { ...decision, messages: [message, ...(decision.messages ?? [])] }
   })
 }
