@@ -265,18 +265,22 @@ window.__ModuleLoader__.load({
 		function apply(ctx) {
 			const slots = ctx.slots;
 			const locale = ctx.locale;
-			ctx.effect(() => locale.register(NS, {
-				zh,
-				en
-			}), "roroko-tool: 文案");
-			const t = locale.bind(NS);
-			slots.inject("plugins.tab", () => slots.register({
-				name: "plugins.tab",
-				id: "roroko-tool",
-				order: 40,
-				label: () => t("title"),
-				locale: NS
-			}, () => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(RorokoSettingsPage, { t })));
+			try {
+				ctx.effect(() => locale.register(NS, {
+					zh,
+					en
+				}), "roroko-tool: 文案");
+				const t = locale.bind(NS);
+				slots.inject("plugins.tab", () => slots.register({
+					name: "plugins.tab",
+					id: "roroko-tool",
+					order: 40,
+					label: () => t("title"),
+					locale: NS
+				}, () => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(RorokoSettingsPage, { t })));
+			} catch (error) {
+				console.error("[roroko-tool] 设置页注册失败：", error);
+			}
 		}
 		//#endregion
 		exports.NS = NS;

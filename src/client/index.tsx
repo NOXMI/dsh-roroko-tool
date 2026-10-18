@@ -166,15 +166,20 @@ export function apply(ctx: ClientContext): void {
   const slots = (ctx as unknown as { slots: any }).slots
   const locale = (ctx as unknown as { locale: any }).locale
 
-  ctx.effect(() => locale.register(NS, { zh, en }), 'roroko-tool: 文案')
-  const t = locale.bind(NS) as Translate
-
-  slots.inject('plugins.tab', () => slots.register({
-    name: 'plugins.tab',
-    id: 'roroko-tool',
-    order: 40,
-    label: () => t('title'),
-    locale: NS,
-  }, () => <RorokoSettingsPage t={t} />))
+  // 注册失败不拖垮整条 entry：把真实原因打到控制台，页面照常启动。
+  try {
+    ctx.effect(() => locale.register(NS, { zh, en }), 'roroko-tool: 文案')
+    const t = locale.bind(NS) as Translate
+    slots.inject('plugins.tab', () => slots.register({
+      name: 'plugins.tab',
+      id: 'roroko-tool',
+      order: 40,
+      label: () => t('title'),
+      locale: NS,
+    }, () => <RorokoSettingsPage t={t} />))
+  } catch (error) {
+    console.error('[roroko-tool] 设置页注册失败：', error)
+  }
 }
+
 
