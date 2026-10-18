@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import { zh, type LocaleKey } from './locales.js'
+import { en, zh, type LocaleKey } from './locales.js'
 
 /** 文案命名空间。 */
 export const NS = 'rorokoTool'
@@ -166,14 +166,15 @@ export function apply(ctx: ClientContext): void {
   const slots = (ctx as unknown as { slots: any }).slots
   const locale = (ctx as unknown as { locale: any }).locale
 
-  ctx.effect(() => locale.register(NS, { zh }), 'roroko-tool: 文案')
+  ctx.effect(() => locale.register(NS, { zh, en }), 'roroko-tool: 文案')
   const t = locale.bind(NS) as Translate
 
-  ctx.effect(() => slots.register({
+  slots.inject('plugins.tab', () => slots.register({
     name: 'plugins.tab',
     id: 'roroko-tool',
     order: 40,
     label: () => t('title'),
     locale: NS,
-  }, () => <RorokoSettingsPage t={t} />), 'roroko-tool: 设置页')
+  }, () => <RorokoSettingsPage t={t} />))
 }
+

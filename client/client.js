@@ -29,6 +29,28 @@ window.__ModuleLoader__.load({
 			on: "开",
 			off: "关"
 		};
+		/** English copy, same keys. */
+		const en = {
+			title: "Roroko",
+			subtitle: "Runtime status and injection switches",
+			loading: "Loading…",
+			failed: "Failed to load",
+			version: "Version",
+			mounts: "Mounted submodules",
+			none: "No submodule is mounted (no config bucket in this preset)",
+			root: "Identity root",
+			identityFiles: "Identity files",
+			workspaceFiles: "Workspace files",
+			includeWorkspace: "Workspace in system prompt",
+			injected: "Sessions injected",
+			injectedFile: "Record file",
+			reset: "Clear injection record",
+			resetDone: "Cleared — the next session injects again",
+			resetFailed: "Clear failed",
+			refresh: "Refresh",
+			on: "on",
+			off: "off"
+		};
 		//#endregion
 		//#region src/client/index.tsx
 		/**
@@ -243,15 +265,18 @@ window.__ModuleLoader__.load({
 		function apply(ctx) {
 			const slots = ctx.slots;
 			const locale = ctx.locale;
-			ctx.effect(() => locale.register(NS, { zh }), "roroko-tool: 文案");
+			ctx.effect(() => locale.register(NS, {
+				zh,
+				en
+			}), "roroko-tool: 文案");
 			const t = locale.bind(NS);
-			ctx.effect(() => slots.register({
+			slots.inject("plugins.tab", () => slots.register({
 				name: "plugins.tab",
 				id: "roroko-tool",
 				order: 40,
 				label: () => t("title"),
 				locale: NS
-			}, () => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(RorokoSettingsPage, { t })), "roroko-tool: 设置页");
+			}, () => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(RorokoSettingsPage, { t })));
 		}
 		//#endregion
 		exports.NS = NS;

@@ -22,3 +22,26 @@ export const zh = {
 }
 
 export type LocaleKey = keyof typeof zh
+
+/** English copy, same keys. */
+export const en: Record<LocaleKey, string> = {
+  title: 'Roroko',
+  subtitle: 'Runtime status and injection switches',
+  loading: 'Loading…',
+  failed: 'Failed to load',
+  version: 'Version',
+  mounts: 'Mounted submodules',
+  none: 'No submodule is mounted (no config bucket in this preset)',
+  root: 'Identity root',
+  identityFiles: 'Identity files',
+  workspaceFiles: 'Workspace files',
+  includeWorkspace: 'Workspace in system prompt',
+  injected: 'Sessions injected',
+  injectedFile: 'Record file',
+  reset: 'Clear injection record',
+  resetDone: 'Cleared — the next session injects again',
+  resetFailed: 'Clear failed',
+  refresh: 'Refresh',
+  on: 'on',
+  off: 'off',
+}
