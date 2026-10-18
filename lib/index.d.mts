@@ -11,6 +11,8 @@ interface PreinjectConfig {
   workspaceFiles?: string[];
   /** 系统段是否拼入工作区文件。 */
   includeWorkspace?: boolean;
+  /** 工作区找不到文件时，回落到 root 下的同名文件。 */
+  workspaceFallbackToRoot?: boolean;
   /** 消息段是否包 <system-reminder>。 */
   wrap?: boolean;
   /** 顶掉 "You are an AI agent powered by DeepSeek Harness." 这个开场白。 */

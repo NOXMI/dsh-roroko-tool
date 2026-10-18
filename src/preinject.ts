@@ -40,6 +40,8 @@ export interface PreinjectConfig {
   workspaceFiles?: string[]
   /** 系统段是否拼入工作区文件。 */
   includeWorkspace?: boolean
+  /** 工作区找不到文件时，回落到 root 下的同名文件。 */
+  workspaceFallbackToRoot?: boolean
   /** 消息段是否包 <system-reminder>。 */
   wrap?: boolean
   /** 顶掉 "You are an AI agent powered by DeepSeek Harness." 这个开场白。 */
@@ -50,6 +52,7 @@ const DEFAULTS: Required<Omit<PreinjectConfig, 'enabled' | 'root'>> = {
   identityFiles: ['IDENTITY.md'],
   workspaceFiles: ['AGENTS.md'],
   includeWorkspace: true,
+  workspaceFallbackToRoot: true,
   wrap: true,
   suppressHarnessIdentity: true,
 }
@@ -125,14 +128,27 @@ function systemText(config: PreinjectConfig, root: string): string {
   const identity = mergeTexts(resolveList(config.identityFiles ?? DEFAULTS.identityFiles, root).map(readSync))
   const workspace = config.includeWorkspace === false
     ? ''
-    : mergeTexts(resolveList(config.workspaceFiles ?? DEFAULTS.workspaceFiles, process.cwd()).map(readSync))
+    : mergeTexts(workspacePaths(config, process.cwd(), root).map(readSync))
   return [identity, workspace].filter(Boolean).join('\n\n---\n\n')
 }
 
-/** 消息段正文：只放工作区文件。 */
-async function userSegmentText(config: PreinjectConfig, cwd: string): Promise<string> {
+/** 工作区文件路径：按 cwd → root → 服务 cwd 依次找，用第一个有内容的。 */
+function workspacePaths(config: PreinjectConfig, cwd: string, root: string): string[] {
   const files = config.workspaceFiles ?? DEFAULTS.workspaceFiles
-  const workspace = mergeTexts(await Promise.all(resolveList(files, cwd).map(readAsync)))
+  if (config.workspaceFallbackToRoot === false) return resolveList(files, cwd)
+  const candidates = [cwd, root, process.cwd()]
+  for (const base of candidates) {
+    const paths = resolveList(files, base)
+    if (paths.some(path => readSync(path) !== '')) return paths
+  }
+  return resolveList(files, cwd)
+}
+
+/** 消息段正文：只放工作区文件。 */
+async function userSegmentText(config: PreinjectConfig, cwd: string, root: string): Promise<string> {
+  const files = config.workspaceFiles ?? DEFAULTS.workspaceFiles
+  const paths = workspacePaths(config, cwd, root)
+  const workspace = mergeTexts(await Promise.all(paths.map(readAsync)))
   if (!workspace) return ''
   const body = `${MARK} 本工作区指令（${files.join(', ')}）：\n\n${workspace}`
   return config.wrap === false ? body : `<system-reminder>\n${body}\n</system-reminder>`
@@ -205,7 +221,7 @@ export function mount(ctx: Context, rawConfig: PreinjectConfig = {}): void {
     const sessionId = session?.id ?? session?.header?.id
     if (sessionId !== undefined && (await loadInjected(file)).has(sessionId)) return decision
     const cwd = session?.header?.cwd ?? process.cwd()
-    const text = await userSegmentText(config, cwd)
+    const text = await userSegmentText(config, cwd, root)
     if (!text) return decision
     if (sessionId !== undefined) await markInjected(file, sessionId)
     const message = createUserMessage({
