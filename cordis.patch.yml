@@ -21,9 +21,9 @@
             name: '@roroko-tool/dsh-roroko-tool'
             config:
               preinject:
+                # 身份走系统段，工作区指令走消息段；两边各一次，不重复。
                 identityFiles: [IDENTITY.md]
                 workspaceFiles: [AGENTS.md]
-                suppressHarnessIdentity: true
 
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'

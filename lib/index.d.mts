@@ -9,7 +9,7 @@ interface PreinjectConfig {
   identityFiles?: string[];
   /** 工作区指令文件（相对会话 cwd）。 */
   workspaceFiles?: string[];
-  /** 系统段是否拼入工作区文件。 */
+  /** 系统段是否拼入工作区文件（默认 false：AGENTS 交给消息段，避免同一份内容进两次）。 */
   includeWorkspace?: boolean;
   /** 工作区找不到文件时，回落到 root 下的同名文件。 */
   workspaceFallbackToRoot?: boolean;

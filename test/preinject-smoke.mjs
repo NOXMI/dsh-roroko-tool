@@ -71,11 +71,10 @@ check(header !== undefined && header.text === '', 'harness:identity 被空段顶
 const read = variables.get('roroko_preinject_system')
 const first = read?.()
 check(first?.includes('TEST-IDENTITY-1') === true, '系统段含身份文件内容')
-check(first?.includes('TEST-AGENTS-1') === true, '系统段含工作区文件内容')
+check(first?.includes('TEST-AGENTS-1') === false, '系统段默认不含工作区文件（避免与消息段重复）')
 await writeFile(join(root, 'AGENTS.md'), '# 工作区\n指令标记：TEST-AGENTS-2', 'utf8')
 const second = read?.()
-check(second?.includes('TEST-AGENTS-2') === true, '改文件后下一次装配立刻生效')
-check(second?.includes('TEST-AGENTS-1') === false, '旧内容不再出现')
+check(second?.includes('TEST-AGENTS-2') === false, '改工作区文件不会污染系统段')
 
 // 3) 消息段
 const preStep = listeners.get('agent/pre-step')
@@ -86,11 +85,35 @@ const out = await preStep?.(session, decide)
 const text = out?.messages?.[0]?.content?.[0]?.text ?? ''
 check(out?.kind === 'enter', '进入 step 的决策被保留')
 check(out?.messages?.length === 1, '注入了一条 user 消息')
-check(text.includes('[roroko-preinject]') && text.includes('TEST-AGENTS-2'), '消息带签名与工作区指令')
-check(out?.messages?.[0]?.source?.kind === 'roroko-preinject', '消息 source 标了插件名')
+check(text.includes('[roroko-preinject]') && text.includes('TEST-AGENTS-2'), '消息带签名与最新工作区指令')
+check(out?.messages?.[0]?.source?.kind === 'roroko-preinject', '消息 source 用生产者自有 kind')
 
 const again = await preStep?.(session, decide)
 check(again?.messages?.length === 0, '同一会话第二次不再重复注入')
+
+// 4) 显式打开 includeWorkspace 时，系统段才拼工作区文件
+const optInVars = new Map()
+const optIn = {
+  ...fake,
+  systemPrompt: {
+    ...fake.systemPrompt,
+    variable: (name, provider) => {
+      optInVars.set(name, provider)
+      return () => {}
+    },
+    section: (section) => {
+      sections.set(section.name, section)
+      return () => {}
+    },
+  },
+  inject: (_services, callback) => {
+    callback(optIn)
+    return () => {}
+  },
+}
+apply(optIn, { preinject: { root, includeWorkspace: true } })
+const optInText = optInVars.get('roroko_preinject_system')?.()
+check(optInText?.includes('TEST-AGENTS-2') === true, 'includeWorkspace: true 时系统段才拼工作区文件')
 
 await rm(root, { recursive: true, force: true })
 console.log(problems.length === 0 ? '\n全部通过' : `\n${problems.length} 项未通过`)
