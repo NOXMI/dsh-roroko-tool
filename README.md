@@ -9,6 +9,9 @@ package.json          dsh.bundle.patch + engines.dsh（0.2.1 起兼容性先看 
 cordis.patch.yml      插入宿主行 + 「洛洛可」preset 行
 src/index.ts          宿主入口 name='roroko-tool'，按配置桶挂载子模块
 src/preinject.ts      roroko-preinject：双段上下文注入
+src/datas/            roroko-datas：素材库四把工具 + state 短条自动注入
+src/routes.ts         设置页数据口（GET /roroko-tool/state · POST /roroko-tool/config）
+legacy/memory-0929/   0.1.6 时代 memory 源码存档（不参与构建）
 lib/                  构建产物（随仓库提交，服务器安装时不编译）
 ```
 
@@ -19,9 +22,9 @@ lib/                  构建产物（随仓库提交，服务器安装时不编�
 
 | 模块 | 状态 | 职责 |
 |---|---|---|
-| `preinject` | 0.1 可用 | 系统段（接管 `deployment:persona-prefix`）+ 消息段（pre-step 一次性 user 消息） |
-| `datas` | 规划中 | 素材库四表 + soul_state 读写 |
-| `memory` | 规划中 | MEMORY.md / 日记的读写与检索 |
+| `preinject` | 可用 | 系统段（接管 `deployment:persona-prefix`）+ 消息段（pre-step 一次性 user 消息） |
+| `datas` | 可用 | `roroko_datas_query / lookup / register / state` 四把工具 + state 短条自动注入 |
+| `memory` | 源码存档 | 见 `legacy/memory-0929/`，等真搬时照 datas 的形状改 |
 | `onahole` | 规划中 | 多端工具对接 |
 
 ## preset 里怎么用
@@ -35,7 +38,12 @@ plugins:
         root: ''                      # 留空 = $DSH_HOME/roroko
         # 接线层（可省）：systemFiles / userFiles，给这个 preset 当基线
         suppressHarnessIdentity: true
+      datas:                          # 有桶就挂载：四把工具 + 自动注入
+        dbPath: '/var/www/api/database/soul.db'
+        autoinject: { rounds: true, every: 8, afterTool: true, minGap: 4 }
 ```
+
+桶设成 `false` 或整块不写 = 这个模块不挂载；写成 `true` = 全走默认。
 
 ## 参数四层链
 
@@ -67,6 +75,34 @@ plugins:
 清单项相对 root 解析，`~/` 走主目录，绝对路径原样用；读不到的文件静默跳过，
 设置页会把缺失标出来。
 
+## datas：素材库四把工具
+
+`node:sqlite` 直连 `soul.db`（默认 `/var/www/api/database/soul.db`），表名列名全在
+编译期白名单里，SQL 不做字符串拼接。
+
+| 工具 | 干什么 |
+|---|---|
+| `roroko_datas_query` | 取料。无 `kw` = 发散（池内均匀随机）；给 `kw` 或收束条件 = 收束 |
+| `roroko_datas_lookup` | 按名查详情（clothing / sexual_items / companion_pool / scenes） |
+| `roroko_datas_register` | 兜底注册：主表同名合并关键词，否则进 `ad_hoc` |
+| `roroko_datas_state` | `snap` 读 soul_state（带 staleness 鞭策）/ `update` 白名单写回 |
+
+取料口径（从 0.1.6 原样搬，别"优化"）：
+
+- 库不当裁判——发散为默认，收束条件由模型给
+- 记录侧 keywords 里 62%~84% 是单字，**单字 token 不作命中依据**（会误炸）
+- 用现有列、不加列；`slot` 分组键从库里动态取
+- `hit_count` / `last_used_at` **只展示，不排序**
+- 全表进内存再匹配（最大表 128 行，规则可控优先）
+
+收束参数：`slot`（逗号分隔）、`reveal_level`（上限）、`signal_level`（下限）、
+`limit`（clothing 是每槽位条数）。渲染带表概览、收束链留痕、槽位分组、`ad_hoc`
+补位，候选不足时提示去 `register`。
+
+**自动注入**：取过料 / 每 N 轮 / 压缩后，往 pre-step 的消息尾部追加一条 state 短条
+（`truth` / `decision` / `position` 这些）。不注册工具、不发 schema、不碰 system 段，
+不破 KV 前缀缓存。开关与节奏在设置页按 preset 配。
+
 ## 设置页
 
 设置面板里与「通用」「模型」「插件」同级的一页（`settings.section`，order 50）：
@@ -76,13 +112,19 @@ plugins:
 - 每组参数一个「覆盖」勾选框：不勾 = 一个字段都不发，跟随继承；勾了整组落盘
 - 两组都不覆盖时保存 = 把这个桶删掉；另有「重置为继承」
 - 文件状态（就绪 / 缺失 + 大小）
+- 同一张卡下半部分是素材库：库路径 + 自动注入四开关（`rounds` / `afterTool` /
+  `every` / `minGap`），同样按「覆盖」勾选决定发不发
 
 路由（webServer 普通路由，不碰 Remote / configForms）：
 
 ```
-GET  /roroko-tool/state   桶 + roster + 各 scope 生效值 + 文件状态
-POST /roroko-tool/config  按 preset 写桶（字段传 null 删键，{preset, reset:true} 删桶）
+GET  /roroko-tool/state   桶 + roster + 各 scope 生效值 + 文件状态 + datas 一块
+POST /roroko-tool/config  按 preset 写桶：{preset, section:'preinject'|'datas', …}
+                          字段传 null 删键，{preset, section, reset:true} 删桶
 ```
+
+两个模块的覆盖层分文件存：`<root>/state/preinject.json` 与 `<root>/state/datas.json`，
+结构同形（`{ presets: { common: {…}, <presetId>: {…} } }`）。
 
 ## 0.2.1 适配：系统段怎么知道自己是哪个 preset
 
@@ -105,7 +147,8 @@ POST /roroko-tool/config  按 preset 写桶（字段传 null 删键，{preset, r
 ```bash
 pnpm build
 node test/preinject-smoke.mjs   # 四层链 + 双段注入 + 判重
-node test/routes-smoke.mjs      # 三条路由 + 分桶读写
+node test/routes-smoke.mjs      # 两条路由 + 分桶读写
+node test/datas-smoke.mjs       # 取料匹配/收束/渲染 + datas 四层链 + 覆盖层落盘
 ```
 
 ## 构建与发布

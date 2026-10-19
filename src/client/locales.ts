@@ -38,6 +38,20 @@ export const zh = {
   saved: '已保存',
   saveFailed: '保存失败',
   resetScope: '重置为继承',
+
+  datasTitle: '素材库',
+  datasHint: 'roroko_datas_* 四把工具连哪个库，以及 state 短条多久自动注一次。',
+  coverDbPath: '覆盖库路径（不勾选 = 跟随继承）',
+  followDbPath: '跟随继承',
+  dbPathHint: '/var/www/api/database/soul.db',
+  coverAutoinject: '覆盖自动注入（不勾选 = 跟随继承）',
+  followAutoinject: '跟随继承',
+  aiRounds: '轮数触发',
+  aiAfterTool: '取过料后注入',
+  aiEvery: '每 N 轮',
+  aiMinGap: '最短间隔 N 轮',
+  on: '开',
+  off: '关',
 }
 
 export type LocaleKey = keyof typeof zh
@@ -82,4 +96,18 @@ export const en: Record<LocaleKey, string> = {
   saved: 'Saved',
   saveFailed: 'Save failed',
   resetScope: 'Reset to inherit',
+
+  datasTitle: 'Material library',
+  datasHint: 'Which database the roroko_datas_* tools open, and how often the state digest is injected.',
+  coverDbPath: 'Override the database path (unchecked = inherit)',
+  followDbPath: 'inherited',
+  dbPathHint: '/var/www/api/database/soul.db',
+  coverAutoinject: 'Override auto-injection (unchecked = inherit)',
+  followAutoinject: 'inherited',
+  aiRounds: 'Inject by round count',
+  aiAfterTool: 'Inject after tool use',
+  aiEvery: 'every N rounds',
+  aiMinGap: 'min gap N rounds',
+  on: 'on',
+  off: 'off',
 }

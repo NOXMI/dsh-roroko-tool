@@ -20,10 +20,17 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { mount as mountPreinject, type PreinjectConfig } from './preinject.js'
+import { mount as mountDatas, type DatasConfig } from './datas/index.js'
 import { registerStateRoutes, type WebServerLike, type PresetRegistryLike } from './routes.js'
 
 export { DEFAULTS, resolveEffective } from './preinject.js'
 export { COMMON, readState, resolveBucket, setBucket, clearBucket } from './presets.js'
+export {
+  AUTOINJECT_DEFAULTS, DEFAULT_DB_PATH, cleanAutoinject, datasStateFile, datasWiring,
+  readDatasState, resolveDatas, setDatasBucket, clearDatasBucket,
+} from './datas/presets.js'
+// 取料纯逻辑（不碰库、不碰 DSH 运行时）：给离线冒烟测试用。
+export { TABLES, pickCandidates, renderQuery, scoreRow, splitKws } from './datas/query-form.js'
 
 export const name = 'roroko-tool'
 
@@ -38,6 +45,19 @@ export const Config: z<RorokoToolConfig> = z.object({
       suppressHarnessIdentity: z.boolean().description('顶掉官方开场白段'),
     }),
   ]).description('上下文注入子模块（覆盖层在设置页里按 preset 分桶）'),
+  datas: z.union([
+    z.boolean(),
+    z.object({
+      root: z.string().description('覆盖层基准目录（默认 $DSH_HOME/roroko）'),
+      dbPath: z.string().description('soul.db 路径（默认 /var/www/api/database/soul.db）'),
+      autoinject: z.object({
+        rounds: z.boolean().description('轮数触发'),
+        every: z.number().description('每 N 轮注一次'),
+        afterTool: z.boolean().description('取过料后注入'),
+        minGap: z.number().description('两次注入之间至少隔 N 轮'),
+      }).description('state 短条自动注入'),
+    }),
+  ]).description('素材库子模块：roroko_datas_* 四把工具 + state 自动注入'),
 }) as z<RorokoToolConfig>
 /** 本包版本（设置页显示用）。 */
 export const version = '0.1.0'
@@ -45,7 +65,7 @@ export const version = '0.1.0'
 /** 插件配置：一层桶对应一个子模块；桶设成 false 即不挂载。 */
 export interface RorokoToolConfig {
   preinject?: PreinjectConfig | boolean
-  // datas?: DatasConfig | boolean
+  datas?: DatasConfig | boolean
   // memory?: MemoryConfig | boolean
   // onahole?: OnaholeConfig | boolean
 }
@@ -80,9 +100,17 @@ export function apply(ctx: Context, config: RorokoToolConfig = {}): void {
   })
 
   const preinject = config.preinject
-  if (preinject !== undefined && preinject !== false && preinject?.enabled !== false) {
+  if (preinject !== undefined && preinject !== false && (preinject === true || preinject.enabled !== false)) {
     surface.inject(['systemPrompt'], (scope) => {
       mountPreinject(scope, preinject === true ? {} : preinject)
+    })
+  }
+
+  // 素材库：tools 服务缺席时只有本模块不激活，不拖累 preinject。
+  const datas = config.datas
+  if (datas !== undefined && datas !== false && (datas === true || datas.enabled !== false)) {
+    surface.inject(['tools'], (scope) => {
+      mountDatas(scope, datas === true ? {} : datas)
     })
   }
 }

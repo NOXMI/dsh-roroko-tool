@@ -25,6 +25,36 @@ export interface Bucket {
   userFiles?: string[]
 }
 
+/** state 短条自动注入的开关与节奏。 */
+export interface AutoinjectSettings {
+  rounds: boolean
+  every: number
+  afterTool: boolean
+  minGap: number
+}
+
+/** datas 桶里的覆盖字段（autoinject 逐字段叠加）。 */
+export interface DatasBucket {
+  dbPath?: string
+  autoinject?: Partial<AutoinjectSettings>
+}
+
+/** datas 合成后的生效参数。 */
+export interface DatasEffective {
+  dbPath: string
+  autoinject: AutoinjectSettings
+}
+
+/** datas 侧全量状态。 */
+export interface DatasBody {
+  mounted: boolean
+  stateFile?: string
+  defaults: DatasEffective
+  wiring: Partial<DatasEffective>
+  presets: Record<string, DatasBucket>
+  effective: Record<string, DatasEffective>
+}
+
 /** preset 注册表里的一行。 */
 export interface PresetRow {
   id: string
@@ -46,6 +76,8 @@ export interface StateBody {
   scopes?: string[]
   effective?: Record<string, InjectConfig>
   files?: Record<string, { system: FileInfo[]; user: FileInfo[] }>
+  /** 素材库子模块（没挂载时为 undefined）。 */
+  datas?: DatasBody
 }
 
 /** 写失败的通用形状。 */

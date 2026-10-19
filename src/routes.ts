@@ -1,11 +1,13 @@
 /**
- * 设置页的 host 侧数据口。三条普通 webServer 路由，不引入 Remote/typert，
+ * 设置页的 host 侧数据口。两条普通 webServer 路由，不引入 Remote/typert，
  * 也不依赖 configForms：
  *
  *   GET  /roroko-tool/state   公共默认 + 各 preset 桶 + roster + 文件状态
- *   POST /roroko-tool/config  按 preset 写覆盖桶（{preset, …fields} / {preset, reset:true}）
+ *                             （preinject 与 datas 两块，各按挂载情况出）
+ *   POST /roroko-tool/config  按 preset 写覆盖桶
+ *                             （{preset, section:'preinject'|'datas', …fields} / {preset, reset:true}）
  *
- * 桶写完下一步装配就生效——preinject 的 provider 每次现读，不需要重挂载。
+ * 桶写完下一步装配就生效——两个子模块的 provider/执行侧都每次现读，不需要重挂载。
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { stat } from 'node:fs/promises'
@@ -17,7 +19,11 @@ import {
   type PreinjectConfig,
 } from './preinject.js'
 import { COMMON, clearBucket, readState, setBucket, stateFile, type PreinjectState } from './presets.js'
-import { firstMount } from './state.js'
+import {
+  AUTOINJECT_DEFAULTS, DEFAULT_DB_PATH, clearDatasBucket, datasWiring, readDatasState,
+  resolveDatas, setDatasBucket, datasStateFile, type DatasBucket, type DatasConfig, type EffectiveDatas,
+} from './datas/presets.js'
+import { firstDatasMount, firstMount } from './state.js'
 
 /** webServer 服务的最小面。 */
 export interface WebServerLike {
@@ -172,29 +178,55 @@ export function registerStateRoutes(
         return
       }
       const mount = firstMount()
-      if (mount === undefined) {
+      const datasMount = firstDatasMount()
+      if (mount === undefined && datasMount === undefined) {
         json(res, 200, { version, mounted: false })
         return
       }
-      const state = readState(mount.root)
+      const root = mount?.root ?? datasMount?.root ?? ''
+      const state = mount === undefined ? { presets: {} } : readState(mount.root)
       const rows = await roster()
-      // scope 集合：公共默认 + 注册表里的 preset + state 里已有的桶。
+      // scope 集合：公共默认 + 注册表里的 preset + 状态里已有的桶（两个模块的桶都算）。
+      const datasState = readDatasState(root)
       const scopes = [COMMON]
       for (const row of rows) if (!scopes.includes(row.id)) scopes.push(row.id)
       for (const key of Object.keys(state.presets)) if (!scopes.includes(key)) scopes.push(key)
-      const views = await scopeViews(mount.config, state, mount.root, scopes)
+      for (const key of Object.keys(datasState.presets)) if (!scopes.includes(key)) scopes.push(key)
+
+      const views = mount === undefined
+        ? { effective: {}, files: {} }
+        : await scopeViews(mount.config, state, mount.root, scopes)
+
+      /** datas 侧：各 scope 的生效参数（没有接线层就按默认算）。 */
+      const datasEffective: Record<string, EffectiveDatas> = {}
+      for (const scope of scopes) {
+        datasEffective[scope] = resolveDatas(
+          datasMount?.config ?? {},
+          datasState,
+          scope === COMMON ? undefined : scope,
+        )
+      }
+
       json(res, 200, {
         version,
-        mounted: true,
-        root: mount.root,
-        stateFile: stateFile(mount.root),
+        mounted: mount !== undefined,
+        root,
+        stateFile: mount === undefined ? undefined : stateFile(mount.root),
         presets: state.presets,
         defaults: DEFAULTS,
-        wiring: wiring(mount.config),
+        wiring: mount === undefined ? {} : wiring(mount.config),
         roster: rows,
         scopes,
         effective: views.effective,
         files: views.files,
+        datas: {
+          mounted: datasMount !== undefined,
+          stateFile: datasStateFile(root),
+          defaults: { dbPath: DEFAULT_DB_PATH, autoinject: AUTOINJECT_DEFAULTS },
+          wiring: datasMount === undefined ? {} : datasWiring(datasMount.config),
+          presets: datasState.presets,
+          effective: datasEffective,
+        },
       })
     },
   })
@@ -205,11 +237,6 @@ export function registerStateRoutes(
     handler: async (req, res) => {
       if (req.method !== 'POST') {
         json(res, 405, { error: 'POST only' })
-        return
-      }
-      const mount = firstMount()
-      if (mount === undefined) {
-        json(res, 200, { ok: false, reason: '未挂载 preinject，没有可写的桶' })
         return
       }
       let body: unknown
@@ -227,6 +254,31 @@ export function registerStateRoutes(
       const scope = typeof patch.preset === 'string' ? patch.preset : COMMON
       if (!SCOPE_RE.test(scope)) {
         json(res, 400, { ok: false, reason: `桶名不合法：${scope}` })
+        return
+      }
+
+      // 写哪个模块的桶：不写 section 就是 preinject（兼容旧页面）。
+      const section = typeof patch.section === 'string' ? patch.section : 'preinject'
+      if (section === 'datas') {
+        const datasMount = firstDatasMount()
+        if (datasMount === undefined) {
+          json(res, 200, { ok: false, reason: '未挂载 datas，没有可写的桶' })
+          return
+        }
+        const state = patch.reset === true
+          ? await clearDatasBucket(datasMount.root, scope)
+          : await setDatasBucket(datasMount.root, scope, patch)
+        json(res, 200, { ok: true, state })
+        return
+      }
+      if (section !== 'preinject') {
+        json(res, 400, { ok: false, reason: `未知 section：${section}` })
+        return
+      }
+
+      const mount = firstMount()
+      if (mount === undefined) {
+        json(res, 200, { ok: false, reason: '未挂载 preinject，没有可写的桶' })
         return
       }
       const state = patch.reset === true

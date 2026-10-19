@@ -38,6 +38,16 @@ import { registerMount, type MountStatus } from './state.js'
 /** 子模块标识：只用于日志与消息来源签名，不是独立插件。 */
 export const moduleName = 'roroko-preinject'
 
+/**
+ * 消息来源是 merge-extensible 的和类型：每个生产者在自己模块里声明自己的 kind。
+ * v4 之后没有 catch-all 的 `plugin` kind，所以这里必须自己登记。
+ */
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'roroko-preinject': { kind: 'roroko-preinject' }
+  }
+}
+
 /** 抢占的槽位名（等同 PERSONA_PREFIX_SECTION）。 */
 const SECTION_NAME = 'deployment:persona-prefix'
 /** 官方固定开场白段名，order -1000。 */

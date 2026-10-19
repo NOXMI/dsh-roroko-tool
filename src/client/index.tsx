@@ -16,7 +16,10 @@ import { en, zh, type LocaleKey } from './locales.js'
 import {
   fetchState,
   saveConfig,
+  type AutoinjectSettings,
   type Bucket,
+  type DatasBucket,
+  type DatasEffective,
   type FileInfo,
   type InjectConfig,
   type StateBody,
@@ -368,12 +371,185 @@ function ScopePanel(props: {
   )
 }
 
+/** 一组自动注入开关：两个布尔 + 两个数字。 */
+function AutoinjectEditor(props: {
+  value: AutoinjectSettings
+  busy: boolean
+  t: Translate
+  onChange: (next: AutoinjectSettings) => void
+}): React.ReactElement {
+  const { value, busy, t, onChange } = props
+  const num = (key: 'every' | 'minGap'): React.ReactElement => (
+    <input
+      type="number"
+      min={key === 'every' ? 1 : 0}
+      max={200}
+      value={value[key]}
+      disabled={busy}
+      style={{ ...inputStyle, width: 90 }}
+      onChange={event => {
+        const next = Number(event.target.value)
+        onChange({ ...value, [key]: Number.isFinite(next) ? Math.trunc(next) : value[key] })
+      }}
+    />
+  )
+  return (
+    <div>
+      <label style={coverLabelStyle}>
+        <input
+          type="checkbox"
+          checked={value.rounds}
+          disabled={busy}
+          onChange={() => { onChange({ ...value, rounds: !value.rounds }) }}
+        />
+        {t('aiRounds')}
+      </label>
+      <label style={coverLabelStyle}>
+        <input
+          type="checkbox"
+          checked={value.afterTool}
+          disabled={busy}
+          onChange={() => { onChange({ ...value, afterTool: !value.afterTool }) }}
+        />
+        {t('aiAfterTool')}
+      </label>
+      <div style={{ ...coverLabelStyle, cursor: 'default' }}>
+        <span>{t('aiEvery')}</span>
+        {num('every')}
+        <span>{t('aiMinGap')}</span>
+        {num('minGap')}
+      </div>
+    </div>
+  )
+}
+
+/** 素材库参数：库路径 + 自动注入节奏。 */
+function DatasPanel(props: {
+  t: Translate
+  scope: string
+  bucket: DatasBucket | undefined
+  effective: DatasEffective | undefined
+  defaults: DatasEffective
+  onSaved: () => Promise<void>
+}): React.ReactElement {
+  const { t, scope, bucket, effective, defaults, onSaved } = props
+  const follow = effective ?? defaults
+  const [coverPath, setCoverPath] = useState(() => bucket?.dbPath !== undefined)
+  const [coverAuto, setCoverAuto] = useState(() => bucket?.autoinject !== undefined)
+  const [dbPath, setDbPath] = useState<string>(() => bucket?.dbPath ?? follow.dbPath)
+  const [auto, setAuto] = useState<AutoinjectSettings>(() => ({ ...follow.autoinject }))
+  const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const run = (patch: Record<string, unknown>): void => {
+    setSaved(false)
+    setSaveError(null)
+    setSaving(true)
+    void saveConfig(patch)
+      .then(async ack => {
+        if (!ack.ok) throw new Error(ack.reason ?? t('saveFailed'))
+        setSaved(true)
+        await onSaved()
+      })
+      .catch((cause: unknown) => {
+        setSaveError(cause instanceof Error ? cause.message : String(cause))
+      })
+      .finally(() => { setSaving(false) })
+  }
+
+  const save = (): void => {
+    run({
+      preset: scope,
+      section: 'datas',
+      dbPath: coverPath ? dbPath.trim() : null,
+      autoinject: coverAuto ? auto : null,
+    })
+  }
+
+  const busy = saving
+  return (
+    <PanelShell>
+      <ToolHeader title={t('datasTitle')} desc={t('datasHint')} />
+
+      <label style={coverLabelStyle}>
+        <input
+          type="checkbox"
+          checked={coverPath}
+          disabled={busy}
+          onChange={() => { setCoverPath(value => !value); setSaved(false) }}
+        />
+        {t('coverDbPath')}
+      </label>
+      {coverPath
+        ? (
+          <div>
+            <input
+              type="text"
+              value={dbPath}
+              disabled={busy}
+              placeholder={t('dbPathHint')}
+              style={inputStyle}
+              onChange={event => { setDbPath(event.target.value); setSaved(false) }}
+            />
+          </div>
+        )
+        : <div style={hintStyle}>{t('followDbPath')}: {follow.dbPath}</div>}
+
+      <label style={coverLabelStyle}>
+        <input
+          type="checkbox"
+          checked={coverAuto}
+          disabled={busy}
+          onChange={() => { setCoverAuto(value => !value); setSaved(false) }}
+        />
+        {t('coverAutoinject')}
+      </label>
+      {coverAuto
+        ? (
+          <AutoinjectEditor
+            value={auto}
+            busy={busy}
+            t={t}
+            onChange={next => { setAuto(next); setSaved(false) }}
+          />
+        )
+        : (
+          <div style={hintStyle}>
+            {t('followAutoinject')}: {follow.autoinject.rounds ? t('on') : t('off')}
+            {' · '}{t('aiEvery')}{follow.autoinject.every}
+            {' · '}{t('aiMinGap')}{follow.autoinject.minGap}
+          </div>
+        )}
+
+      <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+        <button type="button" disabled={busy} style={buttonStyle} onClick={save}>
+          {saving ? t('saving') : t('save')}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          style={buttonStyle}
+          onClick={() => { run({ preset: scope, section: 'datas', reset: true }) }}
+        >
+          {t('resetScope')}
+        </button>
+        {saved
+          ? <span style={{ color: 'var(--dsw-text-success, #46a758)', fontSize: '0.8em' }}>{t('saved')}</span>
+          : null}
+        {saveError === null
+          ? null
+          : <span style={{ color: 'var(--dsw-text-danger, #e5484d)', fontSize: '0.8em' }}>{t('saveFailed')}: {saveError}</span>}
+      </div>
+    </PanelShell>
+  )
+}
+
 /**
  * 设置页主体。
  * @param props - 页签所有者传入的属性。
  * @returns 设置页元素。
- */
-export function RorokoSettingsPage(props: { t: Translate }): React.ReactElement {
+ */export function RorokoSettingsPage(props: { t: Translate }): React.ReactElement {
   const { t } = props
   const [state, setState] = useState<StateBody | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -404,7 +580,7 @@ export function RorokoSettingsPage(props: { t: Translate }): React.ReactElement 
   if (state === null) {
     return <div style={{ padding: '6px 0', color: 'var(--dsw-text-secondary, #888)', fontSize: '0.9em' }}>{t('loading')}</div>
   }
-  if (!state.mounted) {
+  if (!state.mounted && state.datas?.mounted !== true) {
     return (
       <div style={{ padding: '6px 0' }}>
         <div style={{ fontWeight: 600 }}>{t('notMounted')}</div>
@@ -442,14 +618,30 @@ export function RorokoSettingsPage(props: { t: Translate }): React.ReactElement 
             badge={badge}
             defaultOpen={isCommon}
           >
-            <ScopePanel
-              t={t}
-              scope={scope}
-              bucket={bucket}
-              effective={state.effective?.[scope]}
-              files={state.files?.[scope]}
-              onSaved={load}
-            />
+            {state.mounted
+              ? (
+                <ScopePanel
+                  t={t}
+                  scope={scope}
+                  bucket={bucket}
+                  effective={state.effective?.[scope]}
+                  files={state.files?.[scope]}
+                  onSaved={load}
+                />
+              )
+              : null}
+            {state.datas?.mounted
+              ? (
+                <DatasPanel
+                  t={t}
+                  scope={scope}
+                  bucket={state.datas.presets[scope]}
+                  effective={state.datas.effective[scope]}
+                  defaults={state.datas.defaults}
+                  onSaved={load}
+                />
+              )
+              : null}
           </ScopeCard>
         )
       })}

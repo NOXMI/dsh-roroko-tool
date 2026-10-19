@@ -39,7 +39,20 @@ window.__ModuleLoader__.load({
 			saving: "保存中…",
 			saved: "已保存",
 			saveFailed: "保存失败",
-			resetScope: "重置为继承"
+			resetScope: "重置为继承",
+			datasTitle: "素材库",
+			datasHint: "roroko_datas_* 四把工具连哪个库，以及 state 短条多久自动注一次。",
+			coverDbPath: "覆盖库路径（不勾选 = 跟随继承）",
+			followDbPath: "跟随继承",
+			dbPathHint: "/var/www/api/database/soul.db",
+			coverAutoinject: "覆盖自动注入（不勾选 = 跟随继承）",
+			followAutoinject: "跟随继承",
+			aiRounds: "轮数触发",
+			aiAfterTool: "取过料后注入",
+			aiEvery: "每 N 轮",
+			aiMinGap: "最短间隔 N 轮",
+			on: "开",
+			off: "关"
 		};
 		/** English copy, same keys. */
 		const en = {
@@ -73,7 +86,20 @@ window.__ModuleLoader__.load({
 			saving: "Saving…",
 			saved: "Saved",
 			saveFailed: "Save failed",
-			resetScope: "Reset to inherit"
+			resetScope: "Reset to inherit",
+			datasTitle: "Material library",
+			datasHint: "Which database the roroko_datas_* tools open, and how often the state digest is injected.",
+			coverDbPath: "Override the database path (unchecked = inherit)",
+			followDbPath: "inherited",
+			dbPathHint: "/var/www/api/database/soul.db",
+			coverAutoinject: "Override auto-injection (unchecked = inherit)",
+			followAutoinject: "inherited",
+			aiRounds: "Inject by round count",
+			aiAfterTool: "Inject after tool use",
+			aiEvery: "every N rounds",
+			aiMinGap: "min gap N rounds",
+			on: "on",
+			off: "off"
 		};
 		//#endregion
 		//#region src/client/api.ts
@@ -219,6 +245,19 @@ window.__ModuleLoader__.load({
 					padding: "10px 12px"
 				},
 				children: props.children
+			});
+		}
+		/** 工具卡片头：标题 + 一句说明。 */
+		function ToolHeader(props) {
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				style: { margin: "14px 0 4px" },
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+					style: { fontWeight: 600 },
+					children: props.title
+				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+					style: hintStyle,
+					children: props.desc
+				})]
 			});
 		}
 		/** 可折叠卡片：标题一行，点开才渲染内容。 */
@@ -485,12 +524,229 @@ window.__ModuleLoader__.load({
 				})
 			] });
 		}
+		/** 一组自动注入开关：两个布尔 + 两个数字。 */
+		function AutoinjectEditor(props) {
+			const { value, busy, t, onChange } = props;
+			const num = (key) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+				type: "number",
+				min: key === "every" ? 1 : 0,
+				max: 200,
+				value: value[key],
+				disabled: busy,
+				style: {
+					...inputStyle,
+					width: 90
+				},
+				onChange: (event) => {
+					const next = Number(event.target.value);
+					onChange({
+						...value,
+						[key]: Number.isFinite(next) ? Math.trunc(next) : value[key]
+					});
+				}
+			});
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", { children: [
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+					style: coverLabelStyle,
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+						type: "checkbox",
+						checked: value.rounds,
+						disabled: busy,
+						onChange: () => {
+							onChange({
+								...value,
+								rounds: !value.rounds
+							});
+						}
+					}), t("aiRounds")]
+				}),
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+					style: coverLabelStyle,
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+						type: "checkbox",
+						checked: value.afterTool,
+						disabled: busy,
+						onChange: () => {
+							onChange({
+								...value,
+								afterTool: !value.afterTool
+							});
+						}
+					}), t("aiAfterTool")]
+				}),
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					style: {
+						...coverLabelStyle,
+						cursor: "default"
+					},
+					children: [
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("aiEvery") }),
+						num("every"),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("aiMinGap") }),
+						num("minGap")
+					]
+				})
+			] });
+		}
+		/** 素材库参数：库路径 + 自动注入节奏。 */
+		function DatasPanel(props) {
+			const { t, scope, bucket, effective, defaults, onSaved } = props;
+			const follow = effective ?? defaults;
+			const [coverPath, setCoverPath] = (0, react.useState)(() => bucket?.dbPath !== void 0);
+			const [coverAuto, setCoverAuto] = (0, react.useState)(() => bucket?.autoinject !== void 0);
+			const [dbPath, setDbPath] = (0, react.useState)(() => bucket?.dbPath ?? follow.dbPath);
+			const [auto, setAuto] = (0, react.useState)(() => ({ ...follow.autoinject }));
+			const [saved, setSaved] = (0, react.useState)(false);
+			const [saving, setSaving] = (0, react.useState)(false);
+			const [saveError, setSaveError] = (0, react.useState)(null);
+			const run = (patch) => {
+				setSaved(false);
+				setSaveError(null);
+				setSaving(true);
+				saveConfig(patch).then(async (ack) => {
+					if (!ack.ok) throw new Error(ack.reason ?? t("saveFailed"));
+					setSaved(true);
+					await onSaved();
+				}).catch((cause) => {
+					setSaveError(cause instanceof Error ? cause.message : String(cause));
+				}).finally(() => {
+					setSaving(false);
+				});
+			};
+			const save = () => {
+				run({
+					preset: scope,
+					section: "datas",
+					dbPath: coverPath ? dbPath.trim() : null,
+					autoinject: coverAuto ? auto : null
+				});
+			};
+			const busy = saving;
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(PanelShell, { children: [
+				/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ToolHeader, {
+					title: t("datasTitle"),
+					desc: t("datasHint")
+				}),
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+					style: coverLabelStyle,
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+						type: "checkbox",
+						checked: coverPath,
+						disabled: busy,
+						onChange: () => {
+							setCoverPath((value) => !value);
+							setSaved(false);
+						}
+					}), t("coverDbPath")]
+				}),
+				coverPath ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+					type: "text",
+					value: dbPath,
+					disabled: busy,
+					placeholder: t("dbPathHint"),
+					style: inputStyle,
+					onChange: (event) => {
+						setDbPath(event.target.value);
+						setSaved(false);
+					}
+				}) }) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					style: hintStyle,
+					children: [
+						t("followDbPath"),
+						": ",
+						follow.dbPath
+					]
+				}),
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+					style: coverLabelStyle,
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+						type: "checkbox",
+						checked: coverAuto,
+						disabled: busy,
+						onChange: () => {
+							setCoverAuto((value) => !value);
+							setSaved(false);
+						}
+					}), t("coverAutoinject")]
+				}),
+				coverAuto ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(AutoinjectEditor, {
+					value: auto,
+					busy,
+					t,
+					onChange: (next) => {
+						setAuto(next);
+						setSaved(false);
+					}
+				}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					style: hintStyle,
+					children: [
+						t("followAutoinject"),
+						": ",
+						follow.autoinject.rounds ? t("on") : t("off"),
+						" · ",
+						t("aiEvery"),
+						follow.autoinject.every,
+						" · ",
+						t("aiMinGap"),
+						follow.autoinject.minGap
+					]
+				}),
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					style: {
+						alignItems: "center",
+						display: "flex",
+						flexWrap: "wrap",
+						gap: 8,
+						marginTop: 10
+					},
+					children: [
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+							type: "button",
+							disabled: busy,
+							style: buttonStyle,
+							onClick: save,
+							children: saving ? t("saving") : t("save")
+						}),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+							type: "button",
+							disabled: busy,
+							style: buttonStyle,
+							onClick: () => {
+								run({
+									preset: scope,
+									section: "datas",
+									reset: true
+								});
+							},
+							children: t("resetScope")
+						}),
+						saved ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+							style: {
+								color: "var(--dsw-text-success, #46a758)",
+								fontSize: "0.8em"
+							},
+							children: t("saved")
+						}) : null,
+						saveError === null ? null : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+							style: {
+								color: "var(--dsw-text-danger, #e5484d)",
+								fontSize: "0.8em"
+							},
+							children: [
+								t("saveFailed"),
+								": ",
+								saveError
+							]
+						})
+					]
+				})
+			] });
+		}
 		/**
 		* 设置页主体。
 		* @param props - 页签所有者传入的属性。
 		* @returns 设置页元素。
-		*/
-		function RorokoSettingsPage(props) {
+		*/ function RorokoSettingsPage(props) {
 			const { t } = props;
 			const [state, setState] = (0, react.useState)(null);
 			const [error, setError] = (0, react.useState)(null);
@@ -535,7 +791,7 @@ window.__ModuleLoader__.load({
 				},
 				children: t("loading")
 			});
-			if (!state.mounted) return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+			if (!state.mounted && state.datas?.mounted !== true) return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				style: { padding: "6px 0" },
 				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 					style: { fontWeight: 600 },
@@ -570,19 +826,26 @@ window.__ModuleLoader__.load({
 					const row = roster.get(scope);
 					const badge = isCommon ? t("badgeBaseline") : row?.broken !== void 0 ? t("badgeBroken") : bucket === void 0 ? t("badgeInherit") : t("badgeOverridden");
 					const title = isCommon ? t("commonTitle") : row?.name === void 0 || row.name.length === 0 ? scope : `${scope} · ${row.name}`;
-					return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScopeCard, {
+					return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(ScopeCard, {
 						title,
 						hint: isCommon ? t("commonHint") : t("presetHint"),
 						badge,
 						defaultOpen: isCommon,
-						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScopePanel, {
+						children: [state.mounted ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScopePanel, {
 							t,
 							scope,
 							bucket,
 							effective: state.effective?.[scope],
 							files: state.files?.[scope],
 							onSaved: load
-						})
+						}) : null, state.datas?.mounted ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(DatasPanel, {
+							t,
+							scope,
+							bucket: state.datas.presets[scope],
+							effective: state.datas.effective[scope],
+							defaults: state.datas.defaults,
+							onSaved: load
+						}) : null]
 					}, `${scope}:${JSON.stringify(bucket ?? {})}`);
 				})]
 			});

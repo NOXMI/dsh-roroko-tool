@@ -23,6 +23,9 @@
               # 两张清单在设置页里写（落 $DSH_HOME/roroko/state/preinject.json），
               # preset 这边只给桶，让模块挂上。
               preinject: {}
+              # 素材库：库路径与自动注入节奏都走设置页
+              # （落 $DSH_HOME/roroko/state/datas.json），这里同样只给空桶。
+              datas: {}
 
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
