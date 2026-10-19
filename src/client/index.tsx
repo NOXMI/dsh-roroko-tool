@@ -1,18 +1,27 @@
 /**
  * 洛洛可设置页（浏览器半侧）。
  *
- * 挂进设置面板的 `settings.section`：两张清单，一块拼进系统层，一块拼进用户层。
- * 保存即写 `<root>/state/preinject.json`，preinject 的 provider 每次装配现读，
- * 改完下一步就生效。
+ * 版式照 0.1.6 那套：灰色说明行 + 浅底面板 + 逐行可增删的文件清单 +
+ * 底部保存按钮与内联的已保存/失败提示。
  *
- * 版式沿用旧版 roroko-tool 设置页那套：灰色说明行 + 浅底 PanelShell +
- * 逐行可增删的文件清单 + 底部保存按钮与内联的已保存/失败提示。
+ * 内容换成新版的分桶结构：公共默认一张卡（默认展开），注册表里每个 preset
+ * 一张折叠卡。每组参数一个「覆盖」勾选框——不勾就一个字段都不发，跟随继承；
+ * 勾了整组落盘，空清单就是显式清空。两组都不覆盖时保存 = 把桶删掉。
+ *
  * 数据走宿主自己的 HTTP 路由（见 api.ts），不碰 Remote/configForms。
  */
 import { useCallback, useEffect, useState } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { en, zh, type LocaleKey } from './locales.js'
-import { fetchState, resetInjected, saveConfig, type FileInfo, type StateBody } from './api.js'
+import {
+  fetchState,
+  resetInjected,
+  saveConfig,
+  type Bucket,
+  type FileInfo,
+  type InjectConfig,
+  type StateBody,
+} from './api.js'
 
 /** 文案命名空间。 */
 export const NS = 'rorokoTool'
@@ -71,6 +80,49 @@ const groupLabelStyle: React.CSSProperties = {
   marginTop: 8,
 }
 
+/** 卡片外壳。 */
+const cardStyle: React.CSSProperties = {
+  border: '1px solid var(--dsw-text-secondary, #444)',
+  borderRadius: 6,
+  margin: '8px 0',
+  padding: '8px 10px',
+}
+
+/** 卡片标题按钮（整行可点、左对齐）。 */
+const cardHeadStyle: React.CSSProperties = {
+  alignItems: 'center',
+  background: 'none',
+  border: 'none',
+  color: 'inherit',
+  cursor: 'pointer',
+  display: 'flex',
+  fontFamily: 'inherit',
+  fontSize: '0.95em',
+  gap: 8,
+  padding: 0,
+  textAlign: 'left',
+  width: '100%',
+}
+
+/** 卡片状态徽标。 */
+const badgeStyle: React.CSSProperties = {
+  border: '1px solid var(--dsw-text-secondary, #666)',
+  borderRadius: 4,
+  color: 'var(--dsw-text-secondary, #888)',
+  fontSize: '0.78em',
+  padding: '1px 6px',
+}
+
+/** 「覆盖这一组」复选框所在行。 */
+const coverLabelStyle: React.CSSProperties = {
+  alignItems: 'center',
+  cursor: 'pointer',
+  display: 'flex',
+  fontSize: '0.88em',
+  gap: 6,
+  marginTop: 8,
+}
+
 /** 区块外壳：参数面板共用背景/圆角/内边距。 */
 function PanelShell(props: { children: React.ReactNode }): React.ReactElement {
   return (
@@ -95,7 +147,28 @@ function ToolHeader(props: { title: string; desc: string }): React.ReactElement 
   )
 }
 
-/** 文件清单编辑器：若干行文本框 + 增删。系统层与用户层共用一份。 */
+/** 可折叠卡片：标题一行，点开才渲染内容。 */
+function ScopeCard(props: {
+  title: string
+  hint: string
+  badge: string
+  defaultOpen: boolean
+  children: React.ReactNode
+}): React.ReactElement {
+  const [open, setOpen] = useState(props.defaultOpen)
+  return (
+    <div style={cardStyle}>
+      <button type="button" style={cardHeadStyle} onClick={() => { setOpen(value => !value) }}>
+        <span style={{ fontWeight: 600 }}>{open ? '▾' : '▸'} {props.title}</span>
+        <span style={badgeStyle}>{props.badge}</span>
+      </button>
+      <div style={hintStyle}>{props.hint}</div>
+      {open ? <div style={{ marginTop: 8 }}>{props.children}</div> : null}
+    </div>
+  )
+}
+
+/** 文件清单编辑器：若干行文本框 + 增删。 */
 function FileListEditor(props: {
   files: string[]
   busy: boolean
@@ -131,18 +204,15 @@ function FileListEditor(props: {
         </div>
       ))}
       <div style={{ marginTop: 4 }}>
-        <button
-          type="button"
-          disabled={busy}
-          style={buttonStyle}
-          onClick={() => { onChange([...files, '']) }}
-        >{addLabel}</button>
+        <button type="button" disabled={busy} style={buttonStyle} onClick={() => { onChange([...files, '']) }}>
+          {addLabel}
+        </button>
       </div>
     </div>
   )
 }
 
-/** 清单读盘状态：就绪 / 缺失，标在清单下面。 */
+/** 清单读盘状态：就绪 / 缺失。 */
 function FileStatus(props: { infos: FileInfo[] | undefined; t: Translate }): React.ReactElement | null {
   const { infos, t } = props
   if (infos === undefined || infos.length === 0) return null
@@ -172,6 +242,144 @@ function cleanList(list: readonly string[]): string[] {
     .filter((item, index, self) => self.indexOf(item) === index)
 }
 
+/** 一张卡的内容：两组参数 + 保存 / 重置。 */
+function ScopePanel(props: {
+  t: Translate
+  scope: string
+  bucket: Bucket | undefined
+  effective: InjectConfig | undefined
+  files: { system: FileInfo[]; user: FileInfo[] } | undefined
+  onSaved: () => Promise<void>
+}): React.ReactElement {
+  const { t, scope, bucket, effective, files, onSaved } = props
+  const [coverSystem, setCoverSystem] = useState(() => bucket?.systemFiles !== undefined)
+  const [coverUser, setCoverUser] = useState(() => bucket?.userFiles !== undefined || bucket?.wrap !== undefined)
+  const [systemFiles, setSystemFiles] = useState<string[]>(() => [...(bucket?.systemFiles ?? effective?.systemFiles ?? [])])
+  const [userFiles, setUserFiles] = useState<string[]>(() => [...(bucket?.userFiles ?? effective?.userFiles ?? [])])
+  const [wrap, setWrap] = useState<boolean>(() => bucket?.wrap ?? effective?.wrap ?? true)
+  const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const save = (): void => {
+    setSaved(false)
+    setSaveError(null)
+    setSaving(true)
+    const patch: Record<string, unknown> = { preset: scope }
+    patch.systemFiles = coverSystem ? cleanList(systemFiles) : null
+    patch.userFiles = coverUser ? cleanList(userFiles) : null
+    patch.wrap = coverUser ? wrap : null
+    void saveConfig(patch)
+      .then(async ack => {
+        if (!ack.ok) throw new Error(ack.reason ?? t('saveFailed'))
+        setSaved(true)
+        await onSaved()
+      })
+      .catch((cause: unknown) => {
+        setSaveError(cause instanceof Error ? cause.message : String(cause))
+      })
+      .finally(() => { setSaving(false) })
+  }
+
+  const resetScope = (): void => {
+    setSaved(false)
+    setSaveError(null)
+    setSaving(true)
+    void saveConfig({ preset: scope, reset: true })
+      .then(async ack => {
+        if (!ack.ok) throw new Error(ack.reason ?? t('saveFailed'))
+        setSaved(true)
+        await onSaved()
+      })
+      .catch((cause: unknown) => {
+        setSaveError(cause instanceof Error ? cause.message : String(cause))
+      })
+      .finally(() => { setSaving(false) })
+  }
+
+  const busy = saving
+  const followSystem = effective?.systemFiles.join(' / ') ?? ''
+  const followUser = effective?.userFiles.join(' / ') ?? ''
+
+  return (
+    <PanelShell>
+      <label style={coverLabelStyle}>
+        <input
+          type="checkbox"
+          checked={coverSystem}
+          disabled={busy}
+          onChange={() => { setCoverSystem(value => !value); setSaved(false) }}
+        />
+        {t('coverSystem')}
+      </label>
+      {coverSystem
+        ? (
+          <div>
+            <FileListEditor
+              files={systemFiles}
+              busy={busy}
+              placeholder={t('filesHint')}
+              addLabel={t('addFile')}
+              deleteLabel={t('deleteRow')}
+              onChange={next => { setSystemFiles(next); setSaved(false) }}
+            />
+            <FileStatus infos={files?.system} t={t} />
+          </div>
+        )
+        : <div style={hintStyle}>{t('followSystem')}: {followSystem.length > 0 ? followSystem : t('emptyFiles')}</div>}
+
+      <label style={coverLabelStyle}>
+        <input
+          type="checkbox"
+          checked={coverUser}
+          disabled={busy}
+          onChange={() => { setCoverUser(value => !value); setSaved(false) }}
+        />
+        {t('coverUser')}
+      </label>
+      {coverUser
+        ? (
+          <div>
+            <FileListEditor
+              files={userFiles}
+              busy={busy}
+              placeholder={t('filesHint')}
+              addLabel={t('addFile')}
+              deleteLabel={t('deleteRow')}
+              onChange={next => { setUserFiles(next); setSaved(false) }}
+            />
+            <label style={coverLabelStyle}>
+              <input
+                type="checkbox"
+                checked={wrap}
+                disabled={busy}
+                onChange={() => { setWrap(value => !value); setSaved(false) }}
+              />
+              {t('wrap')}
+            </label>
+            <FileStatus infos={files?.user} t={t} />
+          </div>
+        )
+        : <div style={hintStyle}>{t('followUser')}: {followUser.length > 0 ? followUser : t('emptyFiles')}</div>}
+
+      <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+        <button type="button" disabled={busy} style={buttonStyle} onClick={save}>
+          {saving ? t('saving') : t('save')}
+        </button>
+        <button type="button" disabled={busy} style={buttonStyle} onClick={resetScope}>
+          {t('resetScope')}
+        </button>
+        {saved
+          ? <span style={{ color: 'var(--dsw-text-success, #46a758)', fontSize: '0.8em' }}>{t('saved')}</span>
+          : null}
+        {saveError === null
+          ? null
+          : <span style={{ color: 'var(--dsw-text-danger, #e5484d)', fontSize: '0.8em' }}>{t('saveFailed')}: {saveError}</span>}
+      </div>
+    </PanelShell>
+  )
+}
+
 /**
  * 设置页主体。
  * @param props - 页签所有者传入的属性。
@@ -180,25 +388,13 @@ function cleanList(list: readonly string[]): string[] {
 export function RorokoSettingsPage(props: { t: Translate }): React.ReactElement {
   const { t } = props
   const [state, setState] = useState<StateBody | null>(null)
-  const [systemFiles, setSystemFiles] = useState<string[]>([])
-  const [userFiles, setUserFiles] = useState<string[]>([])
-  const [wrap, setWrap] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
-  const [saved, setSaved] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [saveError, setSaveError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setError(null)
     try {
-      const body = await fetchState()
-      setState(body)
-      if (body.config !== undefined) {
-        setSystemFiles(body.config.systemFiles)
-        setUserFiles(body.config.userFiles)
-        setWrap(body.config.wrap)
-      }
+      setState(await fetchState())
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     }
@@ -207,22 +403,6 @@ export function RorokoSettingsPage(props: { t: Translate }): React.ReactElement 
   useEffect(() => {
     void load()
   }, [load])
-
-  const save = useCallback(() => {
-    setSaved(false)
-    setSaveError(null)
-    setSaving(true)
-    void saveConfig({ systemFiles: cleanList(systemFiles), userFiles: cleanList(userFiles), wrap })
-      .then(async ack => {
-        if (!ack.ok) throw new Error(ack.reason ?? t('saveFailed'))
-        setSaved(true)
-        await load()
-      })
-      .catch((cause: unknown) => {
-        setSaveError(cause instanceof Error ? cause.message : String(cause))
-      })
-      .finally(() => { setSaving(false) })
-  }, [systemFiles, userFiles, wrap, load, t])
 
   const reset = useCallback(() => {
     setNote(null)
@@ -253,81 +433,58 @@ export function RorokoSettingsPage(props: { t: Translate }): React.ReactElement 
     )
   }
 
-  const busy = saving
+  const scopes = state.scopes ?? ['common']
+  const roster = new Map((state.roster ?? []).map(row => [row.id, row]))
 
   return (
     <div style={{ padding: '6px 0' }}>
       <div style={{ color: 'var(--dsw-text-secondary, #888)', fontSize: '0.9em', marginBottom: 12 }}>
-        {t('title')} · {t('subtitle')}
+        {t('title')} · {t('subtitle')} — {t('stateFile')}: {state.stateFile ?? '—'}
       </div>
 
-      <ToolHeader title={t('systemTitle')} desc={t('systemHint')} />
-      <PanelShell>
-        <FileListEditor
-          files={systemFiles}
-          busy={busy}
-          placeholder={t('filesHint')}
-          addLabel={t('addFile')}
-          deleteLabel={t('deleteRow')}
-          onChange={next => { setSystemFiles(next); setSaved(false) }}
-        />
-        <FileStatus infos={state.files?.system} t={t} />
-      </PanelShell>
-
-      <ToolHeader title={t('userTitle')} desc={t('userHint')} />
-      <PanelShell>
-        <FileListEditor
-          files={userFiles}
-          busy={busy}
-          placeholder={t('filesHint')}
-          addLabel={t('addFile')}
-          deleteLabel={t('deleteRow')}
-          onChange={next => { setUserFiles(next); setSaved(false) }}
-        />
-        <label style={{
-          alignItems: 'center',
-          cursor: 'pointer',
-          display: 'flex',
-          fontSize: '0.85em',
-          gap: 6,
-          marginTop: 10,
-        }}>
-          <input
-            type="checkbox"
-            checked={wrap}
-            disabled={busy}
-            onChange={() => { setWrap(value => !value); setSaved(false) }}
-          />
-          {t('wrap')}
-        </label>
-        <FileStatus infos={state.files?.user} t={t} />
-      </PanelShell>
-
-      <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
-        <button type="button" disabled={busy} style={buttonStyle} onClick={save}>
-          {saving ? t('saving') : t('save')}
-        </button>
-        <button type="button" disabled={busy} style={buttonStyle} onClick={() => { void load() }}>
-          {t('refresh')}
-        </button>
-        {saved
-          ? <span style={{ color: 'var(--dsw-text-success, #46a758)', fontSize: '0.8em' }}>{t('saved')}</span>
-          : null}
-        {saveError === null
-          ? null
-          : <span style={{ color: 'var(--dsw-text-danger, #e5484d)', fontSize: '0.8em' }}>{t('saveFailed')}: {saveError}</span>}
-      </div>
+      {scopes.map(scope => {
+        const bucket = state.presets?.[scope]
+        const isCommon = scope === 'common'
+        const row = roster.get(scope)
+        const badge = isCommon
+          ? t('badgeBaseline')
+          : row?.broken !== undefined
+            ? t('badgeBroken')
+            : bucket === undefined ? t('badgeInherit') : t('badgeOverridden')
+        const title = isCommon
+          ? t('commonTitle')
+          : row?.name === undefined || row.name.length === 0 ? scope : `${scope} · ${row.name}`
+        return (
+          <ScopeCard
+            key={`${scope}:${JSON.stringify(bucket ?? {})}`}
+            title={title}
+            hint={isCommon ? t('commonHint') : t('presetHint')}
+            badge={badge}
+            defaultOpen={isCommon}
+          >
+            <ScopePanel
+              t={t}
+              scope={scope}
+              bucket={bucket}
+              effective={state.effective?.[scope]}
+              files={state.files?.[scope]}
+              onSaved={load}
+            />
+          </ScopeCard>
+        )
+      })}
 
       <ToolHeader title={t('injectedCount')} desc={t('injectedHint')} />
       <PanelShell>
         <div style={{ fontSize: '0.85em', lineHeight: 1.9 }}>
           <div>{t('root')}: {state.root ?? '—'}</div>
-          <div>{t('configFile')}: {state.configFile ?? '—'}</div>
+          <div>{t('stateFile')}: {state.stateFile ?? '—'}</div>
           <div>{t('injectedFile')}: {state.injectedFile ?? '—'}</div>
           <div>{t('injectedCount')}: {state.injected?.length ?? 0}</div>
         </div>
         <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
           <button type="button" style={buttonStyle} onClick={() => { void reset() }}>{t('reset')}</button>
+          <button type="button" style={buttonStyle} onClick={() => { void load() }}>{t('refresh')}</button>
           {note === null
             ? null
             : <span style={{ color: 'var(--dsw-text-secondary, #888)', fontSize: '0.8em' }}>{note}</span>}

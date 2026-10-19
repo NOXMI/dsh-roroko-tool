@@ -2,15 +2,22 @@
  * 设置页的 host 侧数据口。三条普通 webServer 路由，不引入 Remote/typert，
  * 也不依赖 configForms：
  *
- *   GET  /roroko-tool/state   两张清单 + 文件状态 + 跳闸记录
- *   POST /roroko-tool/config  整份写清单（全量替换）
+ *   GET  /roroko-tool/state   公共默认 + 各 preset 桶 + roster + 文件状态 + 跳闸记录
+ *   POST /roroko-tool/config  按 preset 写覆盖桶（{preset, …fields} / {preset, reset:true}）
  *   POST /roroko-tool/reset   清空跳闸记录（下次会话重新注入）
  *
- * 清单写完下一步装配就生效——preinject 的 provider 每次现读，不需要重挂载。
+ * 桶写完下一步装配就生效——preinject 的 provider 每次现读，不需要重挂载。
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { stat } from 'node:fs/promises'
-import { readConfig, writeConfig, entryPath } from './preinject.js'
+import {
+  DEFAULTS,
+  entryPath,
+  resolveEffective,
+  type EffectiveConfig,
+  type PreinjectConfig,
+} from './preinject.js'
+import { COMMON, clearBucket, readState, setBucket, type PreinjectState } from './presets.js'
 import { firstMount, readInjected, resetInjected } from './state.js'
 
 /** webServer 服务的最小面。 */
@@ -22,6 +29,11 @@ export interface WebServerLike {
   }): () => void
 }
 
+/** agent preset 注册表的最小面（列 roster 用）。 */
+export interface PresetRegistryLike {
+  list(): Promise<Array<{ id: string; name?: string; description?: string; broken?: string }>>
+}
+
 /** 设置页认的一个注入文件。 */
 interface FileInfo {
   name: string
@@ -31,8 +43,10 @@ interface FileInfo {
 }
 
 const PREFIX = '/roroko-tool'
-/** 配置请求体上限（两张清单，1MB 绰绰有余）。 */
+/** 配置请求体上限（几张清单，1MB 绰绰有余）。 */
 const BODY_LIMIT = 1024 * 1024
+/** 桶名契约：preset id 也是桶名，限制字符免得出脏键。 */
+const SCOPE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body, null, 2)
@@ -72,13 +86,60 @@ async function fileInfos(names: readonly string[], root: string): Promise<FileIn
   }))
 }
 
+/** 接线层原样（没写的字段就是没写）。 */
+function wiring(config: PreinjectConfig): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  if (config.systemFiles !== undefined) out.systemFiles = config.systemFiles
+  if (config.userFiles !== undefined) out.userFiles = config.userFiles
+  if (config.wrap !== undefined) out.wrap = config.wrap
+  return out
+}
+
+/** 各 scope 的生效值与文件状态。 */
+async function scopeViews(
+  config: PreinjectConfig,
+  state: PreinjectState,
+  root: string,
+  scopes: readonly string[],
+): Promise<{
+  effective: Record<string, EffectiveConfig>
+  files: Record<string, { system: FileInfo[]; user: FileInfo[] }>
+}> {
+  const effective: Record<string, EffectiveConfig> = {}
+  const files: Record<string, { system: FileInfo[]; user: FileInfo[] }> = {}
+  for (const scope of scopes) {
+    const value = resolveEffective(config, state, scope === COMMON ? undefined : scope)
+    effective[scope] = value
+    files[scope] = {
+      system: await fileInfos(value.systemFiles, root),
+      user: await fileInfos(value.userFiles, root),
+    }
+  }
+  return { effective, files }
+}
+
 /**
  * 注册设置页数据路由。
  * @param server - webServer 服务。
  * @param version - 本包版本，仅供页面显示。
+ * @param registry - preset 注册表取用函数（拿不到就只列已有桶）。
  * @returns 注销函数。
  */
-export function registerStateRoutes(server: WebServerLike, version: string): () => void {
+export function registerStateRoutes(
+  server: WebServerLike,
+  version: string,
+  registry?: () => PresetRegistryLike | undefined,
+): () => void {
+  /** roster：注册表列不出来就空数组，页面照样能用已有桶。 */
+  const roster = async (): Promise<Array<{ id: string; name?: string; description?: string; broken?: string }>> => {
+    try {
+      const service = registry?.()
+      return service === undefined ? [] : await service.list()
+    } catch {
+      return []
+    }
+  }
+
   const offState = server.register({
     kind: 'exact',
     path: `${PREFIX}/state`,
@@ -92,19 +153,27 @@ export function registerStateRoutes(server: WebServerLike, version: string): () 
         json(res, 200, { version, mounted: false })
         return
       }
-      const config = readConfig(mount.root)
+      const state = readState(mount.root)
+      const rows = await roster()
+      // scope 集合：公共默认 + 注册表里的 preset + state 里已有的桶。
+      const scopes = [COMMON]
+      for (const row of rows) if (!scopes.includes(row.id)) scopes.push(row.id)
+      for (const key of Object.keys(state.presets)) if (!scopes.includes(key)) scopes.push(key)
+      const views = await scopeViews(mount.config, state, mount.root, scopes)
       json(res, 200, {
         version,
         mounted: true,
         root: mount.root,
-        configFile: mount.configFile,
+        stateFile: mount.stateFile,
         injectedFile: mount.injectedFile,
         injected: await readInjected(mount.injectedFile),
-        config,
-        files: {
-          system: await fileInfos(config.systemFiles, mount.root),
-          user: await fileInfos(config.userFiles, mount.root),
-        },
+        presets: state.presets,
+        defaults: DEFAULTS,
+        wiring: wiring(mount.config),
+        roster: rows,
+        scopes,
+        effective: views.effective,
+        files: views.files,
       })
     },
   })
@@ -119,7 +188,7 @@ export function registerStateRoutes(server: WebServerLike, version: string): () 
       }
       const mount = firstMount()
       if (mount === undefined) {
-        json(res, 200, { ok: false, reason: '未挂载 preinject，没有可写的清单' })
+        json(res, 200, { ok: false, reason: '未挂载 preinject，没有可写的桶' })
         return
       }
       let body: unknown
@@ -133,8 +202,16 @@ export function registerStateRoutes(server: WebServerLike, version: string): () 
         json(res, 400, { ok: false, reason: '请求体必须是 JSON 对象' })
         return
       }
-      const config = await writeConfig(mount.root, body as Record<string, unknown>)
-      json(res, 200, { ok: true, config })
+      const patch = body as Record<string, unknown>
+      const scope = typeof patch.preset === 'string' ? patch.preset : COMMON
+      if (!SCOPE_RE.test(scope)) {
+        json(res, 400, { ok: false, reason: `桶名不合法：${scope}` })
+        return
+      }
+      const state = patch.reset === true
+        ? await clearBucket(mount.root, scope)
+        : await setBucket(mount.root, scope, patch)
+      json(res, 200, { ok: true, state })
     },
   })
 
@@ -162,3 +239,5 @@ export function registerStateRoutes(server: WebServerLike, version: string): () 
     offReset()
   }
 }
+
+

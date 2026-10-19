@@ -3,12 +3,15 @@
  * 路由读出来给设置页；同时负责跳闸记录（injected.json）的读取与清空。
  */
 import { readFile, rm } from 'node:fs/promises'
+import type { PreinjectConfig } from './preinject.js'
 
 export interface MountStatus {
   /** 文件基准目录（身份根）。 */
   root: string
-  /** 两段清单文件。 */
-  configFile: string
+  /** 接线层参数（preset config，不含覆盖层）。 */
+  config: PreinjectConfig
+  /** 覆盖层文件（按 preset 分桶）。 */
+  stateFile: string
   /** 跳闸记录文件。 */
   injectedFile: string
 }

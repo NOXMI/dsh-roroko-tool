@@ -20,7 +20,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { mount as mountPreinject, type PreinjectConfig } from './preinject.js'
-import { registerStateRoutes, type WebServerLike } from './routes.js'
+import { registerStateRoutes, type WebServerLike, type PresetRegistryLike } from './routes.js'
+
+export { DEFAULTS, resolveEffective } from './preinject.js'
+export { COMMON, readState, resolveBucket, setBucket, clearBucket } from './presets.js'
 
 export const name = 'roroko-tool'
 
@@ -30,9 +33,12 @@ export const Config: z<RorokoToolConfig> = z.object({
     z.boolean(),
     z.object({
       root: z.string().description('文件基准目录（默认 $DSH_HOME/roroko）'),
+      systemFiles: z.array(z.string()).description('接线层：系统层清单'),
+      userFiles: z.array(z.string()).description('接线层：用户层清单'),
+      wrap: z.boolean().description('接线层：用户层是否包 system-reminder'),
       suppressHarnessIdentity: z.boolean().description('顶掉官方开场白段'),
     }),
-  ]).description('上下文注入子模块（两张清单在设置页里写）'),
+  ]).description('上下文注入子模块（覆盖层在设置页里按 preset 分桶）'),
 }) as z<RorokoToolConfig>
 /** 本包版本（设置页显示用）。 */
 export const version = '0.1.0'
@@ -56,11 +62,22 @@ interface InjectSurface {
  */
 export function apply(ctx: Context, config: RorokoToolConfig = {}): void {
   const surface = ctx as unknown as InjectSurface
+  /** preset 注册表：晚到也没关系，路由按"拿得到就列"处理。 */
+  let registry: PresetRegistryLike | undefined
+
+  surface.inject(['agentPresets'], (scope) => {
+    const service = (scope as unknown as { agentPresets: PresetRegistryLike }).agentPresets
+    ;(scope as unknown as { effect(fn: () => unknown, label?: string): unknown })
+      .effect(() => {
+        registry = service
+        return () => { registry = undefined }
+      }, 'roroko-tool: preset 注册表')
+  })
 
   surface.inject(['webServer'], (scope) => {
     const server = (scope as unknown as { webServer: WebServerLike }).webServer
     ;(scope as unknown as { effect(fn: () => unknown, label?: string): unknown })
-      .effect(() => registerStateRoutes(server, version), 'roroko-tool: 设置页路由')
+      .effect(() => registerStateRoutes(server, version, () => registry), 'roroko-tool: 设置页路由')
   })
 
   const preinject = config.preinject

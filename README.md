@@ -33,48 +33,74 @@ plugins:
     config:
       preinject:
         root: ''                      # 留空 = $DSH_HOME/roroko
+        # 接线层（可省）：systemFiles / userFiles / wrap，给这个 preset 当基线
         suppressHarnessIdentity: true
 ```
 
-清单不在 preset 里写，只在设置页写。
+## 参数四层链
+
+照 0.1.6 那套，逐字段回落：
+
+```
+内置默认 ← preset 接线 config ← 公共桶 common ← 分 preset 桶
+```
+
+| 层 | 在哪写 |
+|---|---|
+| 内置默认 | 代码里，两个清单都空、`wrap: true` |
+| 接线 | preset 行的 `config.preinject` |
+| 公共默认 | 设置页「公共默认」卡 → `<root>/state/preinject.json` 的 `presets.common` |
+| 分预设 | 设置页每个 preset 一张卡 → `presets[<agentPreset id>]` |
+
+字段缺失才算未覆盖；空清单 / 空串是显式设定，就是"这一段不注入"。
 
 ## 两张清单
-
-就两张，谁都不认识、什么都不猜：
 
 | 清单 | 去处 | 生效方式 |
 |---|---|---|
 | `systemFiles` | 系统提示词（`deployment:persona-prefix`） | 常驻，每次装配现读 |
 | `userFiles` | 一条 user 消息，追加在用户消息之后 | 每会话一次，判重记在 `<root>/state/injected.json` |
 
-清单存在 `<root>/state/preinject.json`，设置页读写。清单项相对 root 解析，
-`~/` 走主目录，绝对路径原样用；读不到的文件静默跳过，设置页会把缺失标出来。
-两个清单都空 = 什么都不注入。
+清单项相对 root 解析，`~/` 走主目录，绝对路径原样用；读不到的文件静默跳过，
+设置页会把缺失标出来。
 
 ## 设置页
 
 设置面板里与「通用」「模型」「插件」同级的一页（`settings.section`，order 50）：
 
-- 上下两张清单，一行一个文件名，保存即写 `<root>/state/preinject.json`，
-  下一步装配生效，不用重挂载 preset
-- 用户层一个 `system-reminder` 开关
+- 公共默认一张卡（默认展开）+ 注册表里每个 preset 一张折叠卡，卡头带
+  「基线 / 已覆盖 / 跟随继承 / 挂不起来」徽标
+- 每组参数一个「覆盖」勾选框：不勾 = 一个字段都不发，跟随继承；勾了整组落盘
+- 两组都不覆盖时保存 = 把这个桶删掉；另有「重置为继承」
 - 文件状态（就绪 / 缺失 + 大小）
-- 已注入会话计数 + 「清空注入记录」
+- 注入记录条数 + 「清空注入记录」
 
 路由（webServer 普通路由，不碰 Remote / configForms）：
 
 ```
-GET  /roroko-tool/state   两张清单 + 文件状态 + 跳闸记录
-POST /roroko-tool/config  整份写清单（全量替换）
+GET  /roroko-tool/state   桶 + roster + 各 scope 生效值 + 文件状态 + 跳闸记录
+POST /roroko-tool/config  按 preset 写桶（字段传 null 删键，{preset, reset:true} 删桶）
 POST /roroko-tool/reset   清空跳闸记录
 ```
+
+## 0.2.1 适配：系统段怎么知道自己是哪个 preset
+
+0.1.6 的 provider 从 `context.agent.session.header.agentPreset` 取；0.2.1 的
+`AssembleContext` 只有 `scope`，没有 agent。所以：
+
+- `agent/pre-step`（每 turn 都跑）里用 `scopeOf(agent.ctx)` 读出 scope key，
+  把 `scope → agentPreset` 记进 WeakMap
+- 系统段的 provider 拿 `context.scope` 查表选桶
+- 查不到（装配早于第一次 pre-step）就只吃公共桶，行为可预测、不串会话
+
+用户段不受影响：`session.header.agentPreset` 直接可读。
 
 ## 测试
 
 ```bash
 pnpm build
-node test/preinject-smoke.mjs   # 双段注入 + 清单现读 + 判重
-node test/routes-smoke.mjs      # 三条路由 + 清单读写
+node test/preinject-smoke.mjs   # 四层链 + 双段注入 + 判重
+node test/routes-smoke.mjs      # 三条路由 + 分桶读写
 ```
 
 ## 构建与发布
