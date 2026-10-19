@@ -63,7 +63,11 @@ window.__ModuleLoader__.load({
 		/** 文案命名空间。 */
 		const NS = "rorokoTool";
 		/** 需要的客户端服务。 */
-		const inject = ["slots", "locale"];
+		const inject = [
+			"slots",
+			"locale",
+			"configForms"
+		];
 		const box = {
 			display: "flex",
 			flexDirection: "column",

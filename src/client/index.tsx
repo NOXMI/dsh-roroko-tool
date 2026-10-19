@@ -13,7 +13,7 @@ import { en, zh, type LocaleKey } from './locales.js'
 export const NS = 'rorokoTool'
 
 /** 需要的客户端服务。 */
-export const inject = ['slots', 'locale']
+export const inject = ['slots', 'locale', 'configForms']
 
 /** 文案签名（由 locale 服务注入）。 */
 type Translate = (key: LocaleKey) => string
