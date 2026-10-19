@@ -1,3 +1,4 @@
+import z from "@deepseek-ai/schemastery";
 import { Context } from "@deepseek-ai/cordis";
 //#region src/preinject.d.ts
 interface PreinjectConfig {
@@ -21,6 +22,8 @@ interface PreinjectConfig {
 //#endregion
 //#region src/index.d.ts
 declare const name = "roroko-tool";
+/** 子模块配置：schema 化之后，Plugins 页才有本插件自己的页面与表单。 */
+declare const Config: z<RorokoToolConfig>;
 /** 本包版本（设置页显示用）。 */
 declare const version = "0.1.0";
 /** 插件配置：一层桶对应一个子模块；桶设成 false 即不挂载。 */
@@ -34,4 +37,4 @@ interface RorokoToolConfig {
  */
 declare function apply(ctx: Context, config?: RorokoToolConfig): void;
 //#endregion
-export { RorokoToolConfig, apply, name, version };
+export { Config, RorokoToolConfig, apply, name, version };

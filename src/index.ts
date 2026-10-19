@@ -18,11 +18,26 @@
  * POST /roroko-tool/reset），与子模块互不依赖。
  */
 import type { Context } from '@deepseek-ai/cordis'
+import z from '@deepseek-ai/schemastery'
 import { mount as mountPreinject, type PreinjectConfig } from './preinject.js'
 import { registerStateRoutes, type WebServerLike } from './routes.js'
 
 export const name = 'roroko-tool'
 
+/** 子模块配置：schema 化之后，Plugins 页才有本插件自己的页面与表单。 */
+export const Config: z<RorokoToolConfig> = z.object({
+  preinject: z.union([
+    z.boolean(),
+    z.object({
+      identityFiles: z.array(z.string()).description('身份文件（相对身份根）'),
+      workspaceFiles: z.array(z.string()).description('工作区指令文件（相对会话 cwd）'),
+      includeWorkspace: z.boolean().description('系统段是否也拼工作区文件'),
+      workspaceFallbackToRoot: z.boolean().description('工作区找不到时回落到身份根'),
+      wrap: z.boolean().description('消息段是否包 system-reminder'),
+      suppressHarnessIdentity: z.boolean().description('顶掉官方开场白段'),
+    }),
+  ]).description('上下文注入子模块'),
+}) as z<RorokoToolConfig>
 /** 本包版本（设置页显示用）。 */
 export const version = '0.1.0'
 
@@ -59,3 +74,6 @@ export function apply(ctx: Context, config: RorokoToolConfig = {}): void {
     })
   }
 }
+
+
+

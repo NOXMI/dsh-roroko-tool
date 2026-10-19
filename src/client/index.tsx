@@ -169,7 +169,21 @@ export function apply(ctx: ClientContext): void {
   // 注册失败不拖垮整条 entry：把真实原因打到控制台，页面照常启动。
   try {
     ctx.effect(() => locale.register(NS, { zh, en }), 'roroko-tool: 文案')
-    // 设置 → 通用 里的一行（官方 ui-shortcuts / ui-theme 走的是同一个槽位）。
+
+    // 准备页：宿主提供 `roroko-tool` 这个配置命名空间时，Plugins 页出现专属页面。
+    const forms = (ctx as unknown as { configForms?: any }).configForms
+    if (forms !== undefined) {
+      ctx.effect(() => forms.whileServed(['roroko-tool'], () => slots.inject('plugins.item', () => slots.register({
+        name: 'plugins.item',
+        id: 'roroko-tool',
+        order: 40,
+        label: () => '洛洛可',
+        locale: NS,
+        inject: () => ({ form: forms.get('roroko-tool') }),
+      }, RorokoSettingsPage))), 'roroko-tool: 插件页')
+    }
+
+    // 兜底：设置 → 通用 里也留一行，页签不出来时还能看见。
     slots.inject('settings.general.item', () => slots.register({
       name: 'settings.general.item',
       id: 'roroko-tool',
@@ -177,9 +191,10 @@ export function apply(ctx: ClientContext): void {
       locale: NS,
     }, RorokoSettingsPage))
   } catch (error) {
-    console.error('[roroko-tool] 设置行注册失败：', error)
+    console.error('[roroko-tool] 设置页注册失败：', error)
   }
 }
+
 
 
 

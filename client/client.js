@@ -270,6 +270,15 @@ window.__ModuleLoader__.load({
 					zh,
 					en
 				}), "roroko-tool: 文案");
+				const forms = ctx.configForms;
+				if (forms !== void 0) ctx.effect(() => forms.whileServed(["roroko-tool"], () => slots.inject("plugins.item", () => slots.register({
+					name: "plugins.item",
+					id: "roroko-tool",
+					order: 40,
+					label: () => "洛洛可",
+					locale: NS,
+					inject: () => ({ form: forms.get("roroko-tool") })
+				}, RorokoSettingsPage))), "roroko-tool: 插件页");
 				slots.inject("settings.general.item", () => slots.register({
 					name: "settings.general.item",
 					id: "roroko-tool",
@@ -277,7 +286,7 @@ window.__ModuleLoader__.load({
 					locale: NS
 				}, RorokoSettingsPage));
 			} catch (error) {
-				console.error("[roroko-tool] 设置行注册失败：", error);
+				console.error("[roroko-tool] 设置页注册失败：", error);
 			}
 		}
 		//#endregion
