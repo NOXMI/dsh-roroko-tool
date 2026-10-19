@@ -27,6 +27,42 @@ lib/                  构建产物（随仓库提交，服务器安装时不编�
 | `memory` | 源码存档 | 见 `legacy/memory-0929/`，等真搬时照 datas 的形状改 |
 | `onahole` | 规划中 | 多端工具对接 |
 
+## preset 归谁管
+
+**包只插宿主行，preset 一行都不插。** 原因很实际：bundler patch 每次 boot 都重放，
+包里插的 preset 会被仓库版本顶回去——改个 `description` 都要 commit + 重装。preset
+是用户的东西，写在 **profile 自己的 patch 层**：
+
+`$DSH_HOME/profiles/<profile>/cordis.patch.yml`（与 bundle patch 同语法）：
+
+```yaml
+- insert:
+    - id: preset-roroko
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: roroko                 # 桶名 = 这个 id，preinject 与 datas 各按它分桶
+        name: 洛洛可
+        description: 洛洛可自用形态——双段注入 + 编码工具集
+        order: 30
+        plugins:
+          - id: roroko-tool
+            name: '@roroko-tool/dsh-roroko-tool'
+            config:
+              preinject: {}        # 有桶才挂；清单/屏蔽段走设置页
+              datas: {}            # 同上：库路径 + 自动注入节奏
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          # …其余工具行照抄标准 preset
+```
+
+**想开第二个就再插一条**，换个 `id`（比如 `roroko-dev`）即可：
+
+- 每个 preset 有**独立的覆盖层桶**（`state/preinject.json` / `state/datas.json` 的
+  `presets[<id>]`），互不干扰
+- 设置页会自动列出所有**真挂了这个插件**的 preset（按 compositionInventory 过滤），
+  新加的那条一重启就出现在卡列表里
+- 同一个 preset `id` 插两次会撞，别复制粘贴忘了改名
+
 ## preset 里怎么用
 
 ```yaml
@@ -36,7 +72,7 @@ plugins:
     config:
       preinject:
         root: ''                      # 留空 = $DSH_HOME/roroko
-        # 接线层（可省）：systemFiles / userFiles，给这个 preset 当基线
+        # 接线层（可省）：systemFiles / userFiles / suppressSections
         suppressHarnessIdentity: true
       datas:                          # 有桶就挂载：四把工具 + 自动注入
         dbPath: '/var/www/api/database/soul.db'
