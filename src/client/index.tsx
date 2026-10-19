@@ -5,6 +5,8 @@
  * 保存即写 `<root>/state/preinject.json`，preinject 的 provider 每次装配现读，
  * 改完下一步就生效。
  *
+ * 版式沿用旧版 roroko-tool 设置页那套：灰色说明行 + 浅底 PanelShell +
+ * 逐行可增删的文件清单 + 底部保存按钮与内联的已保存/失败提示。
  * 数据走宿主自己的 HTTP 路由（见 api.ts），不碰 Remote/configForms。
  */
 import { useCallback, useEffect, useState } from 'react'
@@ -21,13 +23,6 @@ export const inject = ['slots', 'locale']
 /** 文案签名（由 locale 服务注入）。 */
 type Translate = (key: LocaleKey) => string
 
-/** 页面草稿：清单在输入框里是纯文本。 */
-interface Draft {
-  systemFiles: string
-  userFiles: string
-  wrap: boolean
-}
-
 /** 左栏一级图标。 */
 export function RorokoIcon({ size = 18, active = false }: { size?: number; active?: boolean }): React.ReactElement {
   return (
@@ -38,78 +33,143 @@ export function RorokoIcon({ size = 18, active = false }: { size?: number; activ
   )
 }
 
-const mono = 'ui-monospace, SFMono-Regular, Menlo, monospace'
-
-const box: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '14px',
-  padding: '4px 2px',
-  fontSize: '13px',
-  lineHeight: 1.6,
+/** 通用行内按钮样式。 */
+const buttonStyle: React.CSSProperties = {
+  background: 'none',
+  border: '1px solid var(--dsw-text-secondary, #888)',
+  borderRadius: 4,
+  color: 'var(--dsw-text-secondary, #888)',
+  cursor: 'pointer',
+  fontSize: '0.85em',
+  lineHeight: 1.2,
+  padding: '2px 8px',
 }
 
-const row: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: '112px 1fr',
-  gap: '10px',
-  alignItems: 'baseline',
-}
-
-const label: React.CSSProperties = { opacity: 0.6 }
-const dim: React.CSSProperties = { opacity: 0.55, fontSize: '12px' }
-const code: React.CSSProperties = { fontFamily: mono, fontSize: '12px', wordBreak: 'break-all' }
-const card: React.CSSProperties = {
-  border: '1px solid color-mix(in srgb, currentColor 14%, transparent)',
-  borderRadius: '10px',
-  padding: '12px 14px',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '8px',
-}
-const input: React.CSSProperties = {
-  width: '100%',
+const inputStyle: React.CSSProperties = {
+  background: 'var(--dsw-surface-secondary, rgba(128,128,128,.08))',
+  border: '1px solid var(--dsw-text-secondary, #666)',
+  borderRadius: 4,
   boxSizing: 'border-box',
-  fontFamily: mono,
-  fontSize: '12px',
-  lineHeight: 1.6,
-  padding: '7px 10px',
-  borderRadius: '8px',
-  border: '1px solid color-mix(in srgb, currentColor 18%, transparent)',
-  background: 'color-mix(in srgb, currentColor 4%, transparent)',
-  color: 'inherit',
-  resize: 'vertical',
+  color: 'var(--dsw-text-primary, #eee)',
+  fontFamily: 'inherit',
+  fontSize: '0.9em',
+  padding: '4px 8px',
+  width: '100%',
 }
-const button = (disabled = false): React.CSSProperties => ({
-  padding: '6px 12px',
-  borderRadius: '8px',
-  border: '1px solid color-mix(in srgb, currentColor 22%, transparent)',
-  background: 'transparent',
-  color: 'inherit',
-  cursor: disabled ? 'default' : 'pointer',
-  opacity: disabled ? 0.45 : 1,
-  fontSize: '12px',
-})
 
-function Field({ name, value }: { name: string; value: string }): React.ReactElement {
+const hintStyle: React.CSSProperties = {
+  color: 'var(--dsw-text-secondary, #888)',
+  fontSize: '0.8em',
+  marginTop: 2,
+}
+
+const groupLabelStyle: React.CSSProperties = {
+  color: 'var(--dsw-text-secondary, #888)',
+  display: 'block',
+  fontSize: '0.85em',
+  marginBottom: 4,
+  marginTop: 8,
+}
+
+/** 区块外壳：参数面板共用背景/圆角/内边距。 */
+function PanelShell(props: { children: React.ReactNode }): React.ReactElement {
   return (
-    <div style={row}>
-      <span style={label}>{name}</span>
-      <span style={code}>{value}</span>
+    <div style={{
+      background: 'var(--dsw-surface-secondary, rgba(128,128,128,.06))',
+      borderRadius: 6,
+      margin: '8px 0 4px',
+      padding: '10px 12px',
+    }}>
+      {props.children}
     </div>
   )
 }
 
-/** 清单文本 → 文件名数组（一行一个，去掉空行）。 */
-function splitLines(text: string): string[] {
-  return text
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean)
+/** 工具卡片头：标题 + 一句说明。 */
+function ToolHeader(props: { title: string; desc: string }): React.ReactElement {
+  return (
+    <div style={{ margin: '14px 0 4px' }}>
+      <div style={{ fontWeight: 600 }}>{props.title}</div>
+      <div style={hintStyle}>{props.desc}</div>
+    </div>
+  )
 }
 
-function formatBytes(bytes: number): string {
-  return bytes < 1024 ? `${String(bytes)} B` : `${(bytes / 1024).toFixed(1)} KB`
+/** 文件清单编辑器：若干行文本框 + 增删。系统层与用户层共用一份。 */
+function FileListEditor(props: {
+  files: string[]
+  busy: boolean
+  placeholder: string
+  addLabel: string
+  deleteLabel: string
+  onChange: (next: string[]) => void
+}): React.ReactElement {
+  const { files, busy, placeholder, addLabel, deleteLabel, onChange } = props
+  return (
+    <div>
+      {files.map((file, index) => (
+        <div key={`file-${String(index)}`} style={{ display: 'flex', gap: 6, marginBottom: 4, alignItems: 'center' }}>
+          <input
+            type="text"
+            value={file}
+            disabled={busy}
+            placeholder={placeholder}
+            style={inputStyle}
+            onChange={event => {
+              const next = files.slice()
+              next[index] = event.target.value
+              onChange(next)
+            }}
+          />
+          <button
+            type="button"
+            disabled={busy}
+            title={deleteLabel}
+            style={{ ...buttonStyle, flexShrink: 0 }}
+            onClick={() => { onChange(files.filter((_, i) => i !== index)) }}
+          >✕</button>
+        </div>
+      ))}
+      <div style={{ marginTop: 4 }}>
+        <button
+          type="button"
+          disabled={busy}
+          style={buttonStyle}
+          onClick={() => { onChange([...files, '']) }}
+        >{addLabel}</button>
+      </div>
+    </div>
+  )
+}
+
+/** 清单读盘状态：就绪 / 缺失，标在清单下面。 */
+function FileStatus(props: { infos: FileInfo[] | undefined; t: Translate }): React.ReactElement | null {
+  const { infos, t } = props
+  if (infos === undefined || infos.length === 0) return null
+  return (
+    <div style={{ ...hintStyle, marginTop: 6 }}>
+      {infos.map((info, index) => (
+        <span key={info.path}>
+          {index > 0 ? ' · ' : ''}
+          <span style={{
+            color: info.exists
+              ? 'var(--dsw-text-success, #46a758)'
+              : 'var(--dsw-text-danger, #e5484d)',
+          }}>
+            {info.name} {info.exists ? `✓ ${t('present')}` : `✗ ${t('missing')}`}
+          </span>
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/** 清单落盘前清洗：去首尾空白、去空行、去重。 */
+function cleanList(list: readonly string[]): string[] {
+  return list
+    .map(item => item.trim())
+    .filter(item => item.length > 0)
+    .filter((item, index, self) => self.indexOf(item) === index)
 }
 
 /**
@@ -120,20 +180,25 @@ function formatBytes(bytes: number): string {
 export function RorokoSettingsPage(props: { t: Translate }): React.ReactElement {
   const { t } = props
   const [state, setState] = useState<StateBody | null>(null)
-  const [draft, setDraft] = useState<Draft | null>(null)
+  const [systemFiles, setSystemFiles] = useState<string[]>([])
+  const [userFiles, setUserFiles] = useState<string[]>([])
+  const [wrap, setWrap] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setError(null)
     try {
       const body = await fetchState()
       setState(body)
-      const config = body.config
-      setDraft(config === undefined
-        ? null
-        : { systemFiles: config.systemFiles.join('\n'), userFiles: config.userFiles.join('\n'), wrap: config.wrap })
+      if (body.config !== undefined) {
+        setSystemFiles(body.config.systemFiles)
+        setUserFiles(body.config.userFiles)
+        setWrap(body.config.wrap)
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     }
@@ -143,152 +208,131 @@ export function RorokoSettingsPage(props: { t: Translate }): React.ReactElement 
     void load()
   }, [load])
 
-  const save = useCallback(async () => {
-    if (draft === null) return
-    setBusy(true)
-    setNote(null)
-    try {
-      const ack = await saveConfig({
-        systemFiles: splitLines(draft.systemFiles),
-        userFiles: splitLines(draft.userFiles),
-        wrap: draft.wrap,
+  const save = useCallback(() => {
+    setSaved(false)
+    setSaveError(null)
+    setSaving(true)
+    void saveConfig({ systemFiles: cleanList(systemFiles), userFiles: cleanList(userFiles), wrap })
+      .then(async ack => {
+        if (!ack.ok) throw new Error(ack.reason ?? t('saveFailed'))
+        setSaved(true)
+        await load()
       })
-      setNote(ack.ok ? t('saved') : `${t('saveFailed')}: ${ack.reason ?? ''}`)
-      await load()
-    } catch (cause) {
-      setNote(`${t('saveFailed')}: ${cause instanceof Error ? cause.message : String(cause)}`)
-    } finally {
-      setBusy(false)
-    }
-  }, [draft, load, t])
+      .catch((cause: unknown) => {
+        setSaveError(cause instanceof Error ? cause.message : String(cause))
+      })
+      .finally(() => { setSaving(false) })
+  }, [systemFiles, userFiles, wrap, load, t])
 
-  const reset = useCallback(async () => {
+  const reset = useCallback(() => {
     setNote(null)
-    try {
-      const ack = await resetInjected()
-      setNote(ack.ok ? t('resetDone') : t('resetFailed'))
-      await load()
-    } catch {
-      setNote(t('resetFailed'))
-    }
+    void resetInjected()
+      .then(ack => { setNote(ack.ok ? t('resetDone') : t('resetFailed')); return load() })
+      .catch(() => { setNote(t('resetFailed')) })
   }, [load, t])
 
   if (error !== null) {
     return (
-      <div style={box}>
-        <div style={label}>{t('failed')}: {error}</div>
-        <button style={button()} onClick={() => { void load() }}>{t('refresh')}</button>
+      <div style={{ padding: '6px 0', color: 'var(--dsw-text-secondary, #888)', fontSize: '0.9em' }}>
+        {t('failed')}: {error}
+        <div style={{ marginTop: 8 }}>
+          <button style={buttonStyle} onClick={() => { void load() }}>{t('refresh')}</button>
+        </div>
       </div>
     )
   }
-  if (state === null) return <div style={box}><div style={label}>{t('loading')}</div></div>
+  if (state === null) {
+    return <div style={{ padding: '6px 0', color: 'var(--dsw-text-secondary, #888)', fontSize: '0.9em' }}>{t('loading')}</div>
+  }
   if (!state.mounted) {
     return (
-      <div style={box}>
-        <div style={{ fontSize: '15px', fontWeight: 600 }}>{t('notMounted')}</div>
-        <div style={label}>{t('notMountedHint')}</div>
-      </div>
-    )
-  }
-  if (draft === null) return <div style={box}><div style={label}>{t('loading')}</div></div>
-
-  const set = <K extends keyof Draft>(key: K, value: Draft[K]): void => {
-    setDraft(current => (current === null ? current : { ...current, [key]: value }))
-  }
-
-  /** 文件状态条（缺文件也照列，标出来就好）。 */
-  const fileStatus = (infos: FileInfo[] | undefined): React.ReactElement => {
-    if (infos === undefined || infos.length === 0) return <div style={dim}>{t('emptyFiles')}</div>
-    return (
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-        {infos.map(info => (
-          <span key={info.path} style={{ ...code, opacity: info.exists ? 0.85 : 0.45 }}>
-            {info.name} · {info.exists ? `${t('present')} ${formatBytes(info.bytes)}` : t('missing')}
-          </span>
-        ))}
+      <div style={{ padding: '6px 0' }}>
+        <div style={{ fontWeight: 600 }}>{t('notMounted')}</div>
+        <div style={hintStyle}>{t('notMountedHint')}</div>
       </div>
     )
   }
 
-  /**
-   * 一张清单。
-   * @param opts - 标题、说明、草稿字段、文件状态、附加控件。
-   * @returns 卡片元素。
-   */
-  const layer = (opts: {
-    title: string
-    hint: string
-    filesKey: 'systemFiles' | 'userFiles'
-    infos: FileInfo[] | undefined
-    extra?: React.ReactNode
-  }): React.ReactElement => (
-    <div style={card}>
-      <div style={{ fontWeight: 600 }}>{opts.title}</div>
-      <div style={dim}>{opts.hint}</div>
-      <textarea
-        style={{ ...input, minHeight: '96px' }}
-        spellCheck={false}
-        value={draft[opts.filesKey]}
-        placeholder={t('filesHint')}
-        onChange={event => { set(opts.filesKey, event.target.value) }}
-      />
-      {fileStatus(opts.infos)}
-      {opts.extra}
-    </div>
-  )
+  const busy = saving
 
   return (
-    <div style={box}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <div>
-          <div style={{ fontSize: '15px', fontWeight: 600 }}>{t('title')}</div>
-          <div style={label}>{t('subtitle')} · {t('version')} {state.version}</div>
+    <div style={{ padding: '6px 0' }}>
+      <div style={{ color: 'var(--dsw-text-secondary, #888)', fontSize: '0.9em', marginBottom: 12 }}>
+        {t('title')} · {t('subtitle')}
+      </div>
+
+      <ToolHeader title={t('systemTitle')} desc={t('systemHint')} />
+      <PanelShell>
+        <FileListEditor
+          files={systemFiles}
+          busy={busy}
+          placeholder={t('filesHint')}
+          addLabel={t('addFile')}
+          deleteLabel={t('deleteRow')}
+          onChange={next => { setSystemFiles(next); setSaved(false) }}
+        />
+        <FileStatus infos={state.files?.system} t={t} />
+      </PanelShell>
+
+      <ToolHeader title={t('userTitle')} desc={t('userHint')} />
+      <PanelShell>
+        <FileListEditor
+          files={userFiles}
+          busy={busy}
+          placeholder={t('filesHint')}
+          addLabel={t('addFile')}
+          deleteLabel={t('deleteRow')}
+          onChange={next => { setUserFiles(next); setSaved(false) }}
+        />
+        <label style={{
+          alignItems: 'center',
+          cursor: 'pointer',
+          display: 'flex',
+          fontSize: '0.85em',
+          gap: 6,
+          marginTop: 10,
+        }}>
+          <input
+            type="checkbox"
+            checked={wrap}
+            disabled={busy}
+            onChange={() => { setWrap(value => !value); setSaved(false) }}
+          />
+          {t('wrap')}
+        </label>
+        <FileStatus infos={state.files?.user} t={t} />
+      </PanelShell>
+
+      <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+        <button type="button" disabled={busy} style={buttonStyle} onClick={save}>
+          {saving ? t('saving') : t('save')}
+        </button>
+        <button type="button" disabled={busy} style={buttonStyle} onClick={() => { void load() }}>
+          {t('refresh')}
+        </button>
+        {saved
+          ? <span style={{ color: 'var(--dsw-text-success, #46a758)', fontSize: '0.8em' }}>{t('saved')}</span>
+          : null}
+        {saveError === null
+          ? null
+          : <span style={{ color: 'var(--dsw-text-danger, #e5484d)', fontSize: '0.8em' }}>{t('saveFailed')}: {saveError}</span>}
+      </div>
+
+      <ToolHeader title={t('injectedCount')} desc={t('injectedHint')} />
+      <PanelShell>
+        <div style={{ fontSize: '0.85em', lineHeight: 1.9 }}>
+          <div>{t('root')}: {state.root ?? '—'}</div>
+          <div>{t('configFile')}: {state.configFile ?? '—'}</div>
+          <div>{t('injectedFile')}: {state.injectedFile ?? '—'}</div>
+          <div>{t('injectedCount')}: {state.injected?.length ?? 0}</div>
         </div>
-        <button style={button(busy)} disabled={busy} onClick={() => { void load() }}>{t('refresh')}</button>
-      </div>
-
-      <div style={card}>
-        <Field name={t('root')} value={state.root ?? '—'} />
-        <Field name={t('configFile')} value={state.configFile ?? '—'} />
-        <Field name={t('injectedFile')} value={state.injectedFile ?? '—'} />
-        <div style={row}>
-          <span style={label}>{t('injectedCount')}</span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-            <span style={code}>{state.injected?.length ?? 0}</span>
-            <button style={button()} onClick={() => { void reset() }}>{t('reset')}</button>
-            {(state.injected?.length ?? 0) === 0 ? <span style={dim}>{t('injectedEmpty')}</span> : null}
-          </span>
+        <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+          <button type="button" style={buttonStyle} onClick={() => { void reset() }}>{t('reset')}</button>
+          {note === null
+            ? null
+            : <span style={{ color: 'var(--dsw-text-secondary, #888)', fontSize: '0.8em' }}>{note}</span>}
         </div>
-      </div>
-
-      {layer({
-        title: t('systemTitle'),
-        hint: t('systemHint'),
-        filesKey: 'systemFiles',
-        infos: state.files?.system,
-      })}
-
-      {layer({
-        title: t('userTitle'),
-        hint: t('userHint'),
-        filesKey: 'userFiles',
-        infos: state.files?.user,
-        extra: (
-          <label style={{ display: 'flex', alignItems: 'center', gap: '7px', cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={draft.wrap}
-              onChange={event => { set('wrap', event.target.checked) }}
-            />
-            <span style={dim}>{t('wrap')} · {t('wrapHint')}</span>
-          </label>
-        ),
-      })}
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-        <button style={button(busy)} disabled={busy} onClick={() => { void save() }}>{t('save')}</button>
-        {note === null ? null : <span style={label}>{note}</span>}
-      </div>
+      </PanelShell>
     </div>
   )
 }

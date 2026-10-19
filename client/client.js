@@ -11,35 +11,35 @@ window.__ModuleLoader__.load({
 		const zh = {
 			title: "roroko-tool",
 			subtitle: "两段注入清单",
-			loading: "插件插入中…",
-			failed: "读取失败",
+			loading: "加载中…",
+			failed: "加载失败",
 			version: "版本",
 			refresh: "刷新",
-			on: "开",
-			off: "关",
 			notMounted: "没有挂载 preinject",
 			notMountedHint: "preset 里没声明 config.preinject 桶，这个页面无事可做",
 			root: "身份根",
 			configFile: "清单文件",
 			injectedFile: "记录文件",
-			injectedCount: "已注入会话",
+			injectedCount: "注入记录",
 			injectedEmpty: "还没有会话被标记",
+			injectedHint: "记录文件清空后，下次会话会重新注入一遍。",
 			reset: "清空注入记录",
 			resetDone: "已清空，下次会话会重新注入",
 			resetFailed: "清空失败",
 			systemTitle: "系统层",
-			systemHint: "按顺序拼进系统提示词，常驻，不占消息位。",
+			systemHint: "按顺序拼进系统提示词，常驻、不占消息位、不被压缩折叠。",
 			userTitle: "用户层",
-			userHint: "按顺序拼成一条 user 消息，追加在用户消息之后，每会话一次。",
-			files: "文件清单",
-			filesHint: "一行一个文件名或路径，相对身份根；留空 = 不注入",
+			userHint: "按顺序拼成一条 user 消息，落在本批用户消息之后，每会话一次。",
+			filesHint: "如 IDENTITY.md，或 /root/.dsh/roroko/AGENTS.md",
+			addFile: "+ 添加文件",
+			deleteRow: "删除此行",
+			emptyFiles: "清单是空的",
 			missing: "缺失",
 			present: "就绪",
-			emptyFiles: "清单是空的",
-			wrap: "包 system-reminder",
-			wrapHint: "只作用于用户层",
+			wrap: "整体包一层 <system-reminder>…</system-reminder>",
 			save: "保存",
-			saved: "清单已写入，下一步装配就生效",
+			saving: "保存中…",
+			saved: "已保存",
 			saveFailed: "保存失败"
 		};
 		/** English copy, same keys. */
@@ -50,31 +50,31 @@ window.__ModuleLoader__.load({
 			failed: "Failed to load",
 			version: "Version",
 			refresh: "Refresh",
-			on: "on",
-			off: "off",
 			notMounted: "preinject is not mounted",
 			notMountedHint: "No config.preinject bucket in this preset, nothing to configure here",
 			root: "Root",
 			configFile: "List file",
 			injectedFile: "Record file",
-			injectedCount: "Sessions injected",
+			injectedCount: "Injection record",
 			injectedEmpty: "No session marked yet",
+			injectedHint: "Clear the record file and the next session injects again.",
 			reset: "Clear injection record",
 			resetDone: "Cleared — the next session injects again",
 			resetFailed: "Clear failed",
 			systemTitle: "System layer",
-			systemHint: "Joined in order into the system prompt; resident, no message slot.",
+			systemHint: "Joined in order into the system prompt; resident, no message slot, survives compaction.",
 			userTitle: "User layer",
-			userHint: "Joined into one user message appended after the user messages, once per session.",
-			files: "Files",
-			filesHint: "One file name or path per line, relative to root; empty means nothing is injected",
+			userHint: "Joined into one user message after the user messages, once per session.",
+			filesHint: "e.g. IDENTITY.md, or /root/.dsh/roroko/AGENTS.md",
+			addFile: "+ Add file",
+			deleteRow: "Remove this line",
+			emptyFiles: "Empty list",
 			missing: "missing",
 			present: "ready",
-			emptyFiles: "Empty list",
-			wrap: "Wrap in system-reminder",
-			wrapHint: "User layer only",
+			wrap: "Wrap the whole thing in <system-reminder>…</system-reminder>",
 			save: "Save",
-			saved: "Lists written, effective on the next assembly",
+			saving: "Saving…",
+			saved: "Saved",
 			saveFailed: "Save failed"
 		};
 		//#endregion
@@ -116,6 +116,8 @@ window.__ModuleLoader__.load({
 		* 保存即写 `<root>/state/preinject.json`，preinject 的 provider 每次装配现读，
 		* 改完下一步就生效。
 		*
+		* 版式沿用旧版 roroko-tool 设置页那套：灰色说明行 + 浅底 PanelShell +
+		* 逐行可增删的文件清单 + 底部保存按钮与内联的已保存/失败提示。
 		* 数据走宿主自己的 HTTP 路由（见 api.ts），不碰 Remote/configForms。
 		*/
 		/** 文案命名空间。 */
@@ -146,80 +148,127 @@ window.__ModuleLoader__.load({
 				})]
 			});
 		}
-		const mono = "ui-monospace, SFMono-Regular, Menlo, monospace";
-		const box = {
-			display: "flex",
-			flexDirection: "column",
-			gap: "14px",
-			padding: "4px 2px",
-			fontSize: "13px",
-			lineHeight: 1.6
+		/** 通用行内按钮样式。 */
+		const buttonStyle = {
+			background: "none",
+			border: "1px solid var(--dsw-text-secondary, #888)",
+			borderRadius: 4,
+			color: "var(--dsw-text-secondary, #888)",
+			cursor: "pointer",
+			fontSize: "0.85em",
+			lineHeight: 1.2,
+			padding: "2px 8px"
 		};
-		const row = {
-			display: "grid",
-			gridTemplateColumns: "112px 1fr",
-			gap: "10px",
-			alignItems: "baseline"
-		};
-		const label = { opacity: .6 };
-		const dim = {
-			opacity: .55,
-			fontSize: "12px"
-		};
-		const code = {
-			fontFamily: mono,
-			fontSize: "12px",
-			wordBreak: "break-all"
-		};
-		const card = {
-			border: "1px solid color-mix(in srgb, currentColor 14%, transparent)",
-			borderRadius: "10px",
-			padding: "12px 14px",
-			display: "flex",
-			flexDirection: "column",
-			gap: "8px"
-		};
-		const input = {
-			width: "100%",
+		const inputStyle = {
+			background: "var(--dsw-surface-secondary, rgba(128,128,128,.08))",
+			border: "1px solid var(--dsw-text-secondary, #666)",
+			borderRadius: 4,
 			boxSizing: "border-box",
-			fontFamily: mono,
-			fontSize: "12px",
-			lineHeight: 1.6,
-			padding: "7px 10px",
-			borderRadius: "8px",
-			border: "1px solid color-mix(in srgb, currentColor 18%, transparent)",
-			background: "color-mix(in srgb, currentColor 4%, transparent)",
-			color: "inherit",
-			resize: "vertical"
+			color: "var(--dsw-text-primary, #eee)",
+			fontFamily: "inherit",
+			fontSize: "0.9em",
+			padding: "4px 8px",
+			width: "100%"
 		};
-		const button = (disabled = false) => ({
-			padding: "6px 12px",
-			borderRadius: "8px",
-			border: "1px solid color-mix(in srgb, currentColor 22%, transparent)",
-			background: "transparent",
-			color: "inherit",
-			cursor: disabled ? "default" : "pointer",
-			opacity: disabled ? .45 : 1,
-			fontSize: "12px"
-		});
-		function Field({ name, value }) {
+		const hintStyle = {
+			color: "var(--dsw-text-secondary, #888)",
+			fontSize: "0.8em",
+			marginTop: 2
+		};
+		/** 区块外壳：参数面板共用背景/圆角/内边距。 */
+		function PanelShell(props) {
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+				style: {
+					background: "var(--dsw-surface-secondary, rgba(128,128,128,.06))",
+					borderRadius: 6,
+					margin: "8px 0 4px",
+					padding: "10px 12px"
+				},
+				children: props.children
+			});
+		}
+		/** 工具卡片头：标题 + 一句说明。 */
+		function ToolHeader(props) {
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-				style: row,
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-					style: label,
-					children: name
-				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-					style: code,
-					children: value
+				style: { margin: "14px 0 4px" },
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+					style: { fontWeight: 600 },
+					children: props.title
+				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+					style: hintStyle,
+					children: props.desc
 				})]
 			});
 		}
-		/** 清单文本 → 文件名数组（一行一个，去掉空行）。 */
-		function splitLines(text) {
-			return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+		/** 文件清单编辑器：若干行文本框 + 增删。系统层与用户层共用一份。 */
+		function FileListEditor(props) {
+			const { files, busy, placeholder, addLabel, deleteLabel, onChange } = props;
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", { children: [files.map((file, index) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				style: {
+					display: "flex",
+					gap: 6,
+					marginBottom: 4,
+					alignItems: "center"
+				},
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+					type: "text",
+					value: file,
+					disabled: busy,
+					placeholder,
+					style: inputStyle,
+					onChange: (event) => {
+						const next = files.slice();
+						next[index] = event.target.value;
+						onChange(next);
+					}
+				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+					type: "button",
+					disabled: busy,
+					title: deleteLabel,
+					style: {
+						...buttonStyle,
+						flexShrink: 0
+					},
+					onClick: () => {
+						onChange(files.filter((_, i) => i !== index));
+					},
+					children: "✕"
+				})]
+			}, `file-${String(index)}`)), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+				style: { marginTop: 4 },
+				children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+					type: "button",
+					disabled: busy,
+					style: buttonStyle,
+					onClick: () => {
+						onChange([...files, ""]);
+					},
+					children: addLabel
+				})
+			})] });
 		}
-		function formatBytes(bytes) {
-			return bytes < 1024 ? `${String(bytes)} B` : `${(bytes / 1024).toFixed(1)} KB`;
+		/** 清单读盘状态：就绪 / 缺失，标在清单下面。 */
+		function FileStatus(props) {
+			const { infos, t } = props;
+			if (infos === void 0 || infos.length === 0) return null;
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+				style: {
+					...hintStyle,
+					marginTop: 6
+				},
+				children: infos.map((info, index) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", { children: [index > 0 ? " · " : "", /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+					style: { color: info.exists ? "var(--dsw-text-success, #46a758)" : "var(--dsw-text-danger, #e5484d)" },
+					children: [
+						info.name,
+						" ",
+						info.exists ? `✓ ${t("present")}` : `✗ ${t("missing")}`
+					]
+				})] }, info.path))
+			});
+		}
+		/** 清单落盘前清洗：去首尾空白、去空行、去重。 */
+		function cleanList(list) {
+			return list.map((item) => item.trim()).filter((item) => item.length > 0).filter((item, index, self) => self.indexOf(item) === index);
 		}
 		/**
 		* 设置页主体。
@@ -229,21 +278,24 @@ window.__ModuleLoader__.load({
 		function RorokoSettingsPage(props) {
 			const { t } = props;
 			const [state, setState] = (0, react.useState)(null);
-			const [draft, setDraft] = (0, react.useState)(null);
+			const [systemFiles, setSystemFiles] = (0, react.useState)([]);
+			const [userFiles, setUserFiles] = (0, react.useState)([]);
+			const [wrap, setWrap] = (0, react.useState)(true);
 			const [error, setError] = (0, react.useState)(null);
 			const [note, setNote] = (0, react.useState)(null);
-			const [busy, setBusy] = (0, react.useState)(false);
+			const [saved, setSaved] = (0, react.useState)(false);
+			const [saving, setSaving] = (0, react.useState)(false);
+			const [saveError, setSaveError] = (0, react.useState)(null);
 			const load = (0, react.useCallback)(async () => {
 				setError(null);
 				try {
 					const body = await fetchState();
 					setState(body);
-					const config = body.config;
-					setDraft(config === void 0 ? null : {
-						systemFiles: config.systemFiles.join("\n"),
-						userFiles: config.userFiles.join("\n"),
-						wrap: config.wrap
-					});
+					if (body.config !== void 0) {
+						setSystemFiles(body.config.systemFiles);
+						setUserFiles(body.config.userFiles);
+						setWrap(body.config.wrap);
+					}
 				} catch (cause) {
 					setError(cause instanceof Error ? cause.message : String(cause));
 				}
@@ -251,279 +303,252 @@ window.__ModuleLoader__.load({
 			(0, react.useEffect)(() => {
 				load();
 			}, [load]);
-			const save = (0, react.useCallback)(async () => {
-				if (draft === null) return;
-				setBusy(true);
-				setNote(null);
-				try {
-					const ack = await saveConfig({
-						systemFiles: splitLines(draft.systemFiles),
-						userFiles: splitLines(draft.userFiles),
-						wrap: draft.wrap
-					});
-					setNote(ack.ok ? t("saved") : `${t("saveFailed")}: ${ack.reason ?? ""}`);
+			const save = (0, react.useCallback)(() => {
+				setSaved(false);
+				setSaveError(null);
+				setSaving(true);
+				saveConfig({
+					systemFiles: cleanList(systemFiles),
+					userFiles: cleanList(userFiles),
+					wrap
+				}).then(async (ack) => {
+					if (!ack.ok) throw new Error(ack.reason ?? t("saveFailed"));
+					setSaved(true);
 					await load();
-				} catch (cause) {
-					setNote(`${t("saveFailed")}: ${cause instanceof Error ? cause.message : String(cause)}`);
-				} finally {
-					setBusy(false);
-				}
+				}).catch((cause) => {
+					setSaveError(cause instanceof Error ? cause.message : String(cause));
+				}).finally(() => {
+					setSaving(false);
+				});
 			}, [
-				draft,
+				systemFiles,
+				userFiles,
+				wrap,
 				load,
 				t
 			]);
-			const reset = (0, react.useCallback)(async () => {
+			const reset = (0, react.useCallback)(() => {
 				setNote(null);
-				try {
-					const ack = await resetInjected();
+				resetInjected().then((ack) => {
 					setNote(ack.ok ? t("resetDone") : t("resetFailed"));
-					await load();
-				} catch {
+					return load();
+				}).catch(() => {
 					setNote(t("resetFailed"));
-				}
+				});
 			}, [load, t]);
 			if (error !== null) return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-				style: box,
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-					style: label,
-					children: [
-						t("failed"),
-						": ",
-						error
-					]
-				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-					style: button(),
-					onClick: () => {
-						load();
-					},
-					children: t("refresh")
-				})]
-			});
-			if (state === null) return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-				style: box,
-				children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-					style: label,
-					children: t("loading")
-				})
-			});
-			if (!state.mounted) return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-				style: box,
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-					style: {
-						fontSize: "15px",
-						fontWeight: 600
-					},
-					children: t("notMounted")
-				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-					style: label,
-					children: t("notMountedHint")
-				})]
-			});
-			if (draft === null) return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-				style: box,
-				children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-					style: label,
-					children: t("loading")
-				})
-			});
-			const set = (key, value) => {
-				setDraft((current) => current === null ? current : {
-					...current,
-					[key]: value
-				});
-			};
-			/** 文件状态条（缺文件也照列，标出来就好）。 */
-			const fileStatus = (infos) => {
-				if (infos === void 0 || infos.length === 0) return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-					style: dim,
-					children: t("emptyFiles")
-				});
-				return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-					style: {
-						display: "flex",
-						flexWrap: "wrap",
-						gap: "10px"
-					},
-					children: infos.map((info) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
-						style: {
-							...code,
-							opacity: info.exists ? .85 : .45
-						},
-						children: [
-							info.name,
-							" · ",
-							info.exists ? `${t("present")} ${formatBytes(info.bytes)}` : t("missing")
-						]
-					}, info.path))
-				});
-			};
-			/**
-			* 一张清单。
-			* @param opts - 标题、说明、草稿字段、文件状态、附加控件。
-			* @returns 卡片元素。
-			*/
-			const layer = (opts) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-				style: card,
+				style: {
+					padding: "6px 0",
+					color: "var(--dsw-text-secondary, #888)",
+					fontSize: "0.9em"
+				},
 				children: [
+					t("failed"),
+					": ",
+					error,
 					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-						style: { fontWeight: 600 },
-						children: opts.title
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-						style: dim,
-						children: opts.hint
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("textarea", {
-						style: {
-							...input,
-							minHeight: "96px"
-						},
-						spellCheck: false,
-						value: draft[opts.filesKey],
-						placeholder: t("filesHint"),
-						onChange: (event) => {
-							set(opts.filesKey, event.target.value);
-						}
-					}),
-					fileStatus(opts.infos),
-					opts.extra
-				]
-			});
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-				style: box,
-				children: [
-					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-						style: {
-							display: "flex",
-							justifyContent: "space-between",
-							alignItems: "baseline"
-						},
-						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-							style: {
-								fontSize: "15px",
-								fontWeight: 600
-							},
-							children: t("title")
-						}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-							style: label,
-							children: [
-								t("subtitle"),
-								" · ",
-								t("version"),
-								" ",
-								state.version
-							]
-						})] }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-							style: button(busy),
-							disabled: busy,
+						style: { marginTop: 8 },
+						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+							style: buttonStyle,
 							onClick: () => {
 								load();
 							},
 							children: t("refresh")
-						})]
-					}),
+						})
+					})
+				]
+			});
+			if (state === null) return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+				style: {
+					padding: "6px 0",
+					color: "var(--dsw-text-secondary, #888)",
+					fontSize: "0.9em"
+				},
+				children: t("loading")
+			});
+			if (!state.mounted) return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				style: { padding: "6px 0" },
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+					style: { fontWeight: 600 },
+					children: t("notMounted")
+				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+					style: hintStyle,
+					children: t("notMountedHint")
+				})]
+			});
+			const busy = saving;
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				style: { padding: "6px 0" },
+				children: [
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-						style: card,
+						style: {
+							color: "var(--dsw-text-secondary, #888)",
+							fontSize: "0.9em",
+							marginBottom: 12
+						},
 						children: [
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(Field, {
-								name: t("root"),
-								value: state.root ?? "—"
-							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(Field, {
-								name: t("configFile"),
-								value: state.configFile ?? "—"
-							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(Field, {
-								name: t("injectedFile"),
-								value: state.injectedFile ?? "—"
-							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-								style: row,
-								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-									style: label,
-									children: t("injectedCount")
-								}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
-									style: {
-										display: "flex",
-										alignItems: "center",
-										gap: "10px",
-										flexWrap: "wrap"
-									},
-									children: [
-										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-											style: code,
-											children: state.injected?.length ?? 0
-										}),
-										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-											style: button(),
-											onClick: () => {
-												reset();
-											},
-											children: t("reset")
-										}),
-										(state.injected?.length ?? 0) === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-											style: dim,
-											children: t("injectedEmpty")
-										}) : null
-									]
-								})]
-							})
+							t("title"),
+							" · ",
+							t("subtitle")
 						]
 					}),
-					layer({
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ToolHeader, {
 						title: t("systemTitle"),
-						hint: t("systemHint"),
-						filesKey: "systemFiles",
-						infos: state.files?.system
+						desc: t("systemHint")
 					}),
-					layer({
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)(PanelShell, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(FileListEditor, {
+						files: systemFiles,
+						busy,
+						placeholder: t("filesHint"),
+						addLabel: t("addFile"),
+						deleteLabel: t("deleteRow"),
+						onChange: (next) => {
+							setSystemFiles(next);
+							setSaved(false);
+						}
+					}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(FileStatus, {
+						infos: state.files?.system,
+						t
+					})] }),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ToolHeader, {
 						title: t("userTitle"),
-						hint: t("userHint"),
-						filesKey: "userFiles",
-						infos: state.files?.user,
-						extra: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+						desc: t("userHint")
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)(PanelShell, { children: [
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)(FileListEditor, {
+							files: userFiles,
+							busy,
+							placeholder: t("filesHint"),
+							addLabel: t("addFile"),
+							deleteLabel: t("deleteRow"),
+							onChange: (next) => {
+								setUserFiles(next);
+								setSaved(false);
+							}
+						}),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 							style: {
-								display: "flex",
 								alignItems: "center",
-								gap: "7px",
-								cursor: "pointer"
+								cursor: "pointer",
+								display: "flex",
+								fontSize: "0.85em",
+								gap: 6,
+								marginTop: 10
 							},
 							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
 								type: "checkbox",
-								checked: draft.wrap,
-								onChange: (event) => {
-									set("wrap", event.target.checked);
+								checked: wrap,
+								disabled: busy,
+								onChange: () => {
+									setWrap((value) => !value);
+									setSaved(false);
 								}
-							}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
-								style: dim,
-								children: [
-									t("wrap"),
-									" · ",
-									t("wrapHint")
-								]
-							})]
+							}), t("wrap")]
+						}),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)(FileStatus, {
+							infos: state.files?.user,
+							t
 						})
-					}),
+					] }),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						style: {
-							display: "flex",
 							alignItems: "center",
-							gap: "10px",
-							flexWrap: "wrap"
+							display: "flex",
+							flexWrap: "wrap",
+							gap: 8,
+							marginTop: 10
+						},
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								disabled: busy,
+								style: buttonStyle,
+								onClick: save,
+								children: saving ? t("saving") : t("save")
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								disabled: busy,
+								style: buttonStyle,
+								onClick: () => {
+									load();
+								},
+								children: t("refresh")
+							}),
+							saved ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+								style: {
+									color: "var(--dsw-text-success, #46a758)",
+									fontSize: "0.8em"
+								},
+								children: t("saved")
+							}) : null,
+							saveError === null ? null : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+								style: {
+									color: "var(--dsw-text-danger, #e5484d)",
+									fontSize: "0.8em"
+								},
+								children: [
+									t("saveFailed"),
+									": ",
+									saveError
+								]
+							})
+						]
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ToolHeader, {
+						title: t("injectedCount"),
+						desc: t("injectedHint")
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)(PanelShell, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						style: {
+							fontSize: "0.85em",
+							lineHeight: 1.9
+						},
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", { children: [
+								t("root"),
+								": ",
+								state.root ?? "—"
+							] }),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", { children: [
+								t("configFile"),
+								": ",
+								state.configFile ?? "—"
+							] }),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", { children: [
+								t("injectedFile"),
+								": ",
+								state.injectedFile ?? "—"
+							] }),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", { children: [
+								t("injectedCount"),
+								": ",
+								state.injected?.length ?? 0
+							] })
+						]
+					}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						style: {
+							alignItems: "center",
+							display: "flex",
+							flexWrap: "wrap",
+							gap: 8,
+							marginTop: 10
 						},
 						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-							style: button(busy),
-							disabled: busy,
+							type: "button",
+							style: buttonStyle,
 							onClick: () => {
-								save();
+								reset();
 							},
-							children: t("save")
+							children: t("reset")
 						}), note === null ? null : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-							style: label,
+							style: {
+								color: "var(--dsw-text-secondary, #888)",
+								fontSize: "0.8em"
+							},
 							children: note
 						})]
-					})
+					})] })
 				]
 			});
 		}
