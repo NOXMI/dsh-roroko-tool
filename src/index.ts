@@ -35,7 +35,6 @@ export const Config: z<RorokoToolConfig> = z.object({
       root: z.string().description('文件基准目录（默认 $DSH_HOME/roroko）'),
       systemFiles: z.array(z.string()).description('接线层：系统层清单'),
       userFiles: z.array(z.string()).description('接线层：用户层清单'),
-      wrap: z.boolean().description('接线层：用户层是否包 system-reminder'),
       suppressHarnessIdentity: z.boolean().description('顶掉官方开场白段'),
     }),
   ]).description('上下文注入子模块（覆盖层在设置页里按 preset 分桶）'),

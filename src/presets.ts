@@ -21,7 +21,6 @@ export const COMMON = 'common'
 export interface PreinjectBucket {
   systemFiles?: string[]
   userFiles?: string[]
-  wrap?: boolean
 }
 
 /** 整份状态。 */
@@ -30,7 +29,7 @@ export interface PreinjectState {
 }
 
 /** 桶里认的键，其余一律丢弃。 */
-const BUCKET_KEYS = ['systemFiles', 'userFiles', 'wrap'] as const
+const BUCKET_KEYS = ['systemFiles', 'userFiles'] as const
 
 /** state 文件。 */
 export function stateFile(root: string): string {
@@ -56,7 +55,6 @@ function cleanBucket(value: unknown): PreinjectBucket | undefined {
     const list = cleanList(raw.userFiles)
     if (list !== undefined) out.userFiles = list
   }
-  if (typeof raw.wrap === 'boolean') out.wrap = raw.wrap
   return Object.keys(out).length > 0 ? out : undefined
 }
 
@@ -106,9 +104,7 @@ export async function setBucket(
   const merged: Record<string, unknown> = { ...current.presets[scope] }
   for (const key of BUCKET_KEYS) {
     if (!(key in patch)) continue
-    const cleaned = key === 'wrap'
-      ? (typeof patch.wrap === 'boolean' ? patch.wrap : undefined)
-      : cleanList(patch[key])
+    const cleaned = cleanList(patch[key])
     if (cleaned === undefined) delete merged[key]
     else merged[key] = cleaned
   }

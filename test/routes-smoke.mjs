@@ -112,7 +112,6 @@ const saved = await call('/roroko-tool/config', 'POST', {
   preset: 'common',
   systemFiles: ['IDENTITY.md', 'NOPE.md'],
   userFiles: ['AGENTS.md'],
-  wrap: false,
 })
 check(saved.body.ok === true, 'POST config 写公共桶成功')
 check(saved.body.state.presets.common.systemFiles.length === 2, '回执带回落盘后的桶')
@@ -124,7 +123,6 @@ check(read.includes('NOPE') === false, '缺失文件不出现在正文里')
 const after = await call('/roroko-tool/state', 'GET')
 check(after.body.files.common.system[0].exists === true, '文件状态带存在性')
 check(after.body.files.common.system[1].exists === false, '缺失文件被标出来')
-check(after.body.effective.common.wrap === false, 'wrap 开关落盘')
 
 // ── POST config：分预设桶，字段级叠加 ──
 const specific = await call('/roroko-tool/config', 'POST', {

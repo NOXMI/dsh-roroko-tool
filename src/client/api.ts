@@ -18,14 +18,12 @@ export interface FileInfo {
 export interface InjectConfig {
   systemFiles: string[]
   userFiles: string[]
-  wrap: boolean
 }
 
 /** 一个桶里的覆盖字段（缺失 = 跟随下层）。 */
 export interface Bucket {
   systemFiles?: string[]
   userFiles?: string[]
-  wrap?: boolean
 }
 
 /** preset 注册表里的一行。 */

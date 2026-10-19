@@ -96,7 +96,6 @@ function wiring(config: PreinjectConfig): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   if (config.systemFiles !== undefined) out.systemFiles = config.systemFiles
   if (config.userFiles !== undefined) out.userFiles = config.userFiles
-  if (config.wrap !== undefined) out.wrap = config.wrap
   return out
 }
 

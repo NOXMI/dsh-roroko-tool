@@ -33,7 +33,7 @@ plugins:
     config:
       preinject:
         root: ''                      # 留空 = $DSH_HOME/roroko
-        # 接线层（可省）：systemFiles / userFiles / wrap，给这个 preset 当基线
+        # 接线层（可省）：systemFiles / userFiles，给这个 preset 当基线
         suppressHarnessIdentity: true
 ```
 
@@ -47,7 +47,7 @@ plugins:
 
 | 层 | 在哪写 |
 |---|---|
-| 内置默认 | 代码里，两个清单都空、`wrap: true` |
+| 内置默认 | 代码里，两个清单都空 |
 | 接线 | preset 行的 `config.preinject` |
 | 公共默认 | 设置页「公共默认」卡 → `<root>/state/preinject.json` 的 `presets.common` |
 | 分预设 | 设置页每个 preset 一张卡 → `presets[<agentPreset id>]` |
@@ -60,6 +60,9 @@ plugins:
 |---|---|---|
 | `systemFiles` | 系统提示词（`deployment:persona-prefix`） | 常驻，每次装配现读 |
 | `userFiles` | 一条 user 消息，追加在用户消息之后 | 每会话一次，判重记在 `<root>/state/injected.json` |
+
+用户层是**纯拼接**：文件内容原样拼起来，注入侧不加签名、不加 `<system-reminder>`
+壳。首尾要什么，就在文件里自己写。
 
 清单项相对 root 解析，`~/` 走主目录，绝对路径原样用；读不到的文件静默跳过，
 设置页会把缺失标出来。

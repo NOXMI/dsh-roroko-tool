@@ -253,10 +253,9 @@ function ScopePanel(props: {
 }): React.ReactElement {
   const { t, scope, bucket, effective, files, onSaved } = props
   const [coverSystem, setCoverSystem] = useState(() => bucket?.systemFiles !== undefined)
-  const [coverUser, setCoverUser] = useState(() => bucket?.userFiles !== undefined || bucket?.wrap !== undefined)
+  const [coverUser, setCoverUser] = useState(() => bucket?.userFiles !== undefined)
   const [systemFiles, setSystemFiles] = useState<string[]>(() => [...(bucket?.systemFiles ?? effective?.systemFiles ?? [])])
   const [userFiles, setUserFiles] = useState<string[]>(() => [...(bucket?.userFiles ?? effective?.userFiles ?? [])])
-  const [wrap, setWrap] = useState<boolean>(() => bucket?.wrap ?? effective?.wrap ?? true)
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -268,7 +267,6 @@ function ScopePanel(props: {
     const patch: Record<string, unknown> = { preset: scope }
     patch.systemFiles = coverSystem ? cleanList(systemFiles) : null
     patch.userFiles = coverUser ? cleanList(userFiles) : null
-    patch.wrap = coverUser ? wrap : null
     void saveConfig(patch)
       .then(async ack => {
         if (!ack.ok) throw new Error(ack.reason ?? t('saveFailed'))
@@ -348,15 +346,6 @@ function ScopePanel(props: {
               deleteLabel={t('deleteRow')}
               onChange={next => { setUserFiles(next); setSaved(false) }}
             />
-            <label style={coverLabelStyle}>
-              <input
-                type="checkbox"
-                checked={wrap}
-                disabled={busy}
-                onChange={() => { setWrap(value => !value); setSaved(false) }}
-              />
-              {t('wrap')}
-            </label>
             <FileStatus infos={files?.user} t={t} />
           </div>
         )

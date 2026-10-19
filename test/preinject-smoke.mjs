@@ -6,7 +6,7 @@
  *   2. 四层链：默认 ← 接线 config ← 公共桶 ← 分 preset 桶，逐字段回落
  *   3. 覆盖层与注入文件都是每次现读：改完立刻生效，不重挂载
  *   4. 用户层注入带签名、追加在本批用户消息之后、每会话一次
- *   5. 空清单 = 不注入且不留判重痕；缺文件静默跳过；wrap 开关生效
+ *   5. 空清单 = 不注入且不留判重痕；缺文件静默跳过；首尾由文件自带
  *
  * 系统段的 provider 靠 scope 登记簿选桶，假 ctx 造不出真 scope，所以分桶的
  * 断言走用户段（preset id 直接来自 session header）+ resolveEffective 直调。
@@ -117,8 +117,8 @@ const out = await base.preStep?.(session('s-a', 'roroko'), withUser)
 const text = out?.messages?.[1]?.content?.[0]?.text ?? ''
 check(out?.kind === 'enter' && out?.messages?.length === 2, '注入了一条 user 消息')
 check(out?.messages?.[0]?.marker === 'USER-MSG', '注入消息追加在用户消息之后')
-check(text.includes('[roroko-preinject]') && text.includes('TEST-AGENTS-1'), '消息带签名与用户层内容')
-check(text.startsWith('<system-reminder>') && text.trimEnd().endsWith('</system-reminder>'), '默认包 system-reminder')
+check(text.includes('TEST-AGENTS-1'), '消息内容来自用户层清单')
+check(text === '# 用户\n指令标记：TEST-AGENTS-1', '用户层是纯拼接：不加签名、不加壳')
 check(out?.messages?.[1]?.source?.kind === 'roroko-preinject', '消息 source 用生产者自有 kind')
 
 const again = await base.preStep?.(session('s-a', 'roroko'), withUser)
@@ -154,11 +154,13 @@ await writeState({ common: { userFiles: ['AGENTS.md'] } })
 const recovered = await base.preStep?.(session('s-d', 'roroko'), decide)
 check(recovered?.messages?.length === 1, '清单补回来后同一会话仍会注入（空清单没留判重痕）')
 
-// ── 8. wrap 开关 ──
-await writeState({ common: { userFiles: ['AGENTS.md'], wrap: false } })
-const plain = await base.preStep?.(session('s-e', 'roroko'), decide)
-const plainText = plain?.messages?.[0]?.content?.[0]?.text ?? ''
-check(plainText.includes('TEST-AGENTS-1') && !plainText.includes('<system-reminder>'), 'wrap: false 时不包壳')
+// ── 8. 首尾由文件自己带，注入侧一个字都不加 ──
+await writeFile(join(root, 'FRAMED.md'), '<system-reminder>\n\n# 用户\nFRAMED-1\n\n</system-reminder>', 'utf8')
+await writeState({ common: { userFiles: ['FRAMED.md'] } })
+const framed = await base.preStep?.(session('s-e', 'roroko'), decide)
+const framedText = framed?.messages?.[0]?.content?.[0]?.text ?? ''
+check(framedText.startsWith('<system-reminder>') && framedText.endsWith('</system-reminder>'), '文件里写的首尾原样带进消息')
+check(!framedText.includes('[roroko-preinject]'), '注入侧不再加签名行')
 
 // ── 9. 缺文件静默跳过 ──
 await writeState({ common: { systemFiles: ['NOPE.md', 'IDENTITY.md'], userFiles: ['NOPE.md', 'AGENTS.md'] } })

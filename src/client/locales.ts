@@ -40,7 +40,6 @@ export const zh = {
   emptyFiles: '清单是空的',
   missing: '缺失',
   present: '就绪',
-  wrap: '整体包一层 <system-reminder>…</system-reminder>',
 
   save: '保存',
   saving: '保存中…',
@@ -93,7 +92,6 @@ export const en: Record<LocaleKey, string> = {
   emptyFiles: 'Empty list',
   missing: 'missing',
   present: 'ready',
-  wrap: 'Wrap the whole thing in <system-reminder>…</system-reminder>',
 
   save: 'Save',
   saving: 'Saving…',

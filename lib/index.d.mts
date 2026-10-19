@@ -7,7 +7,6 @@ declare const COMMON = "common";
 interface PreinjectBucket {
   systemFiles?: string[];
   userFiles?: string[];
-  wrap?: boolean;
 }
 /** 整份状态。 */
 interface PreinjectState {
@@ -50,8 +49,6 @@ interface PreinjectConfig {
   systemFiles?: string[];
   /** 接线层的用户层清单。 */
   userFiles?: string[];
-  /** 接线层的 wrap 开关。 */
-  wrap?: boolean;
   /** 顶掉 "You are an AI agent powered by DeepSeek Harness." 这个开场白。 */
   suppressHarnessIdentity?: boolean;
 }
@@ -61,7 +58,6 @@ declare const DEFAULTS: Required<Omit<PreinjectConfig, 'enabled' | 'root' | 'sup
 interface EffectiveConfig {
   systemFiles: string[];
   userFiles: string[];
-  wrap: boolean;
 }
 /**
  * 四层合成：默认 ← 接线 config ← 公共桶 ← 分 preset 桶。

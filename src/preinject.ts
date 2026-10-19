@@ -41,7 +41,6 @@ const SECTION_NAME = 'deployment:persona-prefix'
 /** 官方固定开场白段名，order -1000。 */
 const HARNESS_IDENTITY = 'harness:identity'
 const VARIABLE = 'roroko_preinject_system'
-const MARK = '[roroko-preinject]'
 
 /** 接线参数（preset 的 config.preinject）：一层可选基线，不写就走默认。 */
 export interface PreinjectConfig {
@@ -53,8 +52,6 @@ export interface PreinjectConfig {
   systemFiles?: string[]
   /** 接线层的用户层清单。 */
   userFiles?: string[]
-  /** 接线层的 wrap 开关。 */
-  wrap?: boolean
   /** 顶掉 "You are an AI agent powered by DeepSeek Harness." 这个开场白。 */
   suppressHarnessIdentity?: boolean
 }
@@ -63,14 +60,12 @@ export interface PreinjectConfig {
 export const DEFAULTS: Required<Omit<PreinjectConfig, 'enabled' | 'root' | 'suppressHarnessIdentity'>> = {
   systemFiles: [],
   userFiles: [],
-  wrap: true,
 }
 
 /** 四层合成后的有效参数。 */
 export interface EffectiveConfig {
   systemFiles: string[]
   userFiles: string[]
-  wrap: boolean
 }
 
 /**
@@ -89,7 +84,6 @@ export function resolveEffective(
   return {
     systemFiles: bucket.systemFiles ?? config.systemFiles ?? DEFAULTS.systemFiles,
     userFiles: bucket.userFiles ?? config.userFiles ?? DEFAULTS.userFiles,
-    wrap: bucket.wrap ?? config.wrap ?? DEFAULTS.wrap,
   }
 }
 
@@ -190,17 +184,14 @@ function systemText(root: string, config: PreinjectConfig, presetId: string | un
   return mergeTexts(effective.systemFiles.map(name => readSync(entryPath(name, root))))
 }
 
-/** 用户层正文（pre-step 里读，含签名与可选壳）。 */
+/** 用户层正文：纯拼接，不加签名、不加壳——首尾要什么，清单里的文件自己带。 */
 async function userSegmentText(
   root: string,
   config: PreinjectConfig,
   presetId: string | undefined,
 ): Promise<string> {
   const effective = resolveEffective(config, readState(root), presetId)
-  const body = mergeTexts(await Promise.all(effective.userFiles.map(name => readAsync(entryPath(name, root)))))
-  if (!body) return ''
-  const named = `${MARK} 用户层注入（${effective.userFiles.join(', ')}）：\n\n${body}`
-  return effective.wrap ? `<system-reminder>\n${named}\n</system-reminder>` : named
+  return mergeTexts(await Promise.all(effective.userFiles.map(name => readAsync(entryPath(name, root)))))
 }
 
 async function loadInjected(file: string): Promise<Set<string>> {

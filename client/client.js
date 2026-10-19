@@ -43,7 +43,6 @@ window.__ModuleLoader__.load({
 			emptyFiles: "清单是空的",
 			missing: "缺失",
 			present: "就绪",
-			wrap: "整体包一层 <system-reminder>…</system-reminder>",
 			save: "保存",
 			saving: "保存中…",
 			saved: "已保存",
@@ -86,7 +85,6 @@ window.__ModuleLoader__.load({
 			emptyFiles: "Empty list",
 			missing: "missing",
 			present: "ready",
-			wrap: "Wrap the whole thing in <system-reminder>…</system-reminder>",
 			save: "Save",
 			saving: "Saving…",
 			saved: "Saved",
@@ -365,10 +363,9 @@ window.__ModuleLoader__.load({
 		function ScopePanel(props) {
 			const { t, scope, bucket, effective, files, onSaved } = props;
 			const [coverSystem, setCoverSystem] = (0, react.useState)(() => bucket?.systemFiles !== void 0);
-			const [coverUser, setCoverUser] = (0, react.useState)(() => bucket?.userFiles !== void 0 || bucket?.wrap !== void 0);
+			const [coverUser, setCoverUser] = (0, react.useState)(() => bucket?.userFiles !== void 0);
 			const [systemFiles, setSystemFiles] = (0, react.useState)(() => [...bucket?.systemFiles ?? effective?.systemFiles ?? []]);
 			const [userFiles, setUserFiles] = (0, react.useState)(() => [...bucket?.userFiles ?? effective?.userFiles ?? []]);
-			const [wrap, setWrap] = (0, react.useState)(() => bucket?.wrap ?? effective?.wrap ?? true);
 			const [saved, setSaved] = (0, react.useState)(false);
 			const [saving, setSaving] = (0, react.useState)(false);
 			const [saveError, setSaveError] = (0, react.useState)(null);
@@ -379,7 +376,6 @@ window.__ModuleLoader__.load({
 				const patch = { preset: scope };
 				patch.systemFiles = coverSystem ? cleanList(systemFiles) : null;
 				patch.userFiles = coverUser ? cleanList(userFiles) : null;
-				patch.wrap = coverUser ? wrap : null;
 				saveConfig(patch).then(async (ack) => {
 					if (!ack.ok) throw new Error(ack.reason ?? t("saveFailed"));
 					setSaved(true);
@@ -456,35 +452,20 @@ window.__ModuleLoader__.load({
 						}
 					}), t("coverUser")]
 				}),
-				coverUser ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", { children: [
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(FileListEditor, {
-						files: userFiles,
-						busy,
-						placeholder: t("filesHint"),
-						addLabel: t("addFile"),
-						deleteLabel: t("deleteRow"),
-						onChange: (next) => {
-							setUserFiles(next);
-							setSaved(false);
-						}
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
-						style: coverLabelStyle,
-						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-							type: "checkbox",
-							checked: wrap,
-							disabled: busy,
-							onChange: () => {
-								setWrap((value) => !value);
-								setSaved(false);
-							}
-						}), t("wrap")]
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(FileStatus, {
-						infos: files?.user,
-						t
-					})
-				] }) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				coverUser ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(FileListEditor, {
+					files: userFiles,
+					busy,
+					placeholder: t("filesHint"),
+					addLabel: t("addFile"),
+					deleteLabel: t("deleteRow"),
+					onChange: (next) => {
+						setUserFiles(next);
+						setSaved(false);
+					}
+				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(FileStatus, {
+					infos: files?.user,
+					t
+				})] }) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 					style: hintStyle,
 					children: [
 						t("followUser"),
