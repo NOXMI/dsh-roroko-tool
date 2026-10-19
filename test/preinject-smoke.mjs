@@ -190,6 +190,10 @@ const assembly = {
     { name: 'harness:identity', text: '' },
     { name: 'tool:read', text: 'Use the read tool ...' },
     { name: 'tool:web_fetch', text: 'Fetch an exact URL ...' },
+    { name: 'ui:deliverable-file-references', text: 'Prefer showing the primary results ...' },
+    { name: 'harness:source', text: 'The runtime context names the ... checkout.' },
+    { name: 'app:web-surface', text: 'You are interacting with the user through ... URL.' },
+    { name: 'context:skills', text: 'SKILLS-REMAIN' },
   ],
   contexts: [],
   tools: [],
@@ -198,9 +202,14 @@ const assembly = {
 const strip = fresh.assemble
 const next = async () => assembly
 const afterDefault = await strip?.(assembly, {}, next)
-check(afterDefault?.sections?.some(s => s.name === 'context:file-reference') === false, '默认抹掉 context:file-reference')
-check(afterDefault?.sections?.some(s => s.name.startsWith('tool:')) === false, '默认抹掉整族 tool:* 说明段')
-check(afterDefault?.sections?.some(s => s.name === 'deployment:persona-prefix') === true, '别的段一个不动')
+const survivors = (afterDefault?.sections ?? []).map(s => s.name)
+check(survivors.includes('context:file-reference') === false, '默认抹掉 context:file-reference')
+check(survivors.some(name => name.startsWith('tool:')) === false, '默认抹掉整族 tool:* 说明段')
+check(survivors.includes('ui:deliverable-file-references') === false, '默认抹掉 ui:deliverable-file-references')
+check(survivors.includes('harness:source') === false, '默认抹掉 harness:source')
+check(survivors.includes('app:web-surface') === false, '默认抹掉 app:web-surface')
+check(survivors.includes('deployment:persona-prefix') === true, '人设段不动')
+check(survivors.includes('context:skills') === true, '其他人的段一个不误伤')
 
 const noStrip = boot({ suppressSections: [] })
 const afterNone = await noStrip.assemble?.(assembly, {}, next)

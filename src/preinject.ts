@@ -86,14 +86,23 @@ export interface PreinjectConfig {
 /**
  * 内置抹除的段：清单只能加，不能减。
  *
- *   context:file-reference   @文件引用语法说明（"Tokens prefixed with @ …"）
- *   tool:*                   各工具的使用说明大段（read/write/edit/glob/grep/
- *                            bash/web_search/web_fetch…）—— 工具 schema 里本来就
- *                            有参数说明，这一大段是重复叙事
+ *   context:file-reference          @文件引用语法说明（"Tokens prefixed with @ …"）
+ *   tool:*                          各工具的使用说明大段（read/write/edit/glob/grep/
+ *                                   bash/web_search/web_fetch…）—— 工具 schema 里本来
+ *                                   就有参数说明，这一大段是重复叙事
+ *   ui:deliverable-file-references  "Prefer showing the primary results…" 交付物/链接规范
+ *   harness:source                  实现仓库自检指引（我们不在改 DSH 本体）
+ *   app:web-surface                 Web GUI 自述与「别乱起服务器」指引
  *
  * 支持尾部 `*` 前缀匹配，所以 `tool:*` 一网打尽，新装工具也不用改代码。
  */
-const BUILTIN_SUPPRESS_SECTIONS = ['context:file-reference', 'tool:*']
+const BUILTIN_SUPPRESS_SECTIONS = [
+  'context:file-reference',
+  'tool:*',
+  'ui:deliverable-file-references',
+  'harness:source',
+  'app:web-surface',
+]
 
 /** 内置默认（最底层）。 */
 export const DEFAULTS: Required<Omit<PreinjectConfig, 'enabled' | 'root' | 'suppressHarnessIdentity'>> = {

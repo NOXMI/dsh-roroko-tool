@@ -83,6 +83,9 @@ plugins:
 |---|---|
 | `context:file-reference` | "Tokens prefixed with @ are paths…" 那段 @ 语法说明 |
 | `tool:*` | 各工具的使用说明大段（`tool:read` / `tool:write` / `tool:edit` / `tool:glob` / `tool:grep` / `tool:bash` / `tool:web_search` / `tool:web_fetch` …）——工具 schema 里本来就有参数说明 |
+| `ui:deliverable-file-references` | "Prefer showing the primary results…" 交付物卡片与文件链接规范 |
+| `harness:source` | 实现仓库自检指引（`Use this checkout only to inspect or extend DSH itself`） |
+| `app:web-surface` | Web GUI 自述与「别乱起服务器」那一段 |
 
 清单项以 `*` 结尾按**前缀匹配**，所以 `tool:*` 一网打尽，新装工具不用改代码。
 配置层的 `suppressSections` 是**叠加**语义——内置的永远在，三层（接线 / 公共桶 /
