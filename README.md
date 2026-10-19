@@ -77,10 +77,16 @@ plugins:
 
 ### 屏蔽系统段
 
-装配瀑布 `system-prompt/assemble` 里按**段名**过滤，内置抹掉
-`context:file-reference`（"Tokens prefixed with @ are paths the user explicitly
-referenced…"）。配置层的 `suppressSections` 是**叠加**语义——内置的永远在，三层
-（接线 / 公共桶 / 分预设桶）只能往上加，清空清单也取消不掉。
+装配瀑布 `system-prompt/assemble` 里按**段名**过滤，内置抹掉两类：
+
+| 模式 | 抹掉什么 |
+|---|---|
+| `context:file-reference` | "Tokens prefixed with @ are paths…" 那段 @ 语法说明 |
+| `tool:*` | 各工具的使用说明大段（`tool:read` / `tool:write` / `tool:edit` / `tool:glob` / `tool:grep` / `tool:bash` / `tool:web_search` / `tool:web_fetch` …）——工具 schema 里本来就有参数说明 |
+
+清单项以 `*` 结尾按**前缀匹配**，所以 `tool:*` 一网打尽，新装工具不用改代码。
+配置层的 `suppressSections` 是**叠加**语义——内置的永远在，三层（接线 / 公共桶 /
+分预设桶）只能往上加，清空清单也取消不掉。
 
 ## datas：素材库四把工具
 

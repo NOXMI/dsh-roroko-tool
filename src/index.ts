@@ -31,6 +31,8 @@ export {
 } from './datas/presets.js'
 // 取料纯逻辑（不碰库、不碰 DSH 运行时）：给离线冒烟测试用。
 export { TABLES, pickCandidates, renderQuery, scoreRow, splitKws } from './datas/query-form.js'
+// 段名匹配（尾部 * 走前缀匹配）：设置页与冒烟测试共用同一口径。
+export { matchesSuppress } from './preinject.js'
 
 export const name = 'roroko-tool'
 

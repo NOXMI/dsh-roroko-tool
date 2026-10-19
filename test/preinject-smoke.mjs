@@ -14,7 +14,7 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { apply, resolveEffective, readState, DEFAULTS } from '../lib/index.mjs'
+import { apply, resolveEffective, readState, DEFAULTS, matchesSuppress } from '../lib/index.mjs'
 
 const IDENTITY = '# 身份\n身份标记：TEST-IDENTITY-1'
 const AGENTS = '# 用户\n指令标记：TEST-AGENTS-1'
@@ -188,6 +188,8 @@ const assembly = {
     { name: 'deployment:persona-prefix', text: 'X' },
     { name: 'context:file-reference', text: 'Tokens prefixed with @ ...' },
     { name: 'harness:identity', text: '' },
+    { name: 'tool:read', text: 'Use the read tool ...' },
+    { name: 'tool:web_fetch', text: 'Fetch an exact URL ...' },
   ],
   contexts: [],
   tools: [],
@@ -197,6 +199,7 @@ const strip = fresh.assemble
 const next = async () => assembly
 const afterDefault = await strip?.(assembly, {}, next)
 check(afterDefault?.sections?.some(s => s.name === 'context:file-reference') === false, '默认抹掉 context:file-reference')
+check(afterDefault?.sections?.some(s => s.name.startsWith('tool:')) === false, '默认抹掉整族 tool:* 说明段')
 check(afterDefault?.sections?.some(s => s.name === 'deployment:persona-prefix') === true, '别的段一个不动')
 
 const noStrip = boot({ suppressSections: [] })
@@ -210,6 +213,8 @@ check(
   && afterMore?.sections?.some(s => s.name === 'deployment:persona-prefix') === true,
   '清单是叠加：只多抹点名的段',
 )
+check(matchesSuppress('tool:bash', ['tool:*']) && matchesSuppress('tool:read', ['tool:read']), '通配与前缀匹配口径')
+check(matchesSuppress('toolkit:x', ['tool:*']) === false && matchesSuppress('tool:bash', ['tool']) === false, '通配不误伤、非通配是精确等值')
 
 await rm(root, { recursive: true, force: true })
 console.log(problems.length === 0 ? '\n全部通过' : `\n${problems.length} 项未通过`)

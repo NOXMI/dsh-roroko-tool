@@ -54,6 +54,19 @@ const SECTION_NAME = 'deployment:persona-prefix'
 const HARNESS_IDENTITY = 'harness:identity'
 const VARIABLE = 'roroko_preinject_system'
 
+/**
+ * 段名是否命中抹除清单。
+ * 清单项以 `*` 结尾时按前缀匹配（`tool:*` 抹掉所有 `tool:` 开头的段）。
+ */
+export function matchesSuppress(name: string, patterns: readonly string[]): boolean {
+  for (const pattern of patterns) {
+    if (pattern.endsWith('*')) {
+      if (name.startsWith(pattern.slice(0, -1))) return true
+    } else if (name === pattern) return true
+  }
+  return false
+}
+
 /** 接线参数（preset 的 config.preinject）：一层可选基线，不写就走默认。 */
 export interface PreinjectConfig {
   /** false 时不挂载本模块。 */
@@ -70,8 +83,17 @@ export interface PreinjectConfig {
   suppressSections?: string[]
 }
 
-/** 内置抹除的段：@文件引用语法说明（洛洛可不用这套壳）。清单只能加，不能减。 */
-const BUILTIN_SUPPRESS_SECTIONS = ['context:file-reference']
+/**
+ * 内置抹除的段：清单只能加，不能减。
+ *
+ *   context:file-reference   @文件引用语法说明（"Tokens prefixed with @ …"）
+ *   tool:*                   各工具的使用说明大段（read/write/edit/glob/grep/
+ *                            bash/web_search/web_fetch…）—— 工具 schema 里本来就
+ *                            有参数说明，这一大段是重复叙事
+ *
+ * 支持尾部 `*` 前缀匹配，所以 `tool:*` 一网打尽，新装工具也不用改代码。
+ */
+const BUILTIN_SUPPRESS_SECTIONS = ['context:file-reference', 'tool:*']
 
 /** 内置默认（最底层）。 */
 export const DEFAULTS: Required<Omit<PreinjectConfig, 'enabled' | 'root' | 'suppressHarnessIdentity'>> = {
@@ -274,7 +296,7 @@ export function mount(ctx: Context, rawConfig: PreinjectConfig = {}): void {
     try {
       const drop = resolveEffective(config, readState(root), activePreset).suppressSections
       if (drop.length === 0) return result
-      const kept = result.sections.filter(section => !drop.includes(section.name))
+      const kept = result.sections.filter(section => !matchesSuppress(section.name, drop))
       return kept.length === result.sections.length ? result : { ...result, sections: kept }
     } catch {
       // 装配瀑布里抛错会打崩整个 turn —— 一律吞掉，保持原样。

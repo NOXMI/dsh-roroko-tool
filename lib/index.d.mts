@@ -51,6 +51,11 @@ declare module '@deepseek-ai/dsh-llm' {
     };
   }
 }
+/**
+ * 段名是否命中抹除清单。
+ * 清单项以 `*` 结尾时按前缀匹配（`tool:*` 抹掉所有 `tool:` 开头的段）。
+ */
+declare function matchesSuppress(name: string, patterns: readonly string[]): boolean;
 /** 接线参数（preset 的 config.preinject）：一层可选基线，不写就走默认。 */
 interface PreinjectConfig {
   /** false 时不挂载本模块。 */
@@ -289,4 +294,4 @@ interface RorokoToolConfig {
  */
 declare function apply(ctx: Context, config?: RorokoToolConfig): void;
 //#endregion
-export { AUTOINJECT_DEFAULTS, COMMON, Config, DEFAULTS, DEFAULT_DB_PATH, RorokoToolConfig, TABLES, apply, cleanAutoinject, clearBucket, clearDatasBucket, datasStateFile, datasWiring, name, pickCandidates, readDatasState, readState, renderQuery, resolveBucket, resolveDatas, resolveEffective, scoreRow, setBucket, setDatasBucket, splitKws, version };
+export { AUTOINJECT_DEFAULTS, COMMON, Config, DEFAULTS, DEFAULT_DB_PATH, RorokoToolConfig, TABLES, apply, cleanAutoinject, clearBucket, clearDatasBucket, datasStateFile, datasWiring, matchesSuppress, name, pickCandidates, readDatasState, readState, renderQuery, resolveBucket, resolveDatas, resolveEffective, scoreRow, setBucket, setDatasBucket, splitKws, version };
