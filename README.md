@@ -88,10 +88,14 @@ POST /roroko-tool/reset   清空跳闸记录
 0.1.6 的 provider 从 `context.agent.session.header.agentPreset` 取；0.2.1 的
 `AssembleContext` 只有 `scope`，没有 agent。所以：
 
-- `agent/pre-step`（每 turn 都跑）里用 `scopeOf(agent.ctx)` 读出 scope key，
-  把 `scope → agentPreset` 记进 WeakMap
-- 系统段的 provider 拿 `context.scope` 查表选桶
-- 查不到（装配早于第一次 pre-step）就只吃公共桶，行为可预测、不串会话
+- `agent/pre-step`（每 turn 都跑，且早于本 turn 的系统提示词装配）里把
+  `session.header.agentPreset` 记进实例变量
+- 系统段的 provider 直接读这个变量选桶
+- 每个 preset 的 composition 各挂一份本模块实例，scope 路由只把该 preset 下的
+  事件送过来，所以这个变量对本实例如同常量
+- 真拿不到（装配早于任何 pre-step）就只吃公共桶，行为可预测、不串会话
+
+不依赖 `dsh-scope` 的内部符号，也不要求宿主暴露额外服务——跨安装形态都成立。
 
 用户段不受影响：`session.header.agentPreset` 直接可读。
 

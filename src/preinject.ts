@@ -17,10 +17,12 @@
  *
  * ── 0.2.1 适配：系统段怎么知道自己是哪个 preset ────────────────────────
  * 0.1.6 的 provider 从 `context.agent.session.header.agentPreset` 取；0.2.1 的
- * AssembleContext 只有 `scope`，没有 agent。于是改成：pre-step（异步、每 turn
- * 都跑）里用 `scopeOf(agent.ctx)` 读出该 agent 的 scope key，把
- * `scope → agentPreset` 记进 WeakMap；系统段 provider 拿 `context.scope` 查表。
- * 查不到（装配早于第一次 pre-step）就只吃公共桶 —— 行为可预测，不串会话。
+ * AssembleContext 只有 `scope`，没有 agent，拿不到会话。于是改成：pre-step
+ * （异步、每 turn 都跑，且一定早于本 turn 的系统提示词装配）里把
+ * `session.header.agentPreset` 记进实例变量，系统段 provider 直接读它。
+ *
+ * 每个 preset 的 composition 各挂一份本模块实例，scope 路由只把该 preset 下的
+ * 事件送过来，所以这个实例变量对本实例如同常量。不依赖 dsh-scope 的内部符号。
  */
 import { readFileSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -153,37 +155,14 @@ export function entryPath(name: string, root: string): string {
 }
 
 /**
- * scope → preset id 的登记簿。
- * provider 是同步的，只能靠 pre-step 预先喂进来；WeakMap 让 scope 随 agent 回收。
- */
-const SCOPE_PRESETS = new WeakMap<object, string>()
-
-/** dsh-scope 的 scopeOf：动态加载，宿主没提供这个包就降级。 */
-type ScopeOf = (ctx: unknown) => object | undefined
-let scopeOfFn: ScopeOf | undefined
-
-/**
- * 懒加载 `@deepseek-ai/dsh-scope`。
+ * 本实例最近一次在 pre-step 里见到的 preset id。
  *
- * 必须是宿主那一份实例（它读的是模块私有的 kScope 符号），所以只能当外部依赖
- * 引，不能打包。宿主没提供时安静降级——系统段只吃公共桶，用户段照常分桶。
+ * 每个 preset 的 composition 各挂一份本模块实例，而 scope 路由只把该 preset
+ * 下的事件送到这里，所以这个值对本实例是稳定的。首个 turn 的 pre-step 早于
+ * 系统提示词装配，首装配就能用上；真拿不到（装配早于任何 pre-step）才回落
+ * 公共桶。不依赖 dsh-scope 的内部符号，跨安装形态都成立。
  */
-function loadScopeOf(): void {
-  if (scopeOfFn !== undefined) return
-  void import('@deepseek-ai/dsh-scope')
-    .then(module => { scopeOfFn = module.scopeOf as ScopeOf })
-    .catch(() => { /* 没有这个包：保持降级 */ })
-}
-
-/** 读当前 ctx 的 scope key。 */
-function scopeOf(ctx: object | undefined): object | undefined {
-  return ctx === undefined || scopeOfFn === undefined ? undefined : scopeOfFn(ctx)
-}
-
-/** 读当前 scope 对应的 preset id。 */
-function presetOf(scope: object | undefined): string | undefined {
-  return scope === undefined ? undefined : SCOPE_PRESETS.get(scope)
-}
+let activePreset: string | undefined
 
 function readSync(path: string): string {
   try {
@@ -258,12 +237,11 @@ export function mount(ctx: Context, rawConfig: PreinjectConfig = {}): void {
 
   const status: MountStatus = { root, config, stateFile: join(root, 'state', 'preinject.json'), injectedFile: file }
   surface.effect(() => registerMount(status), 'preinject.status()')
-  loadScopeOf()
 
   surface.effect(
-    () => surface.systemPrompt.variable(VARIABLE, context => {
+    () => surface.systemPrompt.variable(VARIABLE, () => {
       try {
-        return systemText(root, config, presetOf(context?.scope))
+        return systemText(root, config, activePreset)
       } catch {
         // provider 抛错会打崩整个 turn，兜底成空串（该 section 被丢弃）。
         return ''
@@ -296,9 +274,8 @@ export function mount(ctx: Context, rawConfig: PreinjectConfig = {}): void {
     if (decision.kind !== 'enter') return decision
     const session = payload.agent.session
     const presetId = session?.header?.agentPreset
-    // 喂 scope 登记簿：系统段的 provider 靠它选桶。
-    const scope = payload.agent.ctx === undefined ? undefined : scopeOf(payload.agent.ctx as Context)
-    if (scope !== undefined && presetId !== undefined) SCOPE_PRESETS.set(scope, presetId)
+    // 记下来给系统段的 provider 选桶（provider 是同步的，拿不到 session）。
+    if (presetId !== undefined) activePreset = presetId
     const sessionId = session?.id ?? session?.header?.id
     if (sessionId !== undefined && (await loadInjected(file)).has(sessionId)) return decision
     const text = await userSegmentText(root, config, presetId)
