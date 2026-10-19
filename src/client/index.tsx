@@ -13,7 +13,7 @@ import { en, zh, type LocaleKey } from './locales.js'
 export const NS = 'rorokoTool'
 
 /** 需要的客户端服务。 */
-export const inject = ['slots', 'locale', 'configForms']
+export const inject = ['slots', 'locale']
 
 
 /**
@@ -184,44 +184,20 @@ export function apply(ctx: ClientContext): void {
   try {
     ctx.effect(() => locale.register(NS, { zh, en }), 'roroko-tool: 文案')
 
-    // 准备页：宿主提供 `roroko-tool` 这个配置命名空间时，Plugins 页出现专属页面。
-    const forms = (ctx as unknown as { configForms?: any }).configForms
-    if (forms !== undefined) {
-      ctx.effect(() => forms.whileServed(['roroko-tool'], () => slots.inject('plugins.item', () => slots.register({
-        name: 'plugins.item',
-        id: 'roroko-tool',
-        order: 40,
-        label: () => '洛洛可',
-        locale: NS,
-        inject: () => ({ form: forms.get('roroko-tool') }),
-      }, RorokoSettingsPage))), 'roroko-tool: 插件页')
-    }
-
-    // 一级页面：左栏图标（sidebar.panellist）+ 主区面板（main，key = 面板 id）。
-    slots.inject('sidebar.panellist', () => slots.register({
-      name: 'sidebar.panellist',
+    // 设置面板里的独立一页（与「通用」「模型」「插件」同级）。
+    slots.inject('settings.section', () => slots.register({
+      name: 'settings.section',
       id: 'roroko-tool',
-      order: 5,
+      order: 50,
       label: () => '洛洛可',
-      locale: NS,
-    }, RorokoIcon))
-    slots.inject('main', () => slots.register({
-      name: 'main',
-      key: 'roroko-tool',
-      locale: NS,
-    }, RorokoSettingsPage))
-
-    // 兜底：设置 → 通用 里也留一行。
-    slots.inject('settings.general.item', () => slots.register({
-      name: 'settings.general.item',
-      id: 'roroko-tool',
-      order: 60,
       locale: NS,
     }, RorokoSettingsPage))
   } catch (error) {
     console.error('[roroko-tool] 设置页注册失败：', error)
   }
 }
+
+
 
 
 

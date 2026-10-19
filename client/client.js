@@ -63,11 +63,7 @@ window.__ModuleLoader__.load({
 		/** 文案命名空间。 */
 		const NS = "rorokoTool";
 		/** 需要的客户端服务。 */
-		const inject = [
-			"slots",
-			"locale",
-			"configForms"
-		];
+		const inject = ["slots", "locale"];
 		/**
 		* 左栏一级图标。
 		* @param props - 尺寸与激活态。
@@ -302,31 +298,11 @@ window.__ModuleLoader__.load({
 					zh,
 					en
 				}), "roroko-tool: 文案");
-				const forms = ctx.configForms;
-				if (forms !== void 0) ctx.effect(() => forms.whileServed(["roroko-tool"], () => slots.inject("plugins.item", () => slots.register({
-					name: "plugins.item",
+				slots.inject("settings.section", () => slots.register({
+					name: "settings.section",
 					id: "roroko-tool",
-					order: 40,
+					order: 50,
 					label: () => "洛洛可",
-					locale: NS,
-					inject: () => ({ form: forms.get("roroko-tool") })
-				}, RorokoSettingsPage))), "roroko-tool: 插件页");
-				slots.inject("sidebar.panellist", () => slots.register({
-					name: "sidebar.panellist",
-					id: "roroko-tool",
-					order: 5,
-					label: () => "洛洛可",
-					locale: NS
-				}, RorokoIcon));
-				slots.inject("main", () => slots.register({
-					name: "main",
-					key: "roroko-tool",
-					locale: NS
-				}, RorokoSettingsPage));
-				slots.inject("settings.general.item", () => slots.register({
-					name: "settings.general.item",
-					id: "roroko-tool",
-					order: 60,
 					locale: NS
 				}, RorokoSettingsPage));
 			} catch (error) {
