@@ -201,7 +201,15 @@ check(afterDefault?.sections?.some(s => s.name === 'deployment:persona-prefix') 
 
 const noStrip = boot({ suppressSections: [] })
 const afterNone = await noStrip.assemble?.(assembly, {}, next)
-check(afterNone?.sections?.length === 3, '清单为空 = 一段都不抹')
+check(afterNone?.sections?.some(s => s.name === 'context:file-reference') === false, '内置抹除不能靠清空清单取消')
+
+const addMore = boot({ suppressSections: ['harness:identity'] })
+const afterMore = await addMore.assemble?.(assembly, {}, next)
+check(
+  afterMore?.sections?.some(s => s.name === 'harness:identity') === false
+  && afterMore?.sections?.some(s => s.name === 'deployment:persona-prefix') === true,
+  '清单是叠加：只多抹点名的段',
+)
 
 await rm(root, { recursive: true, force: true })
 console.log(problems.length === 0 ? '\n全部通过' : `\n${problems.length} 项未通过`)

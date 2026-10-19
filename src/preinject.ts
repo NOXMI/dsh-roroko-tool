@@ -70,14 +70,14 @@ export interface PreinjectConfig {
   suppressSections?: string[]
 }
 
-/** 默认抹掉的段：@文件引用语法说明（洛洛可不用这套壳）。 */
-const DEFAULT_SUPPRESS_SECTIONS = ['context:file-reference']
+/** 内置抹除的段：@文件引用语法说明（洛洛可不用这套壳）。清单只能加，不能减。 */
+const BUILTIN_SUPPRESS_SECTIONS = ['context:file-reference']
 
 /** 内置默认（最底层）。 */
 export const DEFAULTS: Required<Omit<PreinjectConfig, 'enabled' | 'root' | 'suppressHarnessIdentity'>> = {
   systemFiles: [],
   userFiles: [],
-  suppressSections: DEFAULT_SUPPRESS_SECTIONS,
+  suppressSections: [],
 }
 
 /** 四层合成后的有效参数。 */
@@ -100,10 +100,13 @@ export function resolveEffective(
   presetId: string | undefined,
 ): EffectiveConfig {
   const bucket: PreinjectBucket = resolveBucket(state, presetId)
+  // 抹除清单是**叠加**语义：内置的永远在，三层只能往上加。
+  // （schema 会把没写的数组填成 []，做成"可覆盖"的话配置层一填就把内置顶掉了。）
+  const extra = bucket.suppressSections ?? config.suppressSections ?? DEFAULTS.suppressSections
   return {
     systemFiles: bucket.systemFiles ?? config.systemFiles ?? DEFAULTS.systemFiles,
     userFiles: bucket.userFiles ?? config.userFiles ?? DEFAULTS.userFiles,
-    suppressSections: bucket.suppressSections ?? config.suppressSections ?? DEFAULTS.suppressSections,
+    suppressSections: [...new Set([...BUILTIN_SUPPRESS_SECTIONS, ...extra])],
   }
 }
 

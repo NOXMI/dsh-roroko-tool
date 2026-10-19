@@ -27,7 +27,7 @@ export const zh = {
   followSystem: '跟随继承',
   followUser: '跟随继承',
   followSuppress: '跟随继承',
-  suppressHint: '如 context:file-reference',
+  suppressHint: '内置已抹 context:file-reference，这里只往上加',
 
   filesHint: '如 IDENTITY.md，或 /root/.dsh/roroko/AGENTS.md',
   addFile: '+ 添加文件',
@@ -88,7 +88,7 @@ export const en: Record<LocaleKey, string> = {
   followSystem: 'inherited',
   followUser: 'inherited',
   followSuppress: 'inherited',
-  suppressHint: 'e.g. context:file-reference',
+  suppressHint: 'context:file-reference is already suppressed; entries here only add',
 
   filesHint: 'e.g. IDENTITY.md, or /root/.dsh/roroko/AGENTS.md',
   addFile: '+ Add file',

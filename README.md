@@ -75,6 +75,13 @@ plugins:
 清单项相对 root 解析，`~/` 走主目录，绝对路径原样用；读不到的文件静默跳过，
 设置页会把缺失标出来。
 
+### 屏蔽系统段
+
+装配瀑布 `system-prompt/assemble` 里按**段名**过滤，内置抹掉
+`context:file-reference`（"Tokens prefixed with @ are paths the user explicitly
+referenced…"）。配置层的 `suppressSections` 是**叠加**语义——内置的永远在，三层
+（接线 / 公共桶 / 分预设桶）只能往上加，清空清单也取消不掉。
+
 ## datas：素材库四把工具
 
 `node:sqlite` 直连 `soul.db`（默认 `/var/www/api/database/soul.db`），表名列名全在
