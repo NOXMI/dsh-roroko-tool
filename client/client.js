@@ -10,11 +10,13 @@ window.__ModuleLoader__.load({
 		/** 设置页文案。 */
 		const zh = {
 			title: "roroko-tool",
-			subtitle: "预注入参数",
+			subtitle: "子模块参数",
 			loading: "加载中…",
 			failed: "加载失败",
 			version: "版本",
 			refresh: "刷新",
+			preinjectTitle: "① 上下文注入（preinject）",
+			preinjectHint: "系统层文件进 system 提示词，用户层文件拼成一条 user 消息；另可按段名抹掉不想要的系统段。",
 			notMounted: "没有挂载 preinject",
 			notMountedHint: "preset 里没声明 config.preinject 桶，这个页面无事可做",
 			root: "身份根",
@@ -43,7 +45,7 @@ window.__ModuleLoader__.load({
 			saved: "已保存",
 			saveFailed: "保存失败",
 			resetScope: "重置为继承",
-			datasTitle: "素材库",
+			datasTitle: "② 素材库（datas）",
 			datasHint: "roroko_datas_* 四把工具连哪个库，以及 state 短条多久自动注一次。",
 			coverDbPath: "覆盖库路径（不勾选 = 跟随继承）",
 			followDbPath: "跟随继承",
@@ -60,11 +62,13 @@ window.__ModuleLoader__.load({
 		/** English copy, same keys. */
 		const en = {
 			title: "roroko-tool",
-			subtitle: "Pre-injection parameters",
+			subtitle: "Submodule settings",
 			loading: "Loading…",
 			failed: "Failed to load",
 			version: "Version",
 			refresh: "Refresh",
+			preinjectTitle: "① Context injection (preinject)",
+			preinjectHint: "System-layer files go into the system prompt, user-layer files become one user message; unwanted system sections can be dropped by name.",
 			notMounted: "preinject is not mounted",
 			notMountedHint: "No config.preinject bucket in this preset, nothing to configure here",
 			root: "Root",
@@ -93,7 +97,7 @@ window.__ModuleLoader__.load({
 			saved: "Saved",
 			saveFailed: "Save failed",
 			resetScope: "Reset to inherit",
-			datasTitle: "Material library",
+			datasTitle: "② Material library (datas)",
 			datasHint: "Which database the roroko_datas_* tools open, and how often the state digest is injected.",
 			coverDbPath: "Override the database path (unchecked = inherit)",
 			followDbPath: "inherited",
@@ -663,10 +667,6 @@ window.__ModuleLoader__.load({
 			};
 			const busy = saving;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(PanelShell, { children: [
-				/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ToolHeader, {
-					title: t("datasTitle"),
-					desc: t("datasHint")
-				}),
 				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 					style: coverLabelStyle,
 					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
@@ -843,51 +843,87 @@ window.__ModuleLoader__.load({
 			});
 			const scopes = state.scopes ?? ["common"];
 			const roster = new Map((state.roster ?? []).map((row) => [row.id, row]));
+			/** 一张 scope 卡的公共头部信息：标题 + 徽标 + 提示。 */
+			const scopeHead = (scope, overridden) => {
+				const isCommon = scope === "common";
+				const row = roster.get(scope);
+				const badge = isCommon ? t("badgeBaseline") : row?.broken !== void 0 ? t("badgeBroken") : overridden ? t("badgeOverridden") : t("badgeInherit");
+				return {
+					title: isCommon ? t("commonTitle") : row?.name === void 0 || row.name.length === 0 ? scope : `${scope} · ${row.name}`,
+					badge,
+					hint: isCommon ? t("commonHint") : t("presetHint")
+				};
+			};
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				style: { padding: "6px 0" },
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-					style: {
-						color: "var(--dsw-text-secondary, #888)",
-						fontSize: "0.9em",
-						marginBottom: 12
-					},
-					children: [
-						t("title"),
-						" · ",
-						t("subtitle"),
-						" — ",
-						t("root"),
-						": ",
-						state.root ?? "—"
-					]
-				}), scopes.map((scope) => {
-					const bucket = state.presets?.[scope];
-					const isCommon = scope === "common";
-					const row = roster.get(scope);
-					const badge = isCommon ? t("badgeBaseline") : row?.broken !== void 0 ? t("badgeBroken") : bucket === void 0 ? t("badgeInherit") : t("badgeOverridden");
-					const title = isCommon ? t("commonTitle") : row?.name === void 0 || row.name.length === 0 ? scope : `${scope} · ${row.name}`;
-					return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(ScopeCard, {
-						title,
-						hint: isCommon ? t("commonHint") : t("presetHint"),
-						badge,
-						defaultOpen: isCommon,
-						children: [state.mounted ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScopePanel, {
-							t,
-							scope,
-							bucket,
-							effective: state.effective?.[scope],
-							files: state.files?.[scope],
-							onSaved: load
-						}) : null, state.datas?.mounted ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(DatasPanel, {
-							t,
-							scope,
-							bucket: state.datas.presets[scope],
-							effective: state.datas.effective[scope],
-							defaults: state.datas.defaults,
-							onSaved: load
-						}) : null]
-					}, `${scope}:${JSON.stringify(bucket ?? {})}`);
-				})]
+				children: [
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						style: {
+							color: "var(--dsw-text-secondary, #888)",
+							fontSize: "0.9em",
+							marginBottom: 12
+						},
+						children: [
+							t("title"),
+							" · ",
+							t("subtitle"),
+							" — ",
+							t("root"),
+							": ",
+							state.root ?? "—"
+						]
+					}),
+					state.mounted ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ToolHeader, {
+						title: t("preinjectTitle"),
+						desc: t("preinjectHint")
+					}), scopes.map((scope) => {
+						const bucket = state.presets?.[scope];
+						const head = scopeHead(scope, bucket !== void 0);
+						return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScopeCard, {
+							title: head.title,
+							hint: head.hint,
+							badge: head.badge,
+							defaultOpen: scope === "common",
+							children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScopePanel, {
+								t,
+								scope,
+								bucket,
+								effective: state.effective?.[scope],
+								files: state.files?.[scope],
+								onSaved: load
+							})
+						}, `preinject:${scope}:${JSON.stringify(bucket ?? {})}`);
+					})] }) : null,
+					state.datas?.mounted ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ToolHeader, {
+						title: t("datasTitle"),
+						desc: t("datasHint")
+					}), scopes.map((scope) => {
+						const bucket = state.datas?.presets[scope];
+						const head = scopeHead(scope, bucket !== void 0);
+						return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScopeCard, {
+							title: head.title,
+							hint: head.hint,
+							badge: head.badge,
+							defaultOpen: false,
+							children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(DatasPanel, {
+								t,
+								scope,
+								bucket,
+								effective: state.datas?.effective[scope],
+								defaults: state.datas?.defaults ?? {
+									dbPath: "",
+									autoinject: {
+										rounds: true,
+										every: 8,
+										afterTool: true,
+										minGap: 4
+									}
+								},
+								onSaved: load
+							})
+						}, `datas:${scope}:${JSON.stringify(bucket ?? {})}`);
+					})] }) : null
+				]
 			});
 		}
 		/**

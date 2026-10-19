@@ -504,8 +504,6 @@ function DatasPanel(props: {
   const busy = saving
   return (
     <PanelShell>
-      <ToolHeader title={t('datasTitle')} desc={t('datasHint')} />
-
       <label style={coverLabelStyle}>
         <input
           type="checkbox"
@@ -626,59 +624,86 @@ function DatasPanel(props: {
   const scopes = state.scopes ?? ['common']
   const roster = new Map((state.roster ?? []).map(row => [row.id, row]))
 
+  /** 一张 scope 卡的公共头部信息：标题 + 徽标 + 提示。 */
+  const scopeHead = (scope: string, overridden: boolean): { title: string; badge: string; hint: string } => {
+    const isCommon = scope === 'common'
+    const row = roster.get(scope)
+    const badge = isCommon
+      ? t('badgeBaseline')
+      : row?.broken !== undefined
+        ? t('badgeBroken')
+        : overridden ? t('badgeOverridden') : t('badgeInherit')
+    const title = isCommon
+      ? t('commonTitle')
+      : row?.name === undefined || row.name.length === 0 ? scope : `${scope} · ${row.name}`
+    return { title, badge, hint: isCommon ? t('commonHint') : t('presetHint') }
+  }
+
   return (
     <div style={{ padding: '6px 0' }}>
       <div style={{ color: 'var(--dsw-text-secondary, #888)', fontSize: '0.9em', marginBottom: 12 }}>
         {t('title')} · {t('subtitle')} — {t('root')}: {state.root ?? '—'}
       </div>
 
-      {scopes.map(scope => {
-        const bucket = state.presets?.[scope]
-        const isCommon = scope === 'common'
-        const row = roster.get(scope)
-        const badge = isCommon
-          ? t('badgeBaseline')
-          : row?.broken !== undefined
-            ? t('badgeBroken')
-            : bucket === undefined ? t('badgeInherit') : t('badgeOverridden')
-        const title = isCommon
-          ? t('commonTitle')
-          : row?.name === undefined || row.name.length === 0 ? scope : `${scope} · ${row.name}`
-        return (
-          <ScopeCard
-            key={`${scope}:${JSON.stringify(bucket ?? {})}`}
-            title={title}
-            hint={isCommon ? t('commonHint') : t('presetHint')}
-            badge={badge}
-            defaultOpen={isCommon}
-          >
-            {state.mounted
-              ? (
-                <ScopePanel
-                  t={t}
-                  scope={scope}
-                  bucket={bucket}
-                  effective={state.effective?.[scope]}
-                  files={state.files?.[scope]}
-                  onSaved={load}
-                />
+      {state.mounted
+        ? (
+          <>
+            <ToolHeader title={t('preinjectTitle')} desc={t('preinjectHint')} />
+            {scopes.map(scope => {
+              const bucket = state.presets?.[scope]
+              const head = scopeHead(scope, bucket !== undefined)
+              return (
+                <ScopeCard
+                  key={`preinject:${scope}:${JSON.stringify(bucket ?? {})}`}
+                  title={head.title}
+                  hint={head.hint}
+                  badge={head.badge}
+                  defaultOpen={scope === 'common'}
+                >
+                  <ScopePanel
+                    t={t}
+                    scope={scope}
+                    bucket={bucket}
+                    effective={state.effective?.[scope]}
+                    files={state.files?.[scope]}
+                    onSaved={load}
+                  />
+                </ScopeCard>
               )
-              : null}
-            {state.datas?.mounted
-              ? (
-                <DatasPanel
-                  t={t}
-                  scope={scope}
-                  bucket={state.datas.presets[scope]}
-                  effective={state.datas.effective[scope]}
-                  defaults={state.datas.defaults}
-                  onSaved={load}
-                />
-              )
-              : null}
-          </ScopeCard>
+            })}
+          </>
         )
-      })}
+        : null}
+
+      {state.datas?.mounted
+        ? (
+          <>
+            <ToolHeader title={t('datasTitle')} desc={t('datasHint')} />
+            {scopes.map(scope => {
+              const bucket = state.datas?.presets[scope]
+              const head = scopeHead(scope, bucket !== undefined)
+              return (
+                <ScopeCard
+                  key={`datas:${scope}:${JSON.stringify(bucket ?? {})}`}
+                  title={head.title}
+                  hint={head.hint}
+                  badge={head.badge}
+                  defaultOpen={false}
+                >
+                  <DatasPanel
+                    t={t}
+                    scope={scope}
+                    bucket={bucket}
+                    effective={state.datas?.effective[scope]}
+                    defaults={state.datas?.defaults ?? { dbPath: '', autoinject: { rounds: true, every: 8, afterTool: true, minGap: 4 } }}
+                    onSaved={load}
+                  />
+                </ScopeCard>
+              )
+            })}
+          </>
+        )
+        : null}
 
     </div>
   )

@@ -1,11 +1,14 @@
 /** 设置页文案。 */
 export const zh = {
   title: 'roroko-tool',
-  subtitle: '预注入参数',
+  subtitle: '子模块参数',
   loading: '加载中…',
   failed: '加载失败',
   version: '版本',
   refresh: '刷新',
+
+  preinjectTitle: '① 上下文注入（preinject）',
+  preinjectHint: '系统层文件进 system 提示词，用户层文件拼成一条 user 消息；另可按段名抹掉不想要的系统段。',
 
   notMounted: '没有挂载 preinject',
   notMountedHint: 'preset 里没声明 config.preinject 桶，这个页面无事可做',
@@ -42,7 +45,7 @@ export const zh = {
   saveFailed: '保存失败',
   resetScope: '重置为继承',
 
-  datasTitle: '素材库',
+  datasTitle: '② 素材库（datas）',
   datasHint: 'roroko_datas_* 四把工具连哪个库，以及 state 短条多久自动注一次。',
   coverDbPath: '覆盖库路径（不勾选 = 跟随继承）',
   followDbPath: '跟随继承',
@@ -62,11 +65,14 @@ export type LocaleKey = keyof typeof zh
 /** English copy, same keys. */
 export const en: Record<LocaleKey, string> = {
   title: 'roroko-tool',
-  subtitle: 'Pre-injection parameters',
+  subtitle: 'Submodule settings',
   loading: 'Loading…',
   failed: 'Failed to load',
   version: 'Version',
   refresh: 'Refresh',
+
+  preinjectTitle: '① Context injection (preinject)',
+  preinjectHint: 'System-layer files go into the system prompt, user-layer files become one user message; unwanted system sections can be dropped by name.',
 
   notMounted: 'preinject is not mounted',
   notMountedHint: 'No config.preinject bucket in this preset, nothing to configure here',
@@ -103,7 +109,7 @@ export const en: Record<LocaleKey, string> = {
   saveFailed: 'Save failed',
   resetScope: 'Reset to inherit',
 
-  datasTitle: 'Material library',
+  datasTitle: '② Material library (datas)',
   datasHint: 'Which database the roroko_datas_* tools open, and how often the state digest is injected.',
   coverDbPath: 'Override the database path (unchecked = inherit)',
   followDbPath: 'inherited',
