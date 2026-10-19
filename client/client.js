@@ -9,9 +9,9 @@ window.__ModuleLoader__.load({
 		//#region src/client/locales.ts
 		/** 设置页文案。 */
 		const zh = {
-			title: "洛洛可",
+			title: "roroko-tool",
 			subtitle: "插件运行状态与注入开关",
-			loading: "读取中…",
+			loading: "插件插入中…",
 			failed: "读取失败",
 			version: "版本",
 			mounts: "已挂载子模块",
@@ -31,7 +31,7 @@ window.__ModuleLoader__.load({
 		};
 		/** English copy, same keys. */
 		const en = {
-			title: "Roroko",
+			title: "roroko-tool",
 			subtitle: "Runtime status and injection switches",
 			loading: "Loading…",
 			failed: "Failed to load",

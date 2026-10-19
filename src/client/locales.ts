@@ -1,8 +1,8 @@
 /** 设置页文案。 */
 export const zh = {
-  title: '洛洛可',
+  title: 'roroko-tool',
   subtitle: '插件运行状态与注入开关',
-  loading: '读取中…',
+  loading: '插件插入中…',
   failed: '读取失败',
   version: '版本',
   mounts: '已挂载子模块',
