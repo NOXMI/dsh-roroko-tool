@@ -1,9 +1,8 @@
 /**
  * 设置页的 HTTP 口。同源 fetch，不走官方 settings loopback（远程浏览器写不进去）。
  *
- *   GET  /roroko-tool/state   公共默认 + 各 preset 桶 + roster + 文件状态 + 跳闸记录
+ *   GET  /roroko-tool/state   公共默认 + 各 preset 桶 + roster + 文件状态
  *   POST /roroko-tool/config  按 preset 写覆盖桶
- *   POST /roroko-tool/reset   清空跳闸记录
  */
 
 /** 一个注入文件的状态。 */
@@ -40,8 +39,6 @@ export interface StateBody {
   mounted: boolean
   root?: string
   stateFile?: string
-  injectedFile?: string
-  injected?: string[]
   presets?: Record<string, Bucket>
   defaults?: InjectConfig
   wiring?: Partial<InjectConfig>
@@ -79,9 +76,4 @@ export function saveConfig(patch: Record<string, unknown>): Promise<Ack> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(patch),
   })
-}
-
-/** 清空跳闸记录。 */
-export function resetInjected(): Promise<Ack> {
-  return request<Ack>('/roroko-tool/reset', { method: 'POST' })
 }

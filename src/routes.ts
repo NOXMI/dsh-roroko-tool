@@ -2,9 +2,8 @@
  * 设置页的 host 侧数据口。三条普通 webServer 路由，不引入 Remote/typert，
  * 也不依赖 configForms：
  *
- *   GET  /roroko-tool/state   公共默认 + 各 preset 桶 + roster + 文件状态 + 跳闸记录
+ *   GET  /roroko-tool/state   公共默认 + 各 preset 桶 + roster + 文件状态
  *   POST /roroko-tool/config  按 preset 写覆盖桶（{preset, …fields} / {preset, reset:true}）
- *   POST /roroko-tool/reset   清空跳闸记录（下次会话重新注入）
  *
  * 桶写完下一步装配就生效——preinject 的 provider 每次现读，不需要重挂载。
  */
@@ -17,8 +16,8 @@ import {
   type EffectiveConfig,
   type PreinjectConfig,
 } from './preinject.js'
-import { COMMON, clearBucket, readState, setBucket, type PreinjectState } from './presets.js'
-import { firstMount, readInjected, resetInjected } from './state.js'
+import { COMMON, clearBucket, readState, setBucket, stateFile, type PreinjectState } from './presets.js'
+import { firstMount } from './state.js'
 
 /** webServer 服务的最小面。 */
 export interface WebServerLike {
@@ -188,9 +187,7 @@ export function registerStateRoutes(
         version,
         mounted: true,
         root: mount.root,
-        stateFile: mount.stateFile,
-        injectedFile: mount.injectedFile,
-        injected: await readInjected(mount.injectedFile),
+        stateFile: stateFile(mount.root),
         presets: state.presets,
         defaults: DEFAULTS,
         wiring: wiring(mount.config),
@@ -239,28 +236,9 @@ export function registerStateRoutes(
     },
   })
 
-  const offReset = server.register({
-    kind: 'exact',
-    path: `${PREFIX}/reset`,
-    handler: async (req, res) => {
-      if (req.method !== 'POST') {
-        json(res, 405, { error: 'POST only' })
-        return
-      }
-      const mount = firstMount()
-      if (mount === undefined) {
-        json(res, 200, { ok: false, reason: '未挂载 preinject，没有可清空的记录' })
-        return
-      }
-      await resetInjected(mount.injectedFile)
-      json(res, 200, { ok: true })
-    },
-  })
-
   return () => {
     offState()
     offConfig()
-    offReset()
   }
 }
 

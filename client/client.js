@@ -18,14 +18,6 @@ window.__ModuleLoader__.load({
 			notMounted: "没有挂载 preinject",
 			notMountedHint: "preset 里没声明 config.preinject 桶，这个页面无事可做",
 			root: "身份根",
-			stateFile: "覆盖文件",
-			injectedFile: "记录文件",
-			injectedCount: "注入记录",
-			injectedEmpty: "还没有会话被标记",
-			injectedHint: "记录文件清空后，下次会话会重新注入一遍。",
-			reset: "清空注入记录",
-			resetDone: "已清空，下次会话会重新注入",
-			resetFailed: "清空失败",
 			commonTitle: "公共默认",
 			commonHint: "没写覆盖的 preset 都吃这一层，也是每个 preset 的基线。",
 			presetHint: "会话 header.agentPreset 等于这个 id 时，这一层叠在公共默认之上。",
@@ -60,14 +52,6 @@ window.__ModuleLoader__.load({
 			notMounted: "preinject is not mounted",
 			notMountedHint: "No config.preinject bucket in this preset, nothing to configure here",
 			root: "Root",
-			stateFile: "Override file",
-			injectedFile: "Record file",
-			injectedCount: "Injection record",
-			injectedEmpty: "No session marked yet",
-			injectedHint: "Clear the record file and the next session injects again.",
-			reset: "Clear injection record",
-			resetDone: "Cleared — the next session injects again",
-			resetFailed: "Clear failed",
 			commonTitle: "Common default",
 			commonHint: "Every preset without overrides reads this layer; it is the baseline.",
 			presetHint: "Applied on top of the common default when the session header carries this preset id.",
@@ -116,10 +100,6 @@ window.__ModuleLoader__.load({
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify(patch)
 			});
-		}
-		/** 清空跳闸记录。 */
-		function resetInjected() {
-			return request("/roroko-tool/reset", { method: "POST" });
 		}
 		//#endregion
 		//#region src/client/index.tsx
@@ -239,19 +219,6 @@ window.__ModuleLoader__.load({
 					padding: "10px 12px"
 				},
 				children: props.children
-			});
-		}
-		/** 工具卡片头：标题 + 一句说明。 */
-		function ToolHeader(props) {
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-				style: { margin: "14px 0 4px" },
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-					style: { fontWeight: 600 },
-					children: props.title
-				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-					style: hintStyle,
-					children: props.desc
-				})]
 			});
 		}
 		/** 可折叠卡片：标题一行，点开才渲染内容。 */
@@ -527,7 +494,6 @@ window.__ModuleLoader__.load({
 			const { t } = props;
 			const [state, setState] = (0, react.useState)(null);
 			const [error, setError] = (0, react.useState)(null);
-			const [note, setNote] = (0, react.useState)(null);
 			const load = (0, react.useCallback)(async () => {
 				setError(null);
 				try {
@@ -539,15 +505,6 @@ window.__ModuleLoader__.load({
 			(0, react.useEffect)(() => {
 				load();
 			}, [load]);
-			const reset = (0, react.useCallback)(() => {
-				setNote(null);
-				resetInjected().then((ack) => {
-					setNote(ack.ok ? t("resetDone") : t("resetFailed"));
-					return load();
-				}).catch(() => {
-					setNote(t("resetFailed"));
-				});
-			}, [load, t]);
 			if (error !== null) return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				style: {
 					padding: "6px 0",
@@ -592,110 +549,42 @@ window.__ModuleLoader__.load({
 			const roster = new Map((state.roster ?? []).map((row) => [row.id, row]));
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				style: { padding: "6px 0" },
-				children: [
-					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-						style: {
-							color: "var(--dsw-text-secondary, #888)",
-							fontSize: "0.9em",
-							marginBottom: 12
-						},
-						children: [
-							t("title"),
-							" · ",
-							t("subtitle"),
-							" — ",
-							t("stateFile"),
-							": ",
-							state.stateFile ?? "—"
-						]
-					}),
-					scopes.map((scope) => {
-						const bucket = state.presets?.[scope];
-						const isCommon = scope === "common";
-						const row = roster.get(scope);
-						const badge = isCommon ? t("badgeBaseline") : row?.broken !== void 0 ? t("badgeBroken") : bucket === void 0 ? t("badgeInherit") : t("badgeOverridden");
-						const title = isCommon ? t("commonTitle") : row?.name === void 0 || row.name.length === 0 ? scope : `${scope} · ${row.name}`;
-						return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScopeCard, {
-							title,
-							hint: isCommon ? t("commonHint") : t("presetHint"),
-							badge,
-							defaultOpen: isCommon,
-							children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScopePanel, {
-								t,
-								scope,
-								bucket,
-								effective: state.effective?.[scope],
-								files: state.files?.[scope],
-								onSaved: load
-							})
-						}, `${scope}:${JSON.stringify(bucket ?? {})}`);
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ToolHeader, {
-						title: t("injectedCount"),
-						desc: t("injectedHint")
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)(PanelShell, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-						style: {
-							fontSize: "0.85em",
-							lineHeight: 1.9
-						},
-						children: [
-							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", { children: [
-								t("root"),
-								": ",
-								state.root ?? "—"
-							] }),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", { children: [
-								t("stateFile"),
-								": ",
-								state.stateFile ?? "—"
-							] }),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", { children: [
-								t("injectedFile"),
-								": ",
-								state.injectedFile ?? "—"
-							] }),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", { children: [
-								t("injectedCount"),
-								": ",
-								state.injected?.length ?? 0
-							] })
-						]
-					}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-						style: {
-							alignItems: "center",
-							display: "flex",
-							flexWrap: "wrap",
-							gap: 8,
-							marginTop: 10
-						},
-						children: [
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-								type: "button",
-								style: buttonStyle,
-								onClick: () => {
-									reset();
-								},
-								children: t("reset")
-							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-								type: "button",
-								style: buttonStyle,
-								onClick: () => {
-									load();
-								},
-								children: t("refresh")
-							}),
-							note === null ? null : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-								style: {
-									color: "var(--dsw-text-secondary, #888)",
-									fontSize: "0.8em"
-								},
-								children: note
-							})
-						]
-					})] })
-				]
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					style: {
+						color: "var(--dsw-text-secondary, #888)",
+						fontSize: "0.9em",
+						marginBottom: 12
+					},
+					children: [
+						t("title"),
+						" · ",
+						t("subtitle"),
+						" — ",
+						t("root"),
+						": ",
+						state.root ?? "—"
+					]
+				}), scopes.map((scope) => {
+					const bucket = state.presets?.[scope];
+					const isCommon = scope === "common";
+					const row = roster.get(scope);
+					const badge = isCommon ? t("badgeBaseline") : row?.broken !== void 0 ? t("badgeBroken") : bucket === void 0 ? t("badgeInherit") : t("badgeOverridden");
+					const title = isCommon ? t("commonTitle") : row?.name === void 0 || row.name.length === 0 ? scope : `${scope} · ${row.name}`;
+					return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScopeCard, {
+						title,
+						hint: isCommon ? t("commonHint") : t("presetHint"),
+						badge,
+						defaultOpen: isCommon,
+						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScopePanel, {
+							t,
+							scope,
+							bucket,
+							effective: state.effective?.[scope],
+							files: state.files?.[scope],
+							onSaved: load
+						})
+					}, `${scope}:${JSON.stringify(bucket ?? {})}`);
+				})]
 			});
 		}
 		/**

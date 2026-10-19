@@ -15,7 +15,6 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { en, zh, type LocaleKey } from './locales.js'
 import {
   fetchState,
-  resetInjected,
   saveConfig,
   type Bucket,
   type FileInfo,
@@ -378,7 +377,6 @@ export function RorokoSettingsPage(props: { t: Translate }): React.ReactElement 
   const { t } = props
   const [state, setState] = useState<StateBody | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [note, setNote] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setError(null)
@@ -392,13 +390,6 @@ export function RorokoSettingsPage(props: { t: Translate }): React.ReactElement 
   useEffect(() => {
     void load()
   }, [load])
-
-  const reset = useCallback(() => {
-    setNote(null)
-    void resetInjected()
-      .then(ack => { setNote(ack.ok ? t('resetDone') : t('resetFailed')); return load() })
-      .catch(() => { setNote(t('resetFailed')) })
-  }, [load, t])
 
   if (error !== null) {
     return (
@@ -428,7 +419,7 @@ export function RorokoSettingsPage(props: { t: Translate }): React.ReactElement 
   return (
     <div style={{ padding: '6px 0' }}>
       <div style={{ color: 'var(--dsw-text-secondary, #888)', fontSize: '0.9em', marginBottom: 12 }}>
-        {t('title')} · {t('subtitle')} — {t('stateFile')}: {state.stateFile ?? '—'}
+        {t('title')} · {t('subtitle')} — {t('root')}: {state.root ?? '—'}
       </div>
 
       {scopes.map(scope => {
@@ -463,22 +454,6 @@ export function RorokoSettingsPage(props: { t: Translate }): React.ReactElement 
         )
       })}
 
-      <ToolHeader title={t('injectedCount')} desc={t('injectedHint')} />
-      <PanelShell>
-        <div style={{ fontSize: '0.85em', lineHeight: 1.9 }}>
-          <div>{t('root')}: {state.root ?? '—'}</div>
-          <div>{t('stateFile')}: {state.stateFile ?? '—'}</div>
-          <div>{t('injectedFile')}: {state.injectedFile ?? '—'}</div>
-          <div>{t('injectedCount')}: {state.injected?.length ?? 0}</div>
-        </div>
-        <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
-          <button type="button" style={buttonStyle} onClick={() => { void reset() }}>{t('reset')}</button>
-          <button type="button" style={buttonStyle} onClick={() => { void load() }}>{t('refresh')}</button>
-          {note === null
-            ? null
-            : <span style={{ color: 'var(--dsw-text-secondary, #888)', fontSize: '0.8em' }}>{note}</span>}
-        </div>
-      </PanelShell>
     </div>
   )
 }

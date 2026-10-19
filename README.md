@@ -59,7 +59,7 @@ plugins:
 | 清单 | 去处 | 生效方式 |
 |---|---|---|
 | `systemFiles` | 系统提示词（`deployment:persona-prefix`） | 常驻，每次装配现读 |
-| `userFiles` | 一条 user 消息，追加在用户消息之后 | 每会话一次，判重记在 `<root>/state/injected.json` |
+| `userFiles` | 一条 user 消息，追加在用户消息之后 | 每会话一次，进程内存登记 |
 
 用户层是**纯拼接**：文件内容原样拼起来，注入侧不加签名、不加 `<system-reminder>`
 壳。首尾要什么，就在文件里自己写。
@@ -76,14 +76,12 @@ plugins:
 - 每组参数一个「覆盖」勾选框：不勾 = 一个字段都不发，跟随继承；勾了整组落盘
 - 两组都不覆盖时保存 = 把这个桶删掉；另有「重置为继承」
 - 文件状态（就绪 / 缺失 + 大小）
-- 注入记录条数 + 「清空注入记录」
 
 路由（webServer 普通路由，不碰 Remote / configForms）：
 
 ```
-GET  /roroko-tool/state   桶 + roster + 各 scope 生效值 + 文件状态 + 跳闸记录
+GET  /roroko-tool/state   桶 + roster + 各 scope 生效值 + 文件状态
 POST /roroko-tool/config  按 preset 写桶（字段传 null 删键，{preset, reset:true} 删桶）
-POST /roroko-tool/reset   清空跳闸记录
 ```
 
 ## 0.2.1 适配：系统段怎么知道自己是哪个 preset

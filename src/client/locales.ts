@@ -11,14 +11,6 @@ export const zh = {
   notMountedHint: 'preset 里没声明 config.preinject 桶，这个页面无事可做',
 
   root: '身份根',
-  stateFile: '覆盖文件',
-  injectedFile: '记录文件',
-  injectedCount: '注入记录',
-  injectedEmpty: '还没有会话被标记',
-  injectedHint: '记录文件清空后，下次会话会重新注入一遍。',
-  reset: '清空注入记录',
-  resetDone: '已清空，下次会话会重新注入',
-  resetFailed: '清空失败',
 
   commonTitle: '公共默认',
   commonHint: '没写覆盖的 preset 都吃这一层，也是每个 preset 的基线。',
@@ -63,14 +55,6 @@ export const en: Record<LocaleKey, string> = {
   notMountedHint: 'No config.preinject bucket in this preset, nothing to configure here',
 
   root: 'Root',
-  stateFile: 'Override file',
-  injectedFile: 'Record file',
-  injectedCount: 'Injection record',
-  injectedEmpty: 'No session marked yet',
-  injectedHint: 'Clear the record file and the next session injects again.',
-  reset: 'Clear injection record',
-  resetDone: 'Cleared — the next session injects again',
-  resetFailed: 'Clear failed',
 
   commonTitle: 'Common default',
   commonHint: 'Every preset without overrides reads this layer; it is the baseline.',

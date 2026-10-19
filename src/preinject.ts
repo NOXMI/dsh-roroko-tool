@@ -13,7 +13,9 @@
  *
  * 覆盖层存 `<root>/state/preinject.json`，按 preset 分桶（见 presets.ts）。
  * 文件路径相对 root 解析，`~/` 走主目录，绝对路径原样用；读不到静默跳过。
- * 判重记在 `<root>/state/injected.json`，跨重启有效。
+ * 判重：每个会话只注入一次，登记在进程内存里。DSH 0.2.1 的 Session.log 是私有
+ * 字段、surface 只给 seq，扫不到注入痕迹，所以不落盘——进程重启后老会话会再
+ * 注入一次，仅此而已。
  *
  * ── 0.2.1 适配：系统段怎么知道自己是哪个 preset ────────────────────────
  * 0.1.6 的 provider 从 `context.agent.session.header.agentPreset` 取；0.2.1 的
@@ -25,8 +27,8 @@
  * 事件送过来，所以这个实例变量对本实例如同常量。不依赖 dsh-scope 的内部符号。
  */
 import { readFileSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { isAbsolute, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Context } from '@deepseek-ai/cordis'
@@ -135,11 +137,6 @@ export function defaultRoot(): string {
   return join(dshHome(), 'roroko')
 }
 
-/** 判重文件。 */
-export function injectedFile(root: string): string {
-  return join(root, 'state', 'injected.json')
-}
-
 /** 清单项解析：相对 root；`~/` 走主目录；绝对路径原样。 */
 export function entryPath(name: string, root: string): string {
   if (isAbsolute(name)) return name
@@ -157,6 +154,9 @@ export function entryPath(name: string, root: string): string {
  * 公共桶。不依赖 dsh-scope 的内部符号，跨安装形态都成立。
  */
 let activePreset: string | undefined
+
+/** 已注入过的会话（进程内存，重启即清空）。 */
+const INJECTED = new Set<string>()
 
 function readSync(path: string): string {
   try {
@@ -194,27 +194,6 @@ async function userSegmentText(
   return mergeTexts(await Promise.all(effective.userFiles.map(name => readAsync(entryPath(name, root)))))
 }
 
-async function loadInjected(file: string): Promise<Set<string>> {
-  try {
-    const parsed: unknown = JSON.parse(await readFile(file, 'utf8'))
-    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [])
-  } catch {
-    return new Set()
-  }
-}
-
-async function markInjected(file: string, sessionId: string): Promise<void> {
-  const set = await loadInjected(file)
-  if (set.has(sessionId)) return
-  set.add(sessionId)
-  try {
-    await mkdir(dirname(file), { recursive: true })
-    await writeFile(file, JSON.stringify([...set]), 'utf8')
-  } catch {
-    // 判重失败不影响注入本身
-  }
-}
-
 /**
  * 挂载本子模块。由 host 在自己的 ctx 上调用，不单独占一行插件。
  * @param ctx - 宿主上下文（通常是 preset scope 里的子 fiber）。
@@ -224,9 +203,8 @@ export function mount(ctx: Context, rawConfig: PreinjectConfig = {}): void {
   const surface = ctx as unknown as Surface
   const config: PreinjectConfig = { ...rawConfig }
   const root = rawConfig.root !== undefined && rawConfig.root.length > 0 ? rawConfig.root : defaultRoot()
-  const file = injectedFile(root)
 
-  const status: MountStatus = { root, config, stateFile: join(root, 'state', 'preinject.json'), injectedFile: file }
+  const status: MountStatus = { root, config }
   surface.effect(() => registerMount(status), 'preinject.status()')
 
   surface.effect(
@@ -268,10 +246,10 @@ export function mount(ctx: Context, rawConfig: PreinjectConfig = {}): void {
     // 记下来给系统段的 provider 选桶（provider 是同步的，拿不到 session）。
     if (presetId !== undefined) activePreset = presetId
     const sessionId = session?.id ?? session?.header?.id
-    if (sessionId !== undefined && (await loadInjected(file)).has(sessionId)) return decision
+    if (sessionId !== undefined && INJECTED.has(sessionId)) return decision
     const text = await userSegmentText(root, config, presetId)
     if (!text) return decision
-    if (sessionId !== undefined) await markInjected(file, sessionId)
+    if (sessionId !== undefined) INJECTED.add(sessionId)
     const message = createUserMessage({
       content: [{ type: 'text', text }],
       source: { kind: moduleName },

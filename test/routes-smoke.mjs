@@ -4,11 +4,10 @@
  * 用假 webServer + 假 preset 注册表收下三条路由的 handler，手工喂 req / res：
  *   1. GET  /roroko-tool/state  → 公共桶 / 各 preset 桶 / roster / 生效值 / 文件状态
  *   2. POST /roroko-tool/config → 按 preset 写桶（部分合并、null 删键、reset 删桶）
- *   3. POST /roroko-tool/reset  → 删掉 injected.json
  *
  * 和 preinject-smoke 一样不碰网络与 DSH 运行时。
  */
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -71,7 +70,7 @@ const fake = {
 }
 
 apply(fake, { preinject: { root } })
-check(routes.size === 3, '注册了 state / config / reset 三条路由')
+check(routes.size === 2, '注册了 state / config 两条路由')
 
 /** 假 req：能 async 迭代出请求体。 */
 function makeReq(method, body) {
@@ -152,14 +151,11 @@ const cleared = await call('/roroko-tool/config', 'POST', { preset: 'common', re
 check(cleared.body.ok === true && cleared.body.state.presets.common === undefined, 'reset 删掉整桶')
 check(variables.get('roroko_preinject_system')?.() === '', '桶删掉后系统层不再注入')
 
-// ── POST reset：跳闸记录 ──
-await mkdir(join(root, 'state'), { recursive: true })
-await writeFile(join(root, 'state', 'injected.json'), JSON.stringify(['s1', 's2']), 'utf8')
-check((await call('/roroko-tool/state', 'GET')).body.injected.length === 2, 'GET state 读出跳闸记录')
-check((await call('/roroko-tool/reset', 'POST')).body.ok === true, 'POST reset 成功')
-const gone = await stat(join(root, 'state', 'injected.json')).then(() => false, () => true)
-check(gone, 'injected.json 被删掉')
-check((await readFile(join(root, 'state', 'preinject.json'), 'utf8')).includes('presets'), '覆盖文件不受 reset 影响')
+// ── 不再有跳闸记录：状态里不该出现 injected 字段/路由 ──
+const finalState = await call('/roroko-tool/state', 'GET')
+check(finalState.body.injected === undefined, 'GET state 不再返回注入记录')
+check(!routes.has('/roroko-tool/reset'), 'reset 路由已下线')
+check(routes.size === 2, '只剩 state / config 两条路由')
 
 await rm(root, { recursive: true, force: true })
 console.log(problems.length === 0 ? '\n全部通过' : `\n${problems.length} 项未通过`)
