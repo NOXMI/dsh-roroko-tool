@@ -1,19 +1,16 @@
 /**
- * 运行时状态登记处：子模块挂载时把自己的实际配置写进来，host 的 HTTP 路由把它
- * 读出来给设置页；同时负责跳闸记录（injected.json）的读取与清空。
+ * 运行时状态登记处：子模块挂载时把自己的目录与文件位置写进来，host 的 HTTP
+ * 路由读出来给设置页；同时负责跳闸记录（injected.json）的读取与清空。
  */
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { readFile, rm } from 'node:fs/promises'
 
 export interface MountStatus {
-  /** 身份文件根目录。 */
+  /** 文件基准目录（身份根）。 */
   root: string
-  /** 实际使用的身份文件（相对 root）。 */
-  identityFiles: readonly string[]
-  /** 实际使用的工作区文件（相对会话 cwd）。 */
-  workspaceFiles: readonly string[]
-  /** 系统段是否也拼工作区文件。 */
-  includeWorkspace: boolean
+  /** 两段清单文件。 */
+  configFile: string
+  /** 跳闸记录文件。 */
+  injectedFile: string
 }
 
 const MOUNTS = new Map<number, MountStatus>()
@@ -38,10 +35,9 @@ export function mountedStatuses(): MountStatus[] {
   return [...MOUNTS.values()]
 }
 
-/** 跳闸记录文件路径（跟随第一个挂载的 root）。 */
-export function injectedFile(): string | undefined {
-  const first = mountedStatuses()[0]
-  return first === undefined ? undefined : join(first.root, 'state', 'injected.json')
+/** 首个挂载的完整登记项（设置页只跟一个 preinject 实例对话）。 */
+export function firstMount(): MountStatus | undefined {
+  return mountedStatuses()[0]
 }
 
 /**
@@ -56,16 +52,6 @@ export async function readInjected(file: string): Promise<string[]> {
   } catch {
     return []
   }
-}
-
-/**
- * 写入已注入的会话 id。
- * @param file - injected.json 路径。
- * @param ids - 会话 id 列表。
- */
-export async function writeInjected(file: string, ids: readonly string[]): Promise<void> {
-  await mkdir(dirname(file), { recursive: true })
-  await writeFile(file, JSON.stringify([...ids]), 'utf8')
 }
 
 /**

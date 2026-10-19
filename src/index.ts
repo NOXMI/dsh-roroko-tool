@@ -14,8 +14,8 @@
  * 子模块只在配置桶**存在**时才挂载：bundle 层那条不带 config 的宿主行因此什么
  * 模块都不挂（否则会在全局 scope 抢 persona 位，与 prompt registry 冲突）。
  *
- * 宿主职责：webServer 可用时挂两条设置页数据路由（GET /roroko-tool/state、
- * POST /roroko-tool/reset），与子模块互不依赖。
+ * 宿主职责：webServer 可用时挂三条设置页数据路由（/roroko-tool/state、/config、
+ * /reset），与子模块互不依赖。
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -29,14 +29,10 @@ export const Config: z<RorokoToolConfig> = z.object({
   preinject: z.union([
     z.boolean(),
     z.object({
-      identityFiles: z.array(z.string()).description('身份文件（相对身份根）'),
-      workspaceFiles: z.array(z.string()).description('工作区指令文件（相对会话 cwd）'),
-      includeWorkspace: z.boolean().description('系统段是否也拼工作区文件'),
-      workspaceFallbackToRoot: z.boolean().description('工作区找不到时回落到身份根'),
-      wrap: z.boolean().description('消息段是否包 system-reminder'),
+      root: z.string().description('文件基准目录（默认 $DSH_HOME/roroko）'),
       suppressHarnessIdentity: z.boolean().description('顶掉官方开场白段'),
     }),
-  ]).description('上下文注入子模块'),
+  ]).description('上下文注入子模块（两张清单在设置页里写）'),
 }) as z<RorokoToolConfig>
 /** 本包版本（设置页显示用）。 */
 export const version = '0.1.0'

@@ -1,13 +1,16 @@
 /**
  * 洛洛可设置页（浏览器半侧）。
  *
- * 挂进 Plugins 页的 `plugins.tab`：一个自绘的「洛洛可」页签，读
- * GET /roroko-tool/state 展示子模块挂载情况，并提供清空注入记录的按钮。
- * 不依赖 configForms —— 数据走宿主自己的 HTTP 路由，改动最小。
+ * 挂进设置面板的 `settings.section`：两张清单，一块拼进系统层，一块拼进用户层。
+ * 保存即写 `<root>/state/preinject.json`，preinject 的 provider 每次装配现读，
+ * 改完下一步就生效。
+ *
+ * 数据走宿主自己的 HTTP 路由（见 api.ts），不碰 Remote/configForms。
  */
 import { useCallback, useEffect, useState } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { en, zh, type LocaleKey } from './locales.js'
+import { fetchState, resetInjected, saveConfig, type FileInfo, type StateBody } from './api.js'
 
 /** 文案命名空间。 */
 export const NS = 'rorokoTool'
@@ -15,12 +18,17 @@ export const NS = 'rorokoTool'
 /** 需要的客户端服务。 */
 export const inject = ['slots', 'locale']
 
+/** 文案签名（由 locale 服务注入）。 */
+type Translate = (key: LocaleKey) => string
 
-/**
- * 左栏一级图标。
- * @param props - 尺寸与激活态。
- * @returns 图标元素。
- */
+/** 页面草稿：清单在输入框里是纯文本。 */
+interface Draft {
+  systemFiles: string
+  userFiles: string
+  wrap: boolean
+}
+
+/** 左栏一级图标。 */
 export function RorokoIcon({ size = 18, active = false }: { size?: number; active?: boolean }): React.ReactElement {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ opacity: active ? 1 : 0.72 }}>
@@ -29,22 +37,8 @@ export function RorokoIcon({ size = 18, active = false }: { size?: number; activ
     </svg>
   )
 }
-/** 文案签名（由 locale 服务注入）。 */
-type Translate = (key: LocaleKey) => string
 
-interface MountStatus {
-  root: string
-  identityFiles: string[]
-  workspaceFiles: string[]
-  includeWorkspace: boolean
-}
-
-interface StateBody {
-  version: string
-  mounts: MountStatus[]
-  injectedFile: string | null
-  injected: string[]
-}
+const mono = 'ui-monospace, SFMono-Regular, Menlo, monospace'
 
 const box: React.CSSProperties = {
   display: 'flex',
@@ -57,59 +51,89 @@ const box: React.CSSProperties = {
 
 const row: React.CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: '104px 1fr',
+  gridTemplateColumns: '112px 1fr',
   gap: '10px',
   alignItems: 'baseline',
 }
 
 const label: React.CSSProperties = { opacity: 0.6 }
-const mono: React.CSSProperties = { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '12px' }
+const dim: React.CSSProperties = { opacity: 0.55, fontSize: '12px' }
+const code: React.CSSProperties = { fontFamily: mono, fontSize: '12px', wordBreak: 'break-all' }
 const card: React.CSSProperties = {
   border: '1px solid color-mix(in srgb, currentColor 14%, transparent)',
   borderRadius: '10px',
   padding: '12px 14px',
   display: 'flex',
   flexDirection: 'column',
-  gap: '6px',
+  gap: '8px',
 }
-const button: React.CSSProperties = {
-  alignSelf: 'flex-start',
-  marginTop: '4px',
+const input: React.CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+  fontFamily: mono,
+  fontSize: '12px',
+  lineHeight: 1.6,
+  padding: '7px 10px',
+  borderRadius: '8px',
+  border: '1px solid color-mix(in srgb, currentColor 18%, transparent)',
+  background: 'color-mix(in srgb, currentColor 4%, transparent)',
+  color: 'inherit',
+  resize: 'vertical',
+}
+const button = (disabled = false): React.CSSProperties => ({
   padding: '6px 12px',
   borderRadius: '8px',
   border: '1px solid color-mix(in srgb, currentColor 22%, transparent)',
   background: 'transparent',
   color: 'inherit',
-  cursor: 'pointer',
+  cursor: disabled ? 'default' : 'pointer',
+  opacity: disabled ? 0.45 : 1,
   fontSize: '12px',
-}
+})
 
 function Field({ name, value }: { name: string; value: string }): React.ReactElement {
   return (
     <div style={row}>
       <span style={label}>{name}</span>
-      <span style={mono}>{value}</span>
+      <span style={code}>{value}</span>
     </div>
   )
 }
 
+/** 清单文本 → 文件名数组（一行一个，去掉空行）。 */
+function splitLines(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+}
+
+function formatBytes(bytes: number): string {
+  return bytes < 1024 ? `${String(bytes)} B` : `${(bytes / 1024).toFixed(1)} KB`
+}
+
 /**
  * 设置页主体。
- * @param props - 页签所有者传入的属性（本页不使用）。
+ * @param props - 页签所有者传入的属性。
  * @returns 设置页元素。
  */
 export function RorokoSettingsPage(props: { t: Translate }): React.ReactElement {
   const { t } = props
   const [state, setState] = useState<StateBody | null>(null)
+  const [draft, setDraft] = useState<Draft | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
     setError(null)
     try {
-      const response = await fetch('/roroko-tool/state', { credentials: 'same-origin' })
-      if (!response.ok) throw new Error(`HTTP ${String(response.status)}`)
-      setState(await response.json() as StateBody)
+      const body = await fetchState()
+      setState(body)
+      const config = body.config
+      setDraft(config === undefined
+        ? null
+        : { systemFiles: config.systemFiles.join('\n'), userFiles: config.userFiles.join('\n'), wrap: config.wrap })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     }
@@ -119,12 +143,30 @@ export function RorokoSettingsPage(props: { t: Translate }): React.ReactElement 
     void load()
   }, [load])
 
+  const save = useCallback(async () => {
+    if (draft === null) return
+    setBusy(true)
+    setNote(null)
+    try {
+      const ack = await saveConfig({
+        systemFiles: splitLines(draft.systemFiles),
+        userFiles: splitLines(draft.userFiles),
+        wrap: draft.wrap,
+      })
+      setNote(ack.ok ? t('saved') : `${t('saveFailed')}: ${ack.reason ?? ''}`)
+      await load()
+    } catch (cause) {
+      setNote(`${t('saveFailed')}: ${cause instanceof Error ? cause.message : String(cause)}`)
+    } finally {
+      setBusy(false)
+    }
+  }, [draft, load, t])
+
   const reset = useCallback(async () => {
     setNote(null)
     try {
-      const response = await fetch('/roroko-tool/reset', { method: 'POST', credentials: 'same-origin' })
-      const body = await response.json() as { ok?: boolean }
-      setNote(body.ok === true ? t('resetDone') : t('resetFailed'))
+      const ack = await resetInjected()
+      setNote(ack.ok ? t('resetDone') : t('resetFailed'))
       await load()
     } catch {
       setNote(t('resetFailed'))
@@ -135,38 +177,117 @@ export function RorokoSettingsPage(props: { t: Translate }): React.ReactElement 
     return (
       <div style={box}>
         <div style={label}>{t('failed')}: {error}</div>
-        <button style={button} onClick={() => { void load() }}>{t('refresh')}</button>
+        <button style={button()} onClick={() => { void load() }}>{t('refresh')}</button>
       </div>
     )
   }
   if (state === null) return <div style={box}><div style={label}>{t('loading')}</div></div>
+  if (!state.mounted) {
+    return (
+      <div style={box}>
+        <div style={{ fontSize: '15px', fontWeight: 600 }}>{t('notMounted')}</div>
+        <div style={label}>{t('notMountedHint')}</div>
+      </div>
+    )
+  }
+  if (draft === null) return <div style={box}><div style={label}>{t('loading')}</div></div>
+
+  const set = <K extends keyof Draft>(key: K, value: Draft[K]): void => {
+    setDraft(current => (current === null ? current : { ...current, [key]: value }))
+  }
+
+  /** 文件状态条（缺文件也照列，标出来就好）。 */
+  const fileStatus = (infos: FileInfo[] | undefined): React.ReactElement => {
+    if (infos === undefined || infos.length === 0) return <div style={dim}>{t('emptyFiles')}</div>
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+        {infos.map(info => (
+          <span key={info.path} style={{ ...code, opacity: info.exists ? 0.85 : 0.45 }}>
+            {info.name} · {info.exists ? `${t('present')} ${formatBytes(info.bytes)}` : t('missing')}
+          </span>
+        ))}
+      </div>
+    )
+  }
+
+  /**
+   * 一张清单。
+   * @param opts - 标题、说明、草稿字段、文件状态、附加控件。
+   * @returns 卡片元素。
+   */
+  const layer = (opts: {
+    title: string
+    hint: string
+    filesKey: 'systemFiles' | 'userFiles'
+    infos: FileInfo[] | undefined
+    extra?: React.ReactNode
+  }): React.ReactElement => (
+    <div style={card}>
+      <div style={{ fontWeight: 600 }}>{opts.title}</div>
+      <div style={dim}>{opts.hint}</div>
+      <textarea
+        style={{ ...input, minHeight: '96px' }}
+        spellCheck={false}
+        value={draft[opts.filesKey]}
+        placeholder={t('filesHint')}
+        onChange={event => { set(opts.filesKey, event.target.value) }}
+      />
+      {fileStatus(opts.infos)}
+      {opts.extra}
+    </div>
+  )
 
   return (
     <div style={box}>
-      <div>
-        <div style={{ fontSize: '15px', fontWeight: 600 }}>{t('title')}</div>
-        <div style={label}>{t('subtitle')} · {t('version')} {state.version}</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <div>
+          <div style={{ fontSize: '15px', fontWeight: 600 }}>{t('title')}</div>
+          <div style={label}>{t('subtitle')} · {t('version')} {state.version}</div>
+        </div>
+        <button style={button(busy)} disabled={busy} onClick={() => { void load() }}>{t('refresh')}</button>
       </div>
 
       <div style={card}>
-        <div style={{ fontWeight: 600 }}>{t('mounts')}</div>
-        {state.mounts.length === 0
-          ? <div style={label}>{t('none')}</div>
-          : state.mounts.map((mount, index) => (
-            <div key={`${mount.root}-${String(index)}`} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <Field name={t('root')} value={mount.root} />
-              <Field name={t('identityFiles')} value={mount.identityFiles.join(', ')} />
-              <Field name={t('workspaceFiles')} value={mount.workspaceFiles.join(', ')} />
-              <Field name={t('includeWorkspace')} value={mount.includeWorkspace ? t('on') : t('off')} />
-            </div>
-          ))}
-      </div>
-
-      <div style={card}>
-        <div style={{ fontWeight: 600 }}>{t('injected')} · {String(state.injected.length)}</div>
+        <Field name={t('root')} value={state.root ?? '—'} />
+        <Field name={t('configFile')} value={state.configFile ?? '—'} />
         <Field name={t('injectedFile')} value={state.injectedFile ?? '—'} />
-        <button style={button} onClick={() => { void reset() }}>{t('reset')}</button>
-        {note === null ? null : <div style={label}>{note}</div>}
+        <div style={row}>
+          <span style={label}>{t('injectedCount')}</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <span style={code}>{state.injected?.length ?? 0}</span>
+            <button style={button()} onClick={() => { void reset() }}>{t('reset')}</button>
+            {(state.injected?.length ?? 0) === 0 ? <span style={dim}>{t('injectedEmpty')}</span> : null}
+          </span>
+        </div>
+      </div>
+
+      {layer({
+        title: t('systemTitle'),
+        hint: t('systemHint'),
+        filesKey: 'systemFiles',
+        infos: state.files?.system,
+      })}
+
+      {layer({
+        title: t('userTitle'),
+        hint: t('userHint'),
+        filesKey: 'userFiles',
+        infos: state.files?.user,
+        extra: (
+          <label style={{ display: 'flex', alignItems: 'center', gap: '7px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={draft.wrap}
+              onChange={event => { set('wrap', event.target.checked) }}
+            />
+            <span style={dim}>{t('wrap')} · {t('wrapHint')}</span>
+          </label>
+        ),
+      })}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+        <button style={button(busy)} disabled={busy} onClick={() => { void save() }}>{t('save')}</button>
+        {note === null ? null : <span style={label}>{note}</span>}
       </div>
     </div>
   )
@@ -196,10 +317,3 @@ export function apply(ctx: ClientContext): void {
     console.error('[roroko-tool] 设置页注册失败：', error)
   }
 }
-
-
-
-
-
-
-

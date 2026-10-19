@@ -1,16 +1,17 @@
 /**
  * roroko-preinject —— 双段注入子模块。
  *
- * 系统段：注册 `deployment:persona-prefix`（顶掉官方 persona），section 文本只放
- *         宏 `{{roroko_preinject_system}}`，正文由 variable provider 每次装配现读文件。
- *         这样文件正文里的花括号不会进插值扫描路径，改文件下一步就生效。
- * 消息段：`agent/pre-step` 注入一条带本插件签名的 user 消息，每会话一次。
+ * 就两张清单，谁都不认识、什么都不猜：
+ *   系统层 systemFiles —— 按顺序拼进系统提示词（`deployment:persona-prefix`，
+ *                         section 文本只放宏，正文由变量 provider 现读）。
+ *   用户层 userFiles   —— 按顺序拼成一条 user 消息，追加在本批用户消息之后，
+ *                         每会话一次。
  *
- * 文件归属：
- *   身份文件 —— 相对的按 root（默认 $DSH_HOME/roroko）解析，跟预设走，不跟工作区。
- *   工作区文件 —— 相对的按会话 cwd 解析，跟项目走。
+ * 清单只有一份，存在 `<root>/state/preinject.json`，设置页读写；preset 里只给
+ * `root`。两个清单都空 = 什么都不注入。
  *
- * 判重：$DSH_HOME/roroko/state/injected.json 记 sessionId，跨重启有效。
+ * 文件路径相对 root 解析，`~/` 走主目录，绝对路径原样用；读不到静默跳过。
+ * 判重记在 `<root>/state/injected.json`，跨重启有效。
  */
 import { readFileSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -18,7 +19,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Context } from '@deepseek-ai/cordis'
-import { registerMount } from './state.js'
+import { registerMount, type MountStatus } from './state.js'
 
 /** 子模块标识：只用于日志与消息来源签名，不是独立插件。 */
 export const moduleName = 'roroko-preinject'
@@ -30,32 +31,30 @@ const HARNESS_IDENTITY = 'harness:identity'
 const VARIABLE = 'roroko_preinject_system'
 const MARK = '[roroko-preinject]'
 
+/** preset 接线参数：只给目录与几个开关，清单不在这里写。 */
 export interface PreinjectConfig {
   /** false 时不挂载本模块。 */
   enabled?: boolean
-  /** 身份文件根目录，默认 $DSH_HOME/roroko。 */
+  /** 文件基准目录，默认 $DSH_HOME/roroko。 */
   root?: string
-  /** 身份文件（相对 root）。 */
-  identityFiles?: string[]
-  /** 工作区指令文件（相对会话 cwd）。 */
-  workspaceFiles?: string[]
-  /** 系统段是否拼入工作区文件（默认 false：AGENTS 交给消息段，避免同一份内容进两次）。 */
-  includeWorkspace?: boolean
-  /** 工作区找不到文件时，回落到 root 下的同名文件。 */
-  workspaceFallbackToRoot?: boolean
-  /** 消息段是否包 <system-reminder>。 */
-  wrap?: boolean
   /** 顶掉 "You are an AI agent powered by DeepSeek Harness." 这个开场白。 */
   suppressHarnessIdentity?: boolean
 }
 
-const DEFAULTS: Required<Omit<PreinjectConfig, 'enabled' | 'root'>> = {
-  identityFiles: ['IDENTITY.md'],
-  workspaceFiles: ['AGENTS.md'],
-  includeWorkspace: false,
-  workspaceFallbackToRoot: true,
+/** 两张注入清单（设置页唯一编辑的东西）。 */
+export interface InjectConfig {
+  /** 系统层：相对 root 的文件名，按顺序拼进系统提示词。 */
+  systemFiles: string[]
+  /** 用户层：相对 root 的文件名，按顺序拼成一条 user 消息。 */
+  userFiles: string[]
+  /** 用户层是否包 `<system-reminder>`。 */
+  wrap: boolean
+}
+
+export const DEFAULTS: InjectConfig = {
+  systemFiles: [],
+  userFiles: [],
   wrap: true,
-  suppressHarnessIdentity: true,
 }
 
 /** ctx 上本模块用到的最小面（避免绑死具体类型）。 */
@@ -69,7 +68,6 @@ interface PromptSurface {
     complete?: boolean
   }): () => void
   getSectionOrder(name: 'DEPLOYMENT_PERSONA_PREFIX' | 'HARNESS_IDENTITY'): number
-  suppressRuntimeContext?(): () => void
 }
 
 interface PreStepDecision {
@@ -81,7 +79,7 @@ interface PreStepPayload {
   agent: {
     session?: {
       id?: string
-      header?: { id?: string; cwd?: string }
+      header?: { id?: string }
     }
   }
 }
@@ -97,9 +95,32 @@ interface Surface {
 
 const dshHome = (): string => process.env.DSH_HOME ?? join(homedir(), '.dsh')
 
+/** 默认身份根。 */
+export function defaultRoot(): string {
+  return join(dshHome(), 'roroko')
+}
+
+/** 清单文件。 */
+export function configFile(root: string): string {
+  return join(root, 'state', 'preinject.json')
+}
+
+/** 判重文件。 */
+export function injectedFile(root: string): string {
+  return join(root, 'state', 'injected.json')
+}
+
+/** 清单项解析：相对 root；`~/` 走主目录；绝对路径原样。 */
+export function entryPath(name: string, root: string): string {
+  if (isAbsolute(name)) return name
+  if (name === '~') return homedir()
+  if (name.startsWith('~/') || name.startsWith('~\\')) return join(homedir(), name.slice(2))
+  return resolve(root, name)
+}
+
 function readSync(path: string): string {
   try {
-    return readFileSync(path, 'utf8')
+    return readFileSync(path, 'utf8').trim()
   } catch {
     return ''
   }
@@ -107,56 +128,70 @@ function readSync(path: string): string {
 
 async function readAsync(path: string): Promise<string> {
   try {
-    return await readFile(path, 'utf8')
+    return (await readFile(path, 'utf8')).trim()
   } catch {
     return ''
   }
 }
 
-function resolveList(list: readonly string[], base: string): string[] {
-  return list.map(path => (isAbsolute(path) ? path : resolve(base, path)))
+/** 清单清洗：字符串、去空白、去空项。 */
+function cleanList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === 'string').map(item => item.trim()).filter(Boolean)
 }
 
-function mergeTexts(texts: readonly string[]): string {
-  return texts
-    .map(text => text.trim())
+/** 读清单（同步：系统段 provider 不能 await）。坏文件当空。 */
+export function readConfig(root: string): InjectConfig {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(readFileSync(configFile(root), 'utf8'))
+  } catch {
+    return { ...DEFAULTS }
+  }
+  if (parsed === null || typeof parsed !== 'object') return { ...DEFAULTS }
+  const raw = parsed as Record<string, unknown>
+  return {
+    systemFiles: cleanList(raw.systemFiles),
+    userFiles: cleanList(raw.userFiles),
+    wrap: typeof raw.wrap === 'boolean' ? raw.wrap : DEFAULTS.wrap,
+  }
+}
+
+/**
+ * 整份写清单（全量替换，不合并）。
+ * @param root - 身份根。
+ * @param patch - 页面提交的字段，缺的走默认。
+ * @returns 落盘后的清单。
+ */
+export async function writeConfig(root: string, patch: Record<string, unknown>): Promise<InjectConfig> {
+  const next: InjectConfig = {
+    systemFiles: cleanList(patch.systemFiles),
+    userFiles: cleanList(patch.userFiles),
+    wrap: typeof patch.wrap === 'boolean' ? patch.wrap : DEFAULTS.wrap,
+  }
+  const file = configFile(root)
+  await mkdir(dirname(file), { recursive: true })
+  await writeFile(file, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+  return next
+}
+
+/** 系统层正文：清单现读，读不到的文件跳过。 */
+function systemText(root: string): string {
+  return readConfig(root).systemFiles
+    .map(name => readSync(entryPath(name, root)))
     .filter(Boolean)
     .join('\n\n')
 }
 
-/** 系统段正文：身份文件 + 工作区文件，每次装配现读。 */
-function systemText(config: PreinjectConfig, root: string): string {
-  const identity = mergeTexts(resolveList(config.identityFiles ?? DEFAULTS.identityFiles, root).map(readSync))
-  const workspace = config.includeWorkspace === false
-    ? ''
-    : mergeTexts(workspacePaths(config, process.cwd(), root).map(readSync))
-  return [identity, workspace].filter(Boolean).join('\n\n---\n\n')
-}
-
-/** 工作区文件路径：按 cwd → root → 服务 cwd 依次找，用第一个有内容的。 */
-function workspacePaths(config: PreinjectConfig, cwd: string, root: string): string[] {
-  const files = config.workspaceFiles ?? DEFAULTS.workspaceFiles
-  if (config.workspaceFallbackToRoot === false) return resolveList(files, cwd)
-  const candidates = [cwd, root, process.cwd()]
-  for (const base of candidates) {
-    const paths = resolveList(files, base)
-    if (paths.some(path => readSync(path) !== '')) return paths
-  }
-  return resolveList(files, cwd)
-}
-
-/** 消息段正文：只放工作区文件。 */
-async function userSegmentText(config: PreinjectConfig, cwd: string, root: string): Promise<string> {
-  const files = config.workspaceFiles ?? DEFAULTS.workspaceFiles
-  const paths = workspacePaths(config, cwd, root)
-  const workspace = mergeTexts(await Promise.all(paths.map(readAsync)))
-  if (!workspace) return ''
-  const body = `${MARK} 本工作区指令（${files.join(', ')}）：\n\n${workspace}`
-  return config.wrap === false ? body : `<system-reminder>\n${body}\n</system-reminder>`
-}
-
-function stateFile(root: string): string {
-  return join(root, 'state', 'injected.json')
+/** 用户层正文：带签名，可选 system-reminder 壳。 */
+async function userSegmentText(root: string): Promise<string> {
+  const config = readConfig(root)
+  const body = (await Promise.all(config.userFiles.map(name => readAsync(entryPath(name, root)))))
+    .filter(Boolean)
+    .join('\n\n')
+  if (!body) return ''
+  const named = `${MARK} 用户层注入（${config.userFiles.join(', ')}）：\n\n${body}`
+  return config.wrap ? `<system-reminder>\n${named}\n</system-reminder>` : named
 }
 
 async function loadInjected(file: string): Promise<Set<string>> {
@@ -187,22 +222,14 @@ async function markInjected(file: string, sessionId: string): Promise<void> {
  */
 export function mount(ctx: Context, rawConfig: PreinjectConfig = {}): void {
   const surface = ctx as unknown as Surface
-  const config: PreinjectConfig = { ...DEFAULTS, ...rawConfig }
-  const root = rawConfig.root ?? join(dshHome(), 'roroko')
-  const file = stateFile(root)
+  const root = rawConfig.root !== undefined && rawConfig.root.length > 0 ? rawConfig.root : defaultRoot()
+  const file = injectedFile(root)
+
+  const status: MountStatus = { root, configFile: configFile(root), injectedFile: file }
+  surface.effect(() => registerMount(status), 'preinject.status()')
 
   surface.effect(
-    () => registerMount({
-      root,
-      identityFiles: config.identityFiles ?? DEFAULTS.identityFiles,
-      workspaceFiles: config.workspaceFiles ?? DEFAULTS.workspaceFiles,
-      includeWorkspace: config.includeWorkspace === true,
-    }),
-    'preinject.status()',
-  )
-
-  surface.effect(
-    () => surface.systemPrompt.variable(VARIABLE, () => systemText(config, root)),
+    () => surface.systemPrompt.variable(VARIABLE, () => systemText(root)),
     'preinject.variable()',
   )
   surface.effect(
@@ -214,7 +241,7 @@ export function mount(ctx: Context, rawConfig: PreinjectConfig = {}): void {
     'preinject.section()',
   )
 
-  if (config.suppressHarnessIdentity !== false) {
+  if (rawConfig.suppressHarnessIdentity !== false) {
     surface.effect(
       () => surface.systemPrompt.section({
         name: HARNESS_IDENTITY,
@@ -231,17 +258,14 @@ export function mount(ctx: Context, rawConfig: PreinjectConfig = {}): void {
     const session = payload.agent.session
     const sessionId = session?.id ?? session?.header?.id
     if (sessionId !== undefined && (await loadInjected(file)).has(sessionId)) return decision
-    const cwd = session?.header?.cwd ?? process.cwd()
-    const text = await userSegmentText(config, cwd, root)
+    const text = await userSegmentText(root)
     if (!text) return decision
     if (sessionId !== undefined) await markInjected(file, sessionId)
     const message = createUserMessage({
       content: [{ type: 'text', text }],
       source: { kind: moduleName },
     })
-    return { ...decision, messages: [message, ...(decision.messages ?? [])] }
+    // 追加在本批用户消息之后。
+    return { ...decision, messages: [...(decision.messages ?? []), message] }
   })
 }
-
-
-

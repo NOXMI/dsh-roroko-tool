@@ -20,10 +20,9 @@
           - id: roroko-tool
             name: '@roroko-tool/dsh-roroko-tool'
             config:
-              preinject:
-                # 身份走系统段，工作区指令走消息段；两边各一次，不重复。
-                identityFiles: [IDENTITY.md]
-                workspaceFiles: [AGENTS.md]
+              # 两张清单在设置页里写（落 $DSH_HOME/roroko/state/preinject.json），
+              # preset 这边只给桶，让模块挂上。
+              preinject: {}
 
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'

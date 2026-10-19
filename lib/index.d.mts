@@ -1,21 +1,12 @@
 import z from "@deepseek-ai/schemastery";
 import { Context } from "@deepseek-ai/cordis";
 //#region src/preinject.d.ts
+/** preset 接线参数：只给目录与几个开关，清单不在这里写。 */
 interface PreinjectConfig {
   /** false 时不挂载本模块。 */
   enabled?: boolean;
-  /** 身份文件根目录，默认 $DSH_HOME/roroko。 */
+  /** 文件基准目录，默认 $DSH_HOME/roroko。 */
   root?: string;
-  /** 身份文件（相对 root）。 */
-  identityFiles?: string[];
-  /** 工作区指令文件（相对会话 cwd）。 */
-  workspaceFiles?: string[];
-  /** 系统段是否拼入工作区文件（默认 false：AGENTS 交给消息段，避免同一份内容进两次）。 */
-  includeWorkspace?: boolean;
-  /** 工作区找不到文件时，回落到 root 下的同名文件。 */
-  workspaceFallbackToRoot?: boolean;
-  /** 消息段是否包 <system-reminder>。 */
-  wrap?: boolean;
   /** 顶掉 "You are an AI agent powered by DeepSeek Harness." 这个开场白。 */
   suppressHarnessIdentity?: boolean;
 }
