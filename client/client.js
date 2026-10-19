@@ -270,16 +270,14 @@ window.__ModuleLoader__.load({
 					zh,
 					en
 				}), "roroko-tool: 文案");
-				const t = locale.bind(NS);
-				slots.inject("plugins.tab", () => slots.register({
-					name: "plugins.tab",
+				slots.inject("settings.general.item", () => slots.register({
+					name: "settings.general.item",
 					id: "roroko-tool",
-					order: 40,
-					label: () => t("title"),
+					order: 60,
 					locale: NS
-				}, () => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(RorokoSettingsPage, { t })));
+				}, RorokoSettingsPage));
 			} catch (error) {
-				console.error("[roroko-tool] 设置页注册失败：", error);
+				console.error("[roroko-tool] 设置行注册失败：", error);
 			}
 		}
 		//#endregion
