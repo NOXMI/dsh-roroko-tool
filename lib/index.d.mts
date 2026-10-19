@@ -117,6 +117,8 @@ interface DatasConfig {
 }
 /** 一个桶里能覆盖的字段（autoinject 逐字段叠加，不是整组替换）。 */
 interface DatasBucket {
+  /** 总开关：false/未设 = 不注册四把工具、不注入 state 短条。 */
+  enabled?: boolean;
   dbPath?: string;
   autoinject?: Partial<AutoinjectSettings>;
 }
@@ -126,6 +128,8 @@ interface DatasState {
 }
 /** 四层合成后的有效参数。 */
 interface EffectiveDatas {
+  /** 总开关：默认关，设置页勾选才开。 */
+  enabled: boolean;
   dbPath: string;
   autoinject: AutoinjectSettings;
 }

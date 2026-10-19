@@ -80,6 +80,17 @@ export function mount(ctx: Context, rawConfig: DatasConfig = {}): void {
   /** 本实例最近一次在 pre-step 里见到的 preset id。 */
   let activePreset: string | undefined
 
+  /**
+   * 总开关。默认关：设置页勾了才注册四把工具、才注入 state 短条。
+   *
+   * 为什么能做到"点一下就开"：`ctx.tools.register()` 返回注销函数，工具是
+   * scope 里的活注册表，加了下一轮请求头就会带上、撤了下一轮就消失（agent-loop
+   * 每个 step 比对 header 决定是否重发工具表）。所以这里不靠重挂载，靠每次
+   * pre-step / agent/created 现读覆盖层后 start / stop。
+   */
+  let started = false
+  let disposers: Array<() => void> = []
+
   surface.effect(() => registerDatasMount({ root, config }), 'datas.status()')
   // 透传监听器：只记 preset，不改决策（放在 next 之前，尽早拿到）。
   surface.on('agent/pre-step', (
@@ -88,6 +99,8 @@ export function mount(ctx: Context, rawConfig: DatasConfig = {}): void {
   ) => {
     const presetId = payload.agent?.session?.header?.agentPreset
     if (presetId !== undefined) activePreset = presetId
+    // 开或关在下一步之前对齐（设置页刚改完也能吃到）。
+    sync()
     return next()
   })
 
@@ -95,13 +108,48 @@ export function mount(ctx: Context, rawConfig: DatasConfig = {}): void {
   surface.on('agent/created', async (payload: { agent?: { session?: { header?: { agentPreset?: string } } } }) => {
     const presetId = payload.agent?.session?.header?.agentPreset
     if (presetId !== undefined) activePreset = presetId
+    sync()
   })
 
   /** 每次执行现读：preset 覆盖层可能刚被设置页改过。 */
   const dbPath = (): string => resolveDatas(config, readDatasState(root), activePreset).dbPath
 
-  applyQuery(ctx, dbPath)
-  applyStateAutoinject(ctx, root, config, () => activePreset)
+  /** 打开：注册四把工具 + 起自动注入。 */
+  const start = (): void => {
+    if (started) return
+    started = true
+    disposers.push(applyQuery(ctx, dbPath))
+    disposers.push(applyStateAutoinject(ctx, root, config, () => activePreset))
+    disposers.push(surface.tools.register(lookupTool))
+    disposers.push(surface.tools.register(registerTool))
+    disposers.push(surface.tools.register(stateTool))
+    console.log('[roroko-datas] enabled → 四把工具已注册')
+  }
+
+  /** 关掉：撤工具、拆监听器。 */
+  const stop = (): void => {
+    if (!started) return
+    started = false
+    for (const dispose of disposers.splice(0).reverse()) {
+      try {
+        dispose()
+      } catch (error) {
+        console.log('[roroko-datas] stop:', error instanceof Error ? error.message : String(error))
+      }
+    }
+    console.log('[roroko-datas] disabled → 工具已撤下')
+  }
+
+  /** 按总开关对齐一次（幂等，开关没变就什么都不做）。 */
+  const sync = (): void => {
+    try {
+      if (resolveDatas(config, readDatasState(root), activePreset).enabled) start()
+      else stop()
+    } catch (error) {
+      // 读覆盖层失败不该把 step 打崩：保持现状。
+      console.log('[roroko-datas] sync skipped:', error instanceof Error ? error.message : String(error))
+    }
+  }
 
   const lookupTool = defineTool({
     name: 'roroko_datas_lookup',
@@ -198,7 +246,6 @@ export function mount(ctx: Context, rawConfig: DatasConfig = {}): void {
     },
   })
 
-  surface.tools.register(lookupTool)
-  surface.tools.register(registerTool)
-  surface.tools.register(stateTool)
+  // 初始对齐：挂载时先按当前覆盖层决定开不开（默认关）。
+  sync()
 }

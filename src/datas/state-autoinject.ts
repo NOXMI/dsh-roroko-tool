@@ -76,15 +76,21 @@ function readStateRow(dbPath: string): Row | undefined {
  * @param root - 身份根（覆盖层目录基准）。
  * @param config - preset 接线参数。
  * @param presetId - 本实例所在 preset id 的 getter（由 datas/index.ts 在 pre-step 里记）。
+ * @returns 注销函数（总开关关掉时由调用方拆掉这三个监听器）。
  */
 export function applyStateAutoinject(
   ctx: Context,
   root: string,
   config: DatasConfig,
   presetId: () => string | undefined,
-): void {
+): () => void {
   const surface = ctx as unknown as Surface
   const counters = new WeakMap<object, AutoinjectCounter>()
+  const disposers: Array<() => void> = []
+
+  const off = (disposer: unknown): void => {
+    if (typeof disposer === 'function') disposers.push(disposer as () => void)
+  }
 
   const settings = (): { autoinject: AutoinjectSettings; dbPath: string } =>
     resolveDatas(config, readDatasState(root), presetId())
@@ -103,7 +109,7 @@ export function applyStateAutoinject(
   }
 
   // 入口 1：取过料就标记（错误结果也算 —— 取过就是取过）。
-  surface.on('tools/result', (exec: { name?: string; agent?: { session?: object } }) => {
+  off(surface.on('tools/result', (exec: { name?: string; agent?: { session?: object } }) => {
     try {
       if (exec === undefined || !isRorokoDatasTool(exec.name)) return
       const session = exec.agent?.session
@@ -112,10 +118,10 @@ export function applyStateAutoinject(
     } catch {
       // 观察者不该影响工具执行本身
     }
-  })
+  }))
 
   // 入口 2：压缩把短条甩掉后，别干等 N 轮 —— 置 forced，下一次 pre-step 立即注。
-  surface.on('session/event', (session: object, event: { type?: string }) => {
+  off(surface.on('session/event', (session: object, event: { type?: string }) => {
     try {
       const type = String(event?.type ?? '')
       if (!type.startsWith('compaction/')) return
@@ -126,10 +132,10 @@ export function applyStateAutoinject(
     } catch {
       // 同上
     }
-  })
+  }))
 
   // 唯一出口。
-  surface.on('agent/pre-step', async (
+  off(surface.on('agent/pre-step', async (
     payload: { agent?: { session?: { id?: string; header?: { id?: string; agentPreset?: string } } }; turn: number },
     next: () => Promise<PreStepDecision>,
   ): Promise<PreStepDecision> => {
@@ -187,5 +193,16 @@ export function applyStateAutoinject(
       console.log('[roroko-datas-autoinject] skipped:', error instanceof Error ? error.message : String(error))
       return decision
     }
-  })
+  }))
+
+  /** 注销三个监听器（总开关关掉时调用）。 */
+  return () => {
+    for (const dispose of disposers.splice(0)) {
+      try {
+        dispose()
+      } catch {
+        // 拆监听器失败不该拖垮别的清理
+      }
+    }
+  }
 }

@@ -47,6 +47,8 @@ window.__ModuleLoader__.load({
 			resetScope: "重置为继承",
 			datasTitle: "② 素材库（datas）",
 			datasHint: "roroko_datas_* 四把工具连哪个库，以及 state 短条多久自动注一次。",
+			datasEnabled: "启用素材库（默认关闭）",
+			datasEnabledHint: "关着 = 四把工具根本不存在、也不注入 state 短条。勾上保存后，下一轮请求就带上工具。",
 			coverDbPath: "覆盖库路径（不勾选 = 跟随继承）",
 			followDbPath: "跟随继承",
 			dbPathHint: "/var/www/api/database/soul.db",
@@ -99,6 +101,8 @@ window.__ModuleLoader__.load({
 			resetScope: "Reset to inherit",
 			datasTitle: "② Material library (datas)",
 			datasHint: "Which database the roroko_datas_* tools open, and how often the state digest is injected.",
+			datasEnabled: "Enable the material library (off by default)",
+			datasEnabledHint: "While off, the four tools do not exist and no state digest is injected. Save with it ticked and the next request carries them.",
 			coverDbPath: "Override the database path (unchecked = inherit)",
 			followDbPath: "inherited",
 			dbPathHint: "/var/www/api/database/soul.db",
@@ -636,6 +640,7 @@ window.__ModuleLoader__.load({
 		function DatasPanel(props) {
 			const { t, scope, bucket, effective, defaults, onSaved } = props;
 			const follow = effective ?? defaults;
+			const [enabled, setEnabled] = (0, react.useState)(() => follow.enabled);
 			const [coverPath, setCoverPath] = (0, react.useState)(() => bucket?.dbPath !== void 0);
 			const [coverAuto, setCoverAuto] = (0, react.useState)(() => bucket?.autoinject !== void 0);
 			const [dbPath, setDbPath] = (0, react.useState)(() => bucket?.dbPath ?? follow.dbPath);
@@ -661,6 +666,7 @@ window.__ModuleLoader__.load({
 				run({
 					preset: scope,
 					section: "datas",
+					enabled,
 					dbPath: coverPath ? dbPath.trim() : null,
 					autoinject: coverAuto ? auto : null
 				});
@@ -668,11 +674,36 @@ window.__ModuleLoader__.load({
 			const busy = saving;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(PanelShell, { children: [
 				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
-					style: coverLabelStyle,
+					style: {
+						...coverLabelStyle,
+						fontWeight: 600
+					},
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+						type: "checkbox",
+						checked: enabled,
+						disabled: busy,
+						onChange: () => {
+							setEnabled((value) => !value);
+							setSaved(false);
+						}
+					}), t("datasEnabled")]
+				}),
+				/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+					style: {
+						...hintStyle,
+						marginBottom: 6
+					},
+					children: t("datasEnabledHint")
+				}),
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+					style: {
+						...coverLabelStyle,
+						opacity: enabled ? 1 : .5
+					},
 					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
 						type: "checkbox",
 						checked: coverPath,
-						disabled: busy,
+						disabled: busy || !enabled,
 						onChange: () => {
 							setCoverPath((value) => !value);
 							setSaved(false);
@@ -682,7 +713,7 @@ window.__ModuleLoader__.load({
 				coverPath ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
 					type: "text",
 					value: dbPath,
-					disabled: busy,
+					disabled: busy || !enabled,
 					placeholder: t("dbPathHint"),
 					style: inputStyle,
 					onChange: (event) => {
@@ -698,11 +729,14 @@ window.__ModuleLoader__.load({
 					]
 				}),
 				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
-					style: coverLabelStyle,
+					style: {
+						...coverLabelStyle,
+						opacity: enabled ? 1 : .5
+					},
 					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
 						type: "checkbox",
 						checked: coverAuto,
-						disabled: busy,
+						disabled: busy || !enabled,
 						onChange: () => {
 							setCoverAuto((value) => !value);
 							setSaved(false);
@@ -711,7 +745,7 @@ window.__ModuleLoader__.load({
 				}),
 				coverAuto ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(AutoinjectEditor, {
 					value: auto,
-					busy,
+					busy: busy || !enabled,
 					t,
 					onChange: (next) => {
 						setAuto(next);
@@ -911,6 +945,7 @@ window.__ModuleLoader__.load({
 								bucket,
 								effective: state.datas?.effective[scope],
 								defaults: state.datas?.defaults ?? {
+									enabled: false,
 									dbPath: "",
 									autoinject: {
 										rounds: true,

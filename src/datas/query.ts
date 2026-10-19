@@ -58,9 +58,10 @@ function textRender(_args: unknown, value: string): ContentBlock[] {
   return [{ type: 'text', text: value }]
 }
 
-/** 注册 roroko_datas_query；preset 声明了 config.datas 桶即生效。 */
-export function applyQuery(ctx: Context, dbPath: () => string): void {
-  ctx.tools.register(defineTool({
+/** 注册 roroko_datas_query；总开关打开时由 datas/index.ts 调用。
+ *  @returns 注销函数（关掉总开关时要把工具撤下来）。 */
+export function applyQuery(ctx: Context, dbPath: () => string): () => void {
+  return ctx.tools.register(defineTool({
     name: 'roroko_datas_query',
     description:
       '洛洛可素材库取料:查场景/穿搭/道具/伴侣的候选,返回 markdown 表。'

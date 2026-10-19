@@ -37,12 +37,14 @@ export interface AutoinjectSettings {
 
 /** datas 桶里的覆盖字段（autoinject 逐字段叠加）。 */
 export interface DatasBucket {
+  enabled?: boolean
   dbPath?: string
   autoinject?: Partial<AutoinjectSettings>
 }
 
 /** datas 合成后的生效参数。 */
 export interface DatasEffective {
+  enabled: boolean
   dbPath: string
   autoinject: AutoinjectSettings
 }

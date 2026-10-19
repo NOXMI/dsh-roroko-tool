@@ -59,6 +59,8 @@ export interface DatasConfig {
 
 /** 一个桶里能覆盖的字段（autoinject 逐字段叠加，不是整组替换）。 */
 export interface DatasBucket {
+  /** 总开关：false/未设 = 不注册四把工具、不注入 state 短条。 */
+  enabled?: boolean
   dbPath?: string
   autoinject?: Partial<AutoinjectSettings>
 }
@@ -70,12 +72,14 @@ export interface DatasState {
 
 /** 四层合成后的有效参数。 */
 export interface EffectiveDatas {
+  /** 总开关：默认关，设置页勾选才开。 */
+  enabled: boolean
   dbPath: string
   autoinject: AutoinjectSettings
 }
 
 /** 桶里认的键。 */
-const BUCKET_KEYS = ['dbPath', 'autoinject'] as const
+const BUCKET_KEYS = ['enabled', 'dbPath', 'autoinject'] as const
 
 /** 覆盖层文件。 */
 export function datasStateFile(root: string): string {
@@ -109,6 +113,7 @@ function cleanBucket(value: unknown): DatasBucket | undefined {
   if (value === null || typeof value !== 'object') return undefined
   const raw = value as Record<string, unknown>
   const out: DatasBucket = {}
+  if (typeof raw.enabled === 'boolean') out.enabled = raw.enabled
   if (typeof raw.dbPath === 'string' && raw.dbPath.trim().length > 0) out.dbPath = raw.dbPath.trim()
   const autoinject = cleanAutoinject(raw.autoinject)
   if (autoinject !== undefined) out.autoinject = autoinject
@@ -192,6 +197,7 @@ export async function clearDatasBucket(root: string, scope: string): Promise<Dat
 /** 接线层原样（没写的字段就是没写）。 */
 export function datasWiring(config: DatasConfig): Record<string, unknown> {
   const out: Record<string, unknown> = {}
+  if (config.enabled !== undefined) out.enabled = config.enabled
   if (config.dbPath !== undefined) out.dbPath = config.dbPath
   if (config.autoinject !== undefined) out.autoinject = config.autoinject
   return out
@@ -216,6 +222,8 @@ export function resolveDatas(
   }
   const wiringPath = config.dbPath !== undefined && config.dbPath.trim().length > 0 ? config.dbPath.trim() : undefined
   return {
+    // 总开关默认关：设置页勾了才开（接线 config 只能开，不能把默认关掉）。
+    enabled: merged.enabled ?? config.enabled ?? false,
     dbPath: merged.dbPath ?? wiringPath ?? DEFAULT_DB_PATH,
     autoinject: {
       ...AUTOINJECT_DEFAULTS,

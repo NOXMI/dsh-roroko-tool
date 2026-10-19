@@ -47,6 +47,8 @@ export const zh = {
 
   datasTitle: '② 素材库（datas）',
   datasHint: 'roroko_datas_* 四把工具连哪个库，以及 state 短条多久自动注一次。',
+  datasEnabled: '启用素材库（默认关闭）',
+  datasEnabledHint: '关着 = 四把工具根本不存在、也不注入 state 短条。勾上保存后，下一轮请求就带上工具。',
   coverDbPath: '覆盖库路径（不勾选 = 跟随继承）',
   followDbPath: '跟随继承',
   dbPathHint: '/var/www/api/database/soul.db',
@@ -111,6 +113,8 @@ export const en: Record<LocaleKey, string> = {
 
   datasTitle: '② Material library (datas)',
   datasHint: 'Which database the roroko_datas_* tools open, and how often the state digest is injected.',
+  datasEnabled: 'Enable the material library (off by default)',
+  datasEnabledHint: 'While off, the four tools do not exist and no state digest is injected. Save with it ticked and the next request carries them.',
   coverDbPath: 'Override the database path (unchecked = inherit)',
   followDbPath: 'inherited',
   dbPathHint: '/var/www/api/database/soul.db',

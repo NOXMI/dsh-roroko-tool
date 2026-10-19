@@ -119,20 +119,23 @@ check('单字词被忽略时正文说明', droppedRender.includes('单字词 夜
 // ── 参数四层链 ──────────────────────────────────────────────────────────
 const root = await mkdtemp(join(tmpdir(), 'roroko-datas-'))
 try {
-  eq('没有覆盖层时全走默认', resolveDatas({}, { presets: {} }, undefined), {
+  eq('没有覆盖层时全走默认（总开关默认关）', resolveDatas({}, { presets: {} }, undefined), {
+    enabled: false,
     dbPath: DEFAULT_DB_PATH,
     autoinject: AUTOINJECT_DEFAULTS,
   })
 
-  await setDatasBucket(root, 'common', { autoinject: { every: 12 } })
+  await setDatasBucket(root, 'common', { enabled: true, autoinject: { every: 12 } })
   const withCommon = readDatasState(root)
+  eq('公共桶打开总开关', resolveDatas({}, withCommon, undefined).enabled, true)
   eq('公共桶只改 every，其余字段仍按默认', resolveDatas({}, withCommon, undefined).autoinject, {
     ...AUTOINJECT_DEFAULTS,
     every: 12,
   })
 
-  await setDatasBucket(root, 'roroko', { dbPath: ' /tmp/x.db ' })
+  await setDatasBucket(root, 'roroko', { enabled: false, dbPath: ' /tmp/x.db ' })
   const withPreset = readDatasState(root)
+  eq('分桶可以单独关掉（压过公共桶）', resolveDatas({}, withPreset, 'roroko').enabled, false)
   eq('分桶 dbPath 覆盖公共层', resolveDatas({}, withPreset, 'roroko').dbPath, '/tmp/x.db')
   eq('分桶没写的字段继续吃公共层', resolveDatas({}, withPreset, 'roroko').autoinject.every, 12)
 
@@ -140,7 +143,9 @@ try {
   eq('接线 config 的 autoinject 也逐字段叠', resolveDatas({ autoinject: { minGap: 2 } }, withPreset, 'roroko').autoinject.minGap, 2)
 
   await setDatasBucket(root, 'roroko', { dbPath: null })
-  check('字段传 null 删键，桶空了就整桶消失', readDatasState(root).presets.roroko === undefined)
+  eq('字段传 null 删键，剩下的字段还在', readDatasState(root).presets.roroko, { enabled: false })
+  await setDatasBucket(root, 'roroko', { enabled: null })
+  check('键删空后整桶消失', readDatasState(root).presets.roroko === undefined)
 
   await setDatasBucket(root, 'tmp', { dbPath: '/t.db' })
   await clearDatasBucket(root, 'tmp')

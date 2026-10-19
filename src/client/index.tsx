@@ -468,6 +468,7 @@ function DatasPanel(props: {
 }): React.ReactElement {
   const { t, scope, bucket, effective, defaults, onSaved } = props
   const follow = effective ?? defaults
+  const [enabled, setEnabled] = useState<boolean>(() => follow.enabled)
   const [coverPath, setCoverPath] = useState(() => bucket?.dbPath !== undefined)
   const [coverAuto, setCoverAuto] = useState(() => bucket?.autoinject !== undefined)
   const [dbPath, setDbPath] = useState<string>(() => bucket?.dbPath ?? follow.dbPath)
@@ -496,6 +497,8 @@ function DatasPanel(props: {
     run({
       preset: scope,
       section: 'datas',
+      // 总开关不勾覆盖时也必须落盘，「关」本身就是要存的意图
+      enabled,
       dbPath: coverPath ? dbPath.trim() : null,
       autoinject: coverAuto ? auto : null,
     })
@@ -504,11 +507,22 @@ function DatasPanel(props: {
   const busy = saving
   return (
     <PanelShell>
-      <label style={coverLabelStyle}>
+      <label style={{ ...coverLabelStyle, fontWeight: 600 }}>
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={busy}
+          onChange={() => { setEnabled(value => !value); setSaved(false) }}
+        />
+        {t('datasEnabled')}
+      </label>
+      <div style={{ ...hintStyle, marginBottom: 6 }}>{t('datasEnabledHint')}</div>
+
+      <label style={{ ...coverLabelStyle, opacity: enabled ? 1 : 0.5 }}>
         <input
           type="checkbox"
           checked={coverPath}
-          disabled={busy}
+          disabled={busy || !enabled}
           onChange={() => { setCoverPath(value => !value); setSaved(false) }}
         />
         {t('coverDbPath')}
@@ -519,7 +533,7 @@ function DatasPanel(props: {
             <input
               type="text"
               value={dbPath}
-              disabled={busy}
+              disabled={busy || !enabled}
               placeholder={t('dbPathHint')}
               style={inputStyle}
               onChange={event => { setDbPath(event.target.value); setSaved(false) }}
@@ -528,11 +542,11 @@ function DatasPanel(props: {
         )
         : <div style={hintStyle}>{t('followDbPath')}: {follow.dbPath}</div>}
 
-      <label style={coverLabelStyle}>
+      <label style={{ ...coverLabelStyle, opacity: enabled ? 1 : 0.5 }}>
         <input
           type="checkbox"
           checked={coverAuto}
-          disabled={busy}
+          disabled={busy || !enabled}
           onChange={() => { setCoverAuto(value => !value); setSaved(false) }}
         />
         {t('coverAutoinject')}
@@ -541,7 +555,7 @@ function DatasPanel(props: {
         ? (
           <AutoinjectEditor
             value={auto}
-            busy={busy}
+            busy={busy || !enabled}
             t={t}
             onChange={next => { setAuto(next); setSaved(false) }}
           />
@@ -695,7 +709,7 @@ function DatasPanel(props: {
                     scope={scope}
                     bucket={bucket}
                     effective={state.datas?.effective[scope]}
-                    defaults={state.datas?.defaults ?? { dbPath: '', autoinject: { rounds: true, every: 8, afterTool: true, minGap: 4 } }}
+                    defaults={state.datas?.defaults ?? { enabled: false, dbPath: '', autoinject: { rounds: true, every: 8, afterTool: true, minGap: 4 } }}
                     onSaved={load}
                   />
                 </ScopeCard>

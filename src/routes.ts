@@ -223,7 +223,7 @@ export function registerStateRoutes(
         datas: {
           mounted: datasMount !== undefined,
           stateFile: datasStateFile(root),
-          defaults: { dbPath: DEFAULT_DB_PATH, autoinject: AUTOINJECT_DEFAULTS },
+          defaults: { enabled: false, dbPath: DEFAULT_DB_PATH, autoinject: AUTOINJECT_DEFAULTS },
           wiring: datasMount === undefined ? {} : datasWiring(datasMount.config),
           presets: datasState.presets,
           effective: datasEffective,
