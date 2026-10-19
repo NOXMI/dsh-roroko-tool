@@ -21,6 +21,7 @@ export const COMMON = 'common'
 export interface PreinjectBucket {
   systemFiles?: string[]
   userFiles?: string[]
+  suppressSections?: string[]
 }
 
 /** 整份状态。 */
@@ -29,7 +30,7 @@ export interface PreinjectState {
 }
 
 /** 桶里认的键，其余一律丢弃。 */
-const BUCKET_KEYS = ['systemFiles', 'userFiles'] as const
+const BUCKET_KEYS = ['systemFiles', 'userFiles', 'suppressSections'] as const
 
 /** state 文件。 */
 export function stateFile(root: string): string {
@@ -54,6 +55,10 @@ function cleanBucket(value: unknown): PreinjectBucket | undefined {
   if ('userFiles' in raw) {
     const list = cleanList(raw.userFiles)
     if (list !== undefined) out.userFiles = list
+  }
+  if ('suppressSections' in raw) {
+    const list = cleanList(raw.suppressSections)
+    if (list !== undefined) out.suppressSections = list
   }
   return Object.keys(out).length > 0 ? out : undefined
 }

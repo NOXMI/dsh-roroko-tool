@@ -23,8 +23,11 @@ export const zh = {
 
   coverSystem: '覆盖系统层（进 system 提示词；不勾选 = 跟随继承）',
   coverUser: '覆盖用户层（进 user 消息；不勾选 = 跟随继承）',
+  coverSuppress: '覆盖屏蔽段（装配后按段名抹掉；不勾选 = 跟随继承）',
   followSystem: '跟随继承',
   followUser: '跟随继承',
+  followSuppress: '跟随继承',
+  suppressHint: '如 context:file-reference',
 
   filesHint: '如 IDENTITY.md，或 /root/.dsh/roroko/AGENTS.md',
   addFile: '+ 添加文件',
@@ -81,8 +84,11 @@ export const en: Record<LocaleKey, string> = {
 
   coverSystem: 'Override the system layer (system prompt; unchecked = inherit)',
   coverUser: 'Override the user layer (user message; unchecked = inherit)',
+  coverSuppress: 'Override suppressed sections (dropped by name after assembly; unchecked = inherit)',
   followSystem: 'inherited',
   followUser: 'inherited',
+  followSuppress: 'inherited',
+  suppressHint: 'e.g. context:file-reference',
 
   filesHint: 'e.g. IDENTITY.md, or /root/.dsh/roroko/AGENTS.md',
   addFile: '+ Add file',

@@ -91,6 +91,12 @@ export function mount(ctx: Context, rawConfig: DatasConfig = {}): void {
     return next()
   })
 
+  // 会话创建时就记（首次装配/首个工具调用都可能早于首次 pre-step 之后的记账）。
+  surface.on('agent/created', async (payload: { agent?: { session?: { header?: { agentPreset?: string } } } }) => {
+    const presetId = payload.agent?.session?.header?.agentPreset
+    if (presetId !== undefined) activePreset = presetId
+  })
+
   /** 每次执行现读：preset 覆盖层可能刚被设置页改过。 */
   const dbPath = (): string => resolveDatas(config, readDatasState(root), activePreset).dbPath
 

@@ -27,8 +27,11 @@ window.__ModuleLoader__.load({
 			badgeBroken: "挂不起来",
 			coverSystem: "覆盖系统层（进 system 提示词；不勾选 = 跟随继承）",
 			coverUser: "覆盖用户层（进 user 消息；不勾选 = 跟随继承）",
+			coverSuppress: "覆盖屏蔽段（装配后按段名抹掉；不勾选 = 跟随继承）",
 			followSystem: "跟随继承",
 			followUser: "跟随继承",
+			followSuppress: "跟随继承",
+			suppressHint: "如 context:file-reference",
 			filesHint: "如 IDENTITY.md，或 /root/.dsh/roroko/AGENTS.md",
 			addFile: "+ 添加文件",
 			deleteRow: "删除此行",
@@ -74,8 +77,11 @@ window.__ModuleLoader__.load({
 			badgeBroken: "broken",
 			coverSystem: "Override the system layer (system prompt; unchecked = inherit)",
 			coverUser: "Override the user layer (user message; unchecked = inherit)",
+			coverSuppress: "Override suppressed sections (dropped by name after assembly; unchecked = inherit)",
 			followSystem: "inherited",
 			followUser: "inherited",
+			followSuppress: "inherited",
+			suppressHint: "e.g. context:file-reference",
 			filesHint: "e.g. IDENTITY.md, or /root/.dsh/roroko/AGENTS.md",
 			addFile: "+ Add file",
 			deleteRow: "Remove this line",
@@ -365,13 +371,15 @@ window.__ModuleLoader__.load({
 		function cleanList(list) {
 			return list.map((item) => item.trim()).filter((item) => item.length > 0).filter((item, index, self) => self.indexOf(item) === index);
 		}
-		/** 一张卡的内容：两组参数 + 保存 / 重置。 */
+		/** 一张卡的内容：三组参数 + 保存 / 重置。 */
 		function ScopePanel(props) {
 			const { t, scope, bucket, effective, files, onSaved } = props;
 			const [coverSystem, setCoverSystem] = (0, react.useState)(() => bucket?.systemFiles !== void 0);
 			const [coverUser, setCoverUser] = (0, react.useState)(() => bucket?.userFiles !== void 0);
+			const [coverSuppress, setCoverSuppress] = (0, react.useState)(() => bucket?.suppressSections !== void 0);
 			const [systemFiles, setSystemFiles] = (0, react.useState)(() => [...bucket?.systemFiles ?? effective?.systemFiles ?? []]);
 			const [userFiles, setUserFiles] = (0, react.useState)(() => [...bucket?.userFiles ?? effective?.userFiles ?? []]);
+			const [suppressSections, setSuppressSections] = (0, react.useState)(() => [...bucket?.suppressSections ?? effective?.suppressSections ?? []]);
 			const [saved, setSaved] = (0, react.useState)(false);
 			const [saving, setSaving] = (0, react.useState)(false);
 			const [saveError, setSaveError] = (0, react.useState)(null);
@@ -382,6 +390,7 @@ window.__ModuleLoader__.load({
 				const patch = { preset: scope };
 				patch.systemFiles = coverSystem ? cleanList(systemFiles) : null;
 				patch.userFiles = coverUser ? cleanList(userFiles) : null;
+				patch.suppressSections = coverSuppress ? cleanList(suppressSections) : null;
 				saveConfig(patch).then(async (ack) => {
 					if (!ack.ok) throw new Error(ack.reason ?? t("saveFailed"));
 					setSaved(true);
@@ -412,6 +421,7 @@ window.__ModuleLoader__.load({
 			const busy = saving;
 			const followSystem = effective?.systemFiles.join(" / ") ?? "";
 			const followUser = effective?.userFiles.join(" / ") ?? "";
+			const followSuppress = effective?.suppressSections.join(" / ") ?? "";
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(PanelShell, { children: [
 				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 					style: coverLabelStyle,
@@ -477,6 +487,36 @@ window.__ModuleLoader__.load({
 						t("followUser"),
 						": ",
 						followUser.length > 0 ? followUser : t("emptyFiles")
+					]
+				}),
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+					style: coverLabelStyle,
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+						type: "checkbox",
+						checked: coverSuppress,
+						disabled: busy,
+						onChange: () => {
+							setCoverSuppress((value) => !value);
+							setSaved(false);
+						}
+					}), t("coverSuppress")]
+				}),
+				coverSuppress ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(FileListEditor, {
+					files: suppressSections,
+					busy,
+					placeholder: t("suppressHint"),
+					addLabel: t("addFile"),
+					deleteLabel: t("deleteRow"),
+					onChange: (next) => {
+						setSuppressSections(next);
+						setSaved(false);
+					}
+				}) }) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					style: hintStyle,
+					children: [
+						t("followSuppress"),
+						": ",
+						followSuppress.length > 0 ? followSuppress : t("emptyFiles")
 					]
 				}),
 				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {

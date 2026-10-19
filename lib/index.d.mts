@@ -7,6 +7,7 @@ declare const COMMON = "common";
 interface PreinjectBucket {
   systemFiles?: string[];
   userFiles?: string[];
+  suppressSections?: string[];
 }
 /** 整份状态。 */
 interface PreinjectState {
@@ -62,6 +63,8 @@ interface PreinjectConfig {
   userFiles?: string[];
   /** 顶掉 "You are an AI agent powered by DeepSeek Harness." 这个开场白。 */
   suppressHarnessIdentity?: boolean;
+  /** 要抹掉的系统段名清单（装配后按名过滤）。 */
+  suppressSections?: string[];
 }
 /** 内置默认（最底层）。 */
 declare const DEFAULTS: Required<Omit<PreinjectConfig, 'enabled' | 'root' | 'suppressHarnessIdentity'>>;
@@ -69,6 +72,7 @@ declare const DEFAULTS: Required<Omit<PreinjectConfig, 'enabled' | 'root' | 'sup
 interface EffectiveConfig {
   systemFiles: string[];
   userFiles: string[];
+  suppressSections: string[];
 }
 /**
  * 四层合成：默认 ← 接线 config ← 公共桶 ← 分 preset 桶。

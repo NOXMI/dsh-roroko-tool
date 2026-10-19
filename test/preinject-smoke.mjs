@@ -88,6 +88,8 @@ function boot(config = {}) {
   return {
     system: () => fake.variables.get('roroko_preinject_system')?.(),
     preStep: fake.listeners.get('agent/pre-step'),
+    created: fake.listeners.get('agent/created'),
+    assemble: fake.listeners.get('system-prompt/assemble'),
     section: fake.sections.get('deployment:persona-prefix'),
     harness: fake.sections.get('harness:identity'),
   }
@@ -171,6 +173,35 @@ check((partial?.messages?.[0]?.content?.[0]?.text ?? '').includes('TEST-AGENTS-1
 // ── 10. 绝对路径 ──
 await writeState({ common: { systemFiles: [join(root, 'EXTRA.md')] } })
 check(base.system()?.includes('TEST-EXTRA-1') === true, '绝对路径原样用')
+
+// ── 11. 新会话首装配：靠 agent/created 拿到 preset，不必等 pre-step ──
+// step 的顺序是 assemble → pre-step，只听 pre-step 会让新会话第一轮系统段是空的
+await writeState({ common: { systemFiles: ['IDENTITY.md'] }, roroko: { systemFiles: ['EXTRA.md'] } })
+const fresh = boot()
+check((fresh.system() ?? '').includes('TEST-EXTRA-1') === false, '没拿到 preset 时只吃公共桶')
+await fresh.created?.({ agent: { session: { id: 's-new', header: { agentPreset: 'roroko' } } } })
+check((fresh.system() ?? '').includes('TEST-EXTRA-1') === true, 'agent/created 之后首装配就能取到分预设桶')
+
+// ── 12. 按名抹掉系统段（默认抹 @文件引用说明） ──
+const assembly = {
+  sections: [
+    { name: 'deployment:persona-prefix', text: 'X' },
+    { name: 'context:file-reference', text: 'Tokens prefixed with @ ...' },
+    { name: 'harness:identity', text: '' },
+  ],
+  contexts: [],
+  tools: [],
+  variables: {},
+}
+const strip = fresh.assemble
+const next = async () => assembly
+const afterDefault = await strip?.(assembly, {}, next)
+check(afterDefault?.sections?.some(s => s.name === 'context:file-reference') === false, '默认抹掉 context:file-reference')
+check(afterDefault?.sections?.some(s => s.name === 'deployment:persona-prefix') === true, '别的段一个不动')
+
+const noStrip = boot({ suppressSections: [] })
+const afterNone = await noStrip.assemble?.(assembly, {}, next)
+check(afterNone?.sections?.length === 3, '清单为空 = 一段都不抹')
 
 await rm(root, { recursive: true, force: true })
 console.log(problems.length === 0 ? '\n全部通过' : `\n${problems.length} 项未通过`)

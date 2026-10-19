@@ -66,18 +66,25 @@ export interface PreinjectConfig {
   userFiles?: string[]
   /** 顶掉 "You are an AI agent powered by DeepSeek Harness." 这个开场白。 */
   suppressHarnessIdentity?: boolean
+  /** 要抹掉的系统段名清单（装配后按名过滤）。 */
+  suppressSections?: string[]
 }
+
+/** 默认抹掉的段：@文件引用语法说明（洛洛可不用这套壳）。 */
+const DEFAULT_SUPPRESS_SECTIONS = ['context:file-reference']
 
 /** 内置默认（最底层）。 */
 export const DEFAULTS: Required<Omit<PreinjectConfig, 'enabled' | 'root' | 'suppressHarnessIdentity'>> = {
   systemFiles: [],
   userFiles: [],
+  suppressSections: DEFAULT_SUPPRESS_SECTIONS,
 }
 
 /** 四层合成后的有效参数。 */
 export interface EffectiveConfig {
   systemFiles: string[]
   userFiles: string[]
+  suppressSections: string[]
 }
 
 /**
@@ -96,6 +103,7 @@ export function resolveEffective(
   return {
     systemFiles: bucket.systemFiles ?? config.systemFiles ?? DEFAULTS.systemFiles,
     userFiles: bucket.userFiles ?? config.userFiles ?? DEFAULTS.userFiles,
+    suppressSections: bucket.suppressSections ?? config.suppressSections ?? DEFAULTS.suppressSections,
   }
 }
 
@@ -134,10 +142,7 @@ interface PreStepPayload {
 interface Surface {
   systemPrompt: PromptSurface
   effect(callback: () => unknown, label?: string): unknown
-  on(
-    event: 'agent/pre-step',
-    listener: (payload: PreStepPayload, next: () => Promise<PreStepDecision>) => Promise<PreStepDecision>,
-  ): unknown
+  on(event: string, listener: (...args: any[]) => unknown): unknown
 }
 
 const dshHome = (): string => process.env.DSH_HOME ?? join(homedir(), '.dsh')
@@ -154,16 +159,6 @@ export function entryPath(name: string, root: string): string {
   if (name.startsWith('~/') || name.startsWith('~\\')) return join(homedir(), name.slice(2))
   return resolve(root, name)
 }
-
-/**
- * 本实例最近一次在 pre-step 里见到的 preset id。
- *
- * 每个 preset 的 composition 各挂一份本模块实例，而 scope 路由只把该 preset
- * 下的事件送到这里，所以这个值对本实例是稳定的。首个 turn 的 pre-step 早于
- * 系统提示词装配，首装配就能用上；真拿不到（装配早于任何 pre-step）才回落
- * 公共桶。不依赖 dsh-scope 的内部符号，跨安装形态都成立。
- */
-let activePreset: string | undefined
 
 /** 已注入过的会话（进程内存，重启即清空）。 */
 const INJECTED = new Set<string>()
@@ -214,6 +209,21 @@ export function mount(ctx: Context, rawConfig: PreinjectConfig = {}): void {
   const config: PreinjectConfig = { ...rawConfig }
   const root = rawConfig.root !== undefined && rawConfig.root.length > 0 ? rawConfig.root : defaultRoot()
 
+  /**
+   * 本实例所属 preset id（**实例变量，不是模块变量**——两个 preset 的实例共享
+   * 同一份模块，模块级变量会互相串）。
+   *
+   * 为什么必须在 pre-step 之外也记一次：一次 step 的顺序是
+   * `assemble(系统提示词) → agent/pre-step`（见 agent-loop 的 preStep），所以
+   * 一个会话的**首次装配**永远早于它的首次 pre-step。只听 pre-step 的话，
+   * 新会话第一轮的系统段就是空的——之前就是栽在这儿。`agent/created` 在会话
+   * 创建时就触发且被等待，从那里拿 header.agentPreset 才能喂到首装配。
+   */
+  let activePreset: string | undefined
+  const remember = (presetId: string | undefined): void => {
+    if (presetId !== undefined && presetId.length > 0) activePreset = presetId
+  }
+
   const status: MountStatus = { root, config }
   surface.effect(() => registerMount(status), 'preinject.status()')
 
@@ -248,13 +258,39 @@ export function mount(ctx: Context, rawConfig: PreinjectConfig = {}): void {
     )
   }
 
-  surface.on('agent/pre-step', async (payload, next) => {
+  /**
+   * 按名抹掉系统段。装配瀑布是 scope 过滤的，这里只收本 preset 的装配；
+   * `complete` 段由装配侧恢复，所以抹不掉李代桃僵的那一段（也不该抹）。
+   */
+  surface.on('system-prompt/assemble', async (
+    assembly: { sections: Array<{ name: string }> },
+    _context: unknown,
+    next: () => Promise<{ sections: Array<{ name: string }> }>,
+  ) => {
+    const result = await next()
+    try {
+      const drop = resolveEffective(config, readState(root), activePreset).suppressSections
+      if (drop.length === 0) return result
+      const kept = result.sections.filter(section => !drop.includes(section.name))
+      return kept.length === result.sections.length ? result : { ...result, sections: kept }
+    } catch {
+      // 装配瀑布里抛错会打崩整个 turn —— 一律吞掉，保持原样。
+      return result
+    }
+  })
+
+  // 会话创建时就记下 preset：首次装配要用（首装配早于首次 pre-step）。
+  surface.on('agent/created', async (payload: PreStepPayload) => {
+    remember(payload.agent?.session?.header?.agentPreset)
+  })
+
+  surface.on('agent/pre-step', async (payload: PreStepPayload, next: () => Promise<PreStepDecision>) => {
     const decision = await next()
     if (decision.kind !== 'enter') return decision
     const session = payload.agent.session
     const presetId = session?.header?.agentPreset
-    // 记下来给系统段的 provider 选桶（provider 是同步的，拿不到 session）。
-    if (presetId !== undefined) activePreset = presetId
+    // 再记一次兜底（agent/created 万一没赶上）。
+    remember(presetId)
     const sessionId = session?.id ?? session?.header?.id
     if (sessionId !== undefined && INJECTED.has(sessionId)) return decision
     const text = await userSegmentText(root, config, presetId)

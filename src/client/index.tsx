@@ -244,7 +244,7 @@ function cleanList(list: readonly string[]): string[] {
     .filter((item, index, self) => self.indexOf(item) === index)
 }
 
-/** 一张卡的内容：两组参数 + 保存 / 重置。 */
+/** 一张卡的内容：三组参数 + 保存 / 重置。 */
 function ScopePanel(props: {
   t: Translate
   scope: string
@@ -256,8 +256,12 @@ function ScopePanel(props: {
   const { t, scope, bucket, effective, files, onSaved } = props
   const [coverSystem, setCoverSystem] = useState(() => bucket?.systemFiles !== undefined)
   const [coverUser, setCoverUser] = useState(() => bucket?.userFiles !== undefined)
+  const [coverSuppress, setCoverSuppress] = useState(() => bucket?.suppressSections !== undefined)
   const [systemFiles, setSystemFiles] = useState<string[]>(() => [...(bucket?.systemFiles ?? effective?.systemFiles ?? [])])
   const [userFiles, setUserFiles] = useState<string[]>(() => [...(bucket?.userFiles ?? effective?.userFiles ?? [])])
+  const [suppressSections, setSuppressSections] = useState<string[]>(() => [
+    ...(bucket?.suppressSections ?? effective?.suppressSections ?? []),
+  ])
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -269,6 +273,7 @@ function ScopePanel(props: {
     const patch: Record<string, unknown> = { preset: scope }
     patch.systemFiles = coverSystem ? cleanList(systemFiles) : null
     patch.userFiles = coverUser ? cleanList(userFiles) : null
+    patch.suppressSections = coverSuppress ? cleanList(suppressSections) : null
     void saveConfig(patch)
       .then(async ack => {
         if (!ack.ok) throw new Error(ack.reason ?? t('saveFailed'))
@@ -300,6 +305,7 @@ function ScopePanel(props: {
   const busy = saving
   const followSystem = effective?.systemFiles.join(' / ') ?? ''
   const followUser = effective?.userFiles.join(' / ') ?? ''
+  const followSuppress = effective?.suppressSections.join(' / ') ?? ''
 
   return (
     <PanelShell>
@@ -352,6 +358,34 @@ function ScopePanel(props: {
           </div>
         )
         : <div style={hintStyle}>{t('followUser')}: {followUser.length > 0 ? followUser : t('emptyFiles')}</div>}
+
+      <label style={coverLabelStyle}>
+        <input
+          type="checkbox"
+          checked={coverSuppress}
+          disabled={busy}
+          onChange={() => { setCoverSuppress(value => !value); setSaved(false) }}
+        />
+        {t('coverSuppress')}
+      </label>
+      {coverSuppress
+        ? (
+          <div>
+            <FileListEditor
+              files={suppressSections}
+              busy={busy}
+              placeholder={t('suppressHint')}
+              addLabel={t('addFile')}
+              deleteLabel={t('deleteRow')}
+              onChange={next => { setSuppressSections(next); setSaved(false) }}
+            />
+          </div>
+        )
+        : (
+          <div style={hintStyle}>
+            {t('followSuppress')}: {followSuppress.length > 0 ? followSuppress : t('emptyFiles')}
+          </div>
+        )}
 
       <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
         <button type="button" disabled={busy} style={buttonStyle} onClick={save}>

@@ -17,12 +17,14 @@ export interface FileInfo {
 export interface InjectConfig {
   systemFiles: string[]
   userFiles: string[]
+  suppressSections: string[]
 }
 
 /** 一个桶里的覆盖字段（缺失 = 跟随下层）。 */
 export interface Bucket {
   systemFiles?: string[]
   userFiles?: string[]
+  suppressSections?: string[]
 }
 
 /** state 短条自动注入的开关与节奏。 */
