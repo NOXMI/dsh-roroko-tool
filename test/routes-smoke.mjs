@@ -32,9 +32,15 @@ const registry = {
     registryCalls += 1
     return [
       { id: 'roroko', name: '洛洛可' },
+      { id: 'standard', name: '标准' },
       { id: 'duck', name: '小黄鸭', broken: '缺服务' },
     ]
   },
+  compositionInventory: async () => [
+    { id: 'roroko', rows: [{ moduleName: '@deepseek-ai/dsh-tool-fs' }, { moduleName: '@roroko-tool/dsh-roroko-tool' }] },
+    { id: 'standard', rows: [{ moduleName: '@deepseek-ai/dsh-tool-fs' }] },
+    { id: 'duck', rows: [] },
+  ],
 }
 
 const fake = {
@@ -94,9 +100,11 @@ const call = async (path, method, body) => {
 const state = await call('/roroko-tool/state', 'GET')
 check(state.status === 200 && state.body.mounted === true, 'GET state 报已挂载')
 check(state.body.root === root, 'GET state 带回身份根')
-check(state.body.roster.length === 2 && registryCalls > 0, 'roster 来自 preset 注册表')
-check(state.body.scopes.includes('common') && state.body.scopes.includes('roroko'), 'scope 集合含公共默认与注册表 preset')
-check(state.body.scopes.includes('duck'), 'broken 的 preset 也列出来')
+check(state.body.roster.length === 1 && registryCalls > 0, 'roster 只留挂了本插件的 preset')
+check(state.body.roster[0].id === 'roroko', '挂了的 preset 在 roster 里')
+check(!state.body.scopes.includes('standard'), '没挂插件的官方 preset 不出现在 scope 集合里')
+check(!state.body.scopes.includes('duck'), '没挂插件的 duck 也不出现')
+check(state.body.scopes.includes('common') && state.body.scopes.includes('roroko'), 'scope 集合含公共默认与挂了插件的 preset')
 check(state.body.effective.common.systemFiles.length === 0, '默认生效清单是空的')
 
 // ── POST config：公共桶 ──
@@ -129,7 +137,7 @@ check(specific.body.state.presets.roroko.systemFiles === undefined, '只给了 u
 const merged = await call('/roroko-tool/state', 'GET')
 check(merged.body.effective.roroko.userFiles.join() === 'IDENTITY.md', '分预设桶盖住公共桶的同名字段')
 check(merged.body.effective.roroko.systemFiles.join() === 'IDENTITY.md,NOPE.md', '没覆盖的字段继续吃公共桶')
-check(merged.body.effective.duck.userFiles.join() === 'AGENTS.md', '别的 preset 不受影响')
+check(merged.body.effective.duck === undefined, '没挂插件的 preset 不生成生效值')
 
 // ── null 删键 ──
 const dropped = await call('/roroko-tool/config', 'POST', { preset: 'roroko', userFiles: null })

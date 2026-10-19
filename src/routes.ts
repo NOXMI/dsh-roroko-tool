@@ -32,7 +32,12 @@ export interface WebServerLike {
 /** agent preset 注册表的最小面（列 roster 用）。 */
 export interface PresetRegistryLike {
   list(): Promise<Array<{ id: string; name?: string; description?: string; broken?: string }>>
+  /** 各 preset 的插件行；用来只留真挂了我们插件的那些。 */
+  compositionInventory?(): Promise<Array<{ id: string; rows: ReadonlyArray<{ moduleName: string }> }>>
 }
+
+/** 本包包名：preset 里那行的 moduleName。 */
+const PACKAGE_NAME = '@roroko-tool/dsh-roroko-tool'
 
 /** 设置页认的一个注入文件。 */
 interface FileInfo {
@@ -130,11 +135,31 @@ export function registerStateRoutes(
   version: string,
   registry?: () => PresetRegistryLike | undefined,
 ): () => void {
-  /** roster：注册表列不出来就空数组，页面照样能用已有桶。 */
+  /**
+   * roster：只留真挂了我们插件的 preset。
+   *
+   * 官方 preset（standard / minimal / duck …）不会加载 roroko-tool，给它们出卡
+   * 纯属占地方。靠 compositionInventory 的插件行过滤；注册表没这个方法（或
+   * 读失败）就退回全量，页面照样能用。
+   */
   const roster = async (): Promise<Array<{ id: string; name?: string; description?: string; broken?: string }>> => {
     try {
       const service = registry?.()
-      return service === undefined ? [] : await service.list()
+      if (service === undefined) return []
+      const rows = await service.list()
+      if (service.compositionInventory === undefined) return rows
+      let inventory: Array<{ id: string; rows: ReadonlyArray<{ moduleName: string }> }>
+      try {
+        inventory = await service.compositionInventory()
+      } catch {
+        return rows
+      }
+      const ours = new Set(
+        inventory
+          .filter(item => item.rows.some(row => row.moduleName.includes(PACKAGE_NAME)))
+          .map(item => item.id),
+      )
+      return rows.filter(row => ours.has(row.id))
     } catch {
       return []
     }
