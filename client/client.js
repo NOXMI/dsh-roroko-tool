@@ -68,6 +68,34 @@ window.__ModuleLoader__.load({
 			"locale",
 			"configForms"
 		];
+		/**
+		* 左栏一级图标。
+		* @param props - 尺寸与激活态。
+		* @returns 图标元素。
+		*/
+		function RorokoIcon({ size = 18, active = false }) {
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("svg", {
+				width: size,
+				height: size,
+				viewBox: "0 0 24 24",
+				fill: "none",
+				"aria-hidden": "true",
+				style: { opacity: active ? 1 : .72 },
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("path", {
+					d: "M4 17.5V9.2L12 4l8 5.2v8.3",
+					stroke: "currentColor",
+					strokeWidth: "1.7",
+					strokeLinecap: "round",
+					strokeLinejoin: "round"
+				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("path", {
+					d: "M8.3 20v-6.2h7.4V20",
+					stroke: "currentColor",
+					strokeWidth: "1.7",
+					strokeLinecap: "round",
+					strokeLinejoin: "round"
+				})]
+			});
+		}
 		const box = {
 			display: "flex",
 			flexDirection: "column",
@@ -283,6 +311,18 @@ window.__ModuleLoader__.load({
 					locale: NS,
 					inject: () => ({ form: forms.get("roroko-tool") })
 				}, RorokoSettingsPage))), "roroko-tool: 插件页");
+				slots.inject("sidebar.panellist", () => slots.register({
+					name: "sidebar.panellist",
+					id: "roroko-tool",
+					order: 5,
+					label: () => "洛洛可",
+					locale: NS
+				}, RorokoIcon));
+				slots.inject("main", () => slots.register({
+					name: "main",
+					key: "roroko-tool",
+					locale: NS
+				}, RorokoSettingsPage));
 				slots.inject("settings.general.item", () => slots.register({
 					name: "settings.general.item",
 					id: "roroko-tool",
@@ -295,6 +335,7 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 		exports.NS = NS;
+		exports.RorokoIcon = RorokoIcon;
 		exports.RorokoSettingsPage = RorokoSettingsPage;
 		exports.apply = apply;
 		exports.inject = inject;

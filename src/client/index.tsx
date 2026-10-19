@@ -15,6 +15,20 @@ export const NS = 'rorokoTool'
 /** 需要的客户端服务。 */
 export const inject = ['slots', 'locale', 'configForms']
 
+
+/**
+ * 左栏一级图标。
+ * @param props - 尺寸与激活态。
+ * @returns 图标元素。
+ */
+export function RorokoIcon({ size = 18, active = false }: { size?: number; active?: boolean }): React.ReactElement {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ opacity: active ? 1 : 0.72 }}>
+      <path d="M4 17.5V9.2L12 4l8 5.2v8.3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8.3 20v-6.2h7.4V20" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
 /** 文案签名（由 locale 服务注入）。 */
 type Translate = (key: LocaleKey) => string
 
@@ -183,7 +197,21 @@ export function apply(ctx: ClientContext): void {
       }, RorokoSettingsPage))), 'roroko-tool: 插件页')
     }
 
-    // 兜底：设置 → 通用 里也留一行，页签不出来时还能看见。
+    // 一级页面：左栏图标（sidebar.panellist）+ 主区面板（main，key = 面板 id）。
+    slots.inject('sidebar.panellist', () => slots.register({
+      name: 'sidebar.panellist',
+      id: 'roroko-tool',
+      order: 5,
+      label: () => '洛洛可',
+      locale: NS,
+    }, RorokoIcon))
+    slots.inject('main', () => slots.register({
+      name: 'main',
+      key: 'roroko-tool',
+      locale: NS,
+    }, RorokoSettingsPage))
+
+    // 兜底：设置 → 通用 里也留一行。
     slots.inject('settings.general.item', () => slots.register({
       name: 'settings.general.item',
       id: 'roroko-tool',
@@ -194,6 +222,7 @@ export function apply(ctx: ClientContext): void {
     console.error('[roroko-tool] 设置页注册失败：', error)
   }
 }
+
 
 
 
