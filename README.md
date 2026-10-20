@@ -6,11 +6,13 @@
 
 ```
 package.json          dsh.bundle.patch + engines.dsh（0.2.1 起兼容性先看 engines）
-cordis.patch.yml      插入宿主行 + 「洛洛可」preset 行
+cordis.patch.yml      **只插宿主行**（preset 归用户在 profile 层自己写，见下文）
 src/index.ts          宿主入口 name='roroko-tool'，按配置桶挂载子模块
+src/time.ts           时间口径（CST +0800，datas 与 memory 共用）
 src/preinject.ts      roroko-preinject：双段上下文注入
 src/datas/            roroko-datas：素材库四把工具 + state 短条自动注入
-src/routes.ts         设置页数据口（GET /roroko-tool/state · POST /roroko-tool/config）
+src/memory/           roroko-memory：四把记忆工具 + dream 定时反思
+src/routes.ts         设置页数据口（GET /roroko-tool/state · POST /roroko-tool/config · GET|POST /roroko-tool/dream）
 legacy/memory-0929/   0.1.6 时代 memory 源码存档（不参与构建）
 lib/                  构建产物（随仓库提交，服务器安装时不编译）
 ```
@@ -23,8 +25,8 @@ lib/                  构建产物（随仓库提交，服务器安装时不编�
 | 模块 | 状态 | 职责 |
 |---|---|---|
 | `preinject` | 可用 | 系统段（接管 `deployment:persona-prefix`）+ 消息段（pre-step 一次性 user 消息） |
-| `datas` | 可用 | `roroko_datas_query / lookup / register / state` 四把工具 + state 短条自动注入 |
-| `memory` | 源码存档 | 见 `legacy/memory-0929/`，等真搬时照 datas 的形状改 |
+| `datas` | 可用（默认关） | `roroko_datas_query / lookup / register / state` 四把工具 + state 短条自动注入 |
+| `memory` | 可用（默认关） | `roroko_mem_edit / date / rough / id` 四把工具 + dream 定时反思 |
 | `onahole` | 规划中 | 多端工具对接 |
 
 ## preset 归谁管
@@ -162,6 +164,20 @@ plugins:
 （`truth` / `decision` / `position` 这些）。不注册工具、不发 schema、不碰 system 段，
 不破 KV 前缀缓存。开关与节奏在设置页按 preset 配。
 
+## 时间口径（2026-10-20 统一）
+
+`soul.db` 与 `roroko_memory.db` 里的时间串一律是 **CST(+0800) `YYYY-MM-DD HH:mm:ss`**，
+实现集中在 `src/time.ts`，datas 与 memory 共用同一把尺：
+
+| 动作 | 函数 | 为什么 |
+|---|---|---|
+| 写库 | `fmtCst(now)` | **禁用 `toISOString()`** —— 那是 UTC 且不带时区标记，读侧按本机时区解释就整整齐齐差 8 小时 |
+| 读库 | `parseCstStamp(str)` | 显式补 `+08:00`，宿主时区被设成 UTC 也照对 |
+| 今日清零 | `cstDate(now)` | 跨天判断按 CST 日，不按宿主时区 |
+
+实证（2026-10-20 服务器 journal）：`fatigue_updated = 2026-10-19 18:17:18` ↔ 真实事件
+`02:17:11`，差 8 小时 + 7 秒；同一批 `position/body_state` 也是。
+
 ## 设置页
 
 设置面板里与「通用」「模型」「插件」同级的一页（`settings.section`，order 50）：
@@ -172,8 +188,9 @@ plugins:
 |---|---|
 | ① 上下文注入（preinject） | 系统层 / 用户层两张清单 + 屏蔽段清单 |
 | ② 素材库（datas） | 总开关（默认关）+ 库路径 + 自动注入四开关 |
+| ③ 记忆（memory） | 总开关（默认关）+ 库路径 + owner 桶 + dream 四项配置 + 「立即整理一次」 |
 
-后面排队的 `memory` / `onahole` 各占一块，形状照抄。
+后面排队的 `onahole` 占第四块，形状照抄。
 
 - 公共默认一张卡（默认展开）+ 注册表里每个 preset 一张折叠卡，卡头带
   「基线 / 已覆盖 / 跟随继承 / 挂不起来」徽标（每个模块各自算）
@@ -213,8 +230,10 @@ POST /roroko-tool/config  按 preset 写桶：{preset, section:'preinject'|'data
 ```bash
 pnpm build
 node test/preinject-smoke.mjs   # 四层链 + 双段注入 + 判重
-node test/routes-smoke.mjs      # 两条路由 + 分桶读写
+node test/routes-smoke.mjs      # 三条路由 + 分桶读写
 node test/datas-smoke.mjs       # 取料匹配/收束/渲染 + datas 四层链 + 覆盖层落盘
+node test/memory-smoke.mjs      # 记忆 CST 口径 / 检索 / dream 队列与门禁
+node test/datas-state.mjs       # state 时间口径：写 CST、读 +08:00、0 分不喊过期
 ```
 
 ## 构建与发布

@@ -1,4 +1,5 @@
 import z from "@deepseek-ai/schemastery";
+import { DatabaseSync } from "node:sqlite";
 import { Context } from "@deepseek-ai/cordis";
 //#region src/presets.d.ts
 /** 公共默认桶名。 */
@@ -166,30 +167,33 @@ declare function datasWiring(config: DatasConfig): Record<string, unknown>;
  */
 declare function resolveDatas(config: DatasConfig, state: DatasState, presetId: string | undefined): EffectiveDatas;
 //#endregion
-//#region src/memory/form.d.ts
+//#region src/time.d.ts
 /**
- * roroko 记忆工具的纯逻辑:时间口径 / 日期区间 / 入参收窄 / 渲染 / DDL 常量。
+ * 时间口径：**一律 CST(+0800)，用固定偏移算，不读运行环境时区**。
  *
- * 与 DB 访问分离(memory-store.ts 负责开库读写),本文件**不 import node 内置与
- * DSH 运行时包** —— 零依赖测试直读编译产物,不连库、不点界面就能验整套口径。
+ * 为什么单独一份：datas 与 memory 两个子模块都要写库里的 `YYYY-MM-DD HH:mm:ss`
+ * 时间戳，谁也不该依赖谁（它们是兄弟目录）。所以把口径提到包根，两边共用同一把尺。
  *
- * 口径(2026-09-18 定稿,见 refs/notes/roroko-memory-design-v1.md):
- *   - 时间一律 **CST+0800**,用固定偏移算、**不读运行环境时区**(服务器被设成 UTC 也照对)
- *   - 存库格式与 soul.db 的 datetime('now','localtime') 一致:'YYYY-MM-DD HH:mm:ss'
- *   - 日期查询拿 created_at 前 10 位做字符串比较,不拼 '23:59:59' 落边界
- *   - 默认区间 = **今天 + 昨天**(直接承接既有记忆纪律「今天 + 昨天必读」)
- *
- * 减法(2026-09-21,阿一拍板"工具就只是简单的 sqlite 工具"):
- *   - 检索**只剩一条 SQL**(关键词全都要命中,LIKE 包含匹配):删掉整套汉字 bigram
- *     打分 / 覆盖度 / 命中数 / 拉丁整词分流 —— 那些概念模型用不上,人也维护不动
- *   - **删召回计数**(recalled):它只当排序次序用,还让同一次查询的结果顺序漂移
- *     (字段仍留在库里,旧库不需要迁移,只是代码不再读写)
- *   - **删 owner 分桶开关**(owner=all / 工具入参 owner):桶固定取 preset 配的那个
- *   - **删 kind 入参**:kind 只剩一个用途 —— 标记导入的历史流水(`log`),由导入脚本
- *     直接写库,模型侧不再暴露分类概念
+ * 三条硬规矩（2026-09-24 拿生产库歪 8 小时换的，别再犯）：
+ *   1. 写库一律 `fmtCst` —— **禁用 `toISOString()`**，那是 UTC 串且不带时区标记，
+ *      读侧按本机时区解释就会整整齐齐差 8 小时
+ *   2. 读库一律 `parseCstStamp` —— 显式补 +08:00，服务器被设成 UTC 也照对
+ *   3. 日期比较只取前 10 位做字符串比较，不拼 '23:59:59' 落边界
  */
-/** CST 时间戳 'YYYY-MM-DD HH:mm:ss'(禁用 toISOString —— 那是 UTC,库会早 8 小时)。 */
+/** CST 时间戳 'YYYY-MM-DD HH:mm:ss'（库里的标准形态）。 */
 declare function fmtCst(date: Date): string;
+/** CST 日期 'YYYY-MM-DD'（今日清零、日期区间用）。 */
+declare function cstDate(date: Date): string;
+/**
+ * 解析库里的时间戳：**无时区标记的一律当 CST**，显式补 +08:00。
+ *
+ * 为什么不能直接 `new Date(str.replace(' ','T'))`：那会按**宿主时区**解释，
+ * 服务器时区一变（或进程被设成 UTC）读出来的相对时间就整体偏 8 小时。
+ * @param value - 库里的时间串（任何类型都吃，坏值返回 Invalid Date）
+ */
+declare function parseCstStamp(value: unknown): Date;
+//#endregion
+//#region src/memory/form.d.ts
 /** 闭区间 [from, to],两端都是 'YYYY-MM-DD'。 */
 interface DateRange {
   from: string;
@@ -462,7 +466,7 @@ interface PickResult {
   /** 被单字规则挡下的查询词。 */
   droppedKws: string[];
 }
-/** 查询词拆分:逗号分隔、去空白、去重。 */
+/** 查询词拆分:按分隔符切、去重。 */
 declare function splitKws(raw: unknown): string[];
 /**
  * 关键词打分:只认**长度 ≥2** 的记录侧 token(单字 token 不作命中依据)。
@@ -476,6 +480,8 @@ declare function scoreRow(row: Row, kws: string[]): number;
  * 不用 hit_count 也不用"多久没用"当排序键。
  */
 declare function pickCandidates(rows: Row[], options: PickOptions): PickResult;
+/** 时间戳 → 相对时间文案(库里的时间串本身是 CST,显式 +08:00 解析,与环境时区无关)。 */
+declare function fmtLastUsed(ts: unknown, now: Date): string;
 interface RenderInput {
   tableKey: QueryTableKey;
   kws: string[];
@@ -494,6 +500,15 @@ interface RenderInput {
 }
 /** 渲染 query 结果为 markdown(有 kw 标题带关键词,无 kw 标"发散")。 */
 declare function renderQuery(input: RenderInput): string;
+//#endregion
+//#region src/datas/state.d.ts
+/**
+ * roroko_datas_state snap：读 soul_state 当前状态，输出 markdown + staleness 鞭策。
+ * 跨天自动清零今日计数器。
+ */
+declare function runStateSnap(db: DatabaseSync, now: Date): string;
+/** roroko_datas_state update：宽松 fields → 白名单列写回，含 incr 快捷计数。 */
+declare function runStateUpdate(db: DatabaseSync, fields: Record<string, unknown>, now: Date): string;
 //#endregion
 //#region src/index.d.ts
 declare const name = "roroko-tool";
@@ -524,4 +539,4 @@ interface AgentServices {
  */
 declare function apply(ctx: Context, config?: RorokoToolConfig): void;
 //#endregion
-export { AUTOINJECT_DEFAULTS, AgentServices, COMMON, Config, DEFAULTS, DEFAULT_DB_PATH, DEFAULT_MEMORY_DB_PATH, DEFAULT_OWNER, DREAM_DEFAULTS, DREAM_SKIP_KINDS, COMMON$1 as MEMORY_COMMON, RorokoToolConfig, TABLES, apply, buildDreamTask, cleanAutoinject, clearBucket, clearDatasBucket, clearMemoryBucket, datasStateFile, datasWiring, diffReflected, escapeLike, fmtCst, matchesSuppress, memoryStateFile, memoryWiring, name, normalizeAdd, normalizeDreamConfig, normalizeReflect, pickCandidates, pickQueue, readDatasState, readMemoryState, readState, renderQuery, resolveBucket, resolveDatas, resolveEffective, resolveMemory, resolveRange, scoreRow, setBucket, setDatasBucket, setMemoryBucket, splitKeywords, splitKws, version };
+export { AUTOINJECT_DEFAULTS, AgentServices, COMMON, Config, DEFAULTS, DEFAULT_DB_PATH, DEFAULT_MEMORY_DB_PATH, DEFAULT_OWNER, DREAM_DEFAULTS, DREAM_SKIP_KINDS, COMMON$1 as MEMORY_COMMON, RorokoToolConfig, TABLES, apply, buildDreamTask, cleanAutoinject, clearBucket, clearDatasBucket, clearMemoryBucket, cstDate, datasStateFile, datasWiring, diffReflected, escapeLike, fmtCst, fmtLastUsed, matchesSuppress, memoryStateFile, memoryWiring, name, normalizeAdd, normalizeDreamConfig, normalizeReflect, parseCstStamp, pickCandidates, pickQueue, readDatasState, readMemoryState, readState, renderQuery, resolveBucket, resolveDatas, resolveEffective, resolveMemory, resolveRange, runStateSnap, runStateUpdate, scoreRow, setBucket, setDatasBucket, setMemoryBucket, splitKeywords, splitKws, version };

@@ -86,9 +86,22 @@ export function datasStateFile(root: string): string {
   return join(root, 'state', 'datas.json')
 }
 
-/** 整数收窄：有限数取整，钳到 [min, max]，非法回落 fallback。 */
+/**
+ * 整数收窄：有限数取整，钳到 [min, max]。
+ * ⚠️ **空串必须回落 fallback**：`Number('')` 是 0 不是 NaN，直接判有限性会让
+ * "设置页里把数字框清空再保存"变成"填了 0"→ 一路钳到下限（every 变 1 = 每轮都注）。
+ */
 function clampInt(value: unknown, fallback: number, min: number, max: number): number {
-  const n = typeof value === 'number' ? value : Number(value)
+  let n: number
+  if (typeof value === 'number') {
+    n = value
+  } else if (typeof value === 'string') {
+    const text = value.trim()
+    if (text.length === 0) return fallback
+    n = Number(text)
+  } else {
+    return fallback
+  }
   if (!Number.isFinite(n)) return fallback
   const int = Math.trunc(n)
   if (int < min) return min
@@ -215,9 +228,10 @@ export function resolveDatas(
   state: DatasState,
   presetId: string | undefined,
 ): EffectiveDatas {
+  const commonBucket = state.presets[COMMON]
   const specific = presetId === undefined || presetId === COMMON ? undefined : state.presets[presetId]
   const merged: DatasBucket = {
-    ...state.presets[COMMON],
+    ...commonBucket,
     ...specific,
   }
   const wiringPath = config.dbPath !== undefined && config.dbPath.trim().length > 0 ? config.dbPath.trim() : undefined
@@ -225,10 +239,13 @@ export function resolveDatas(
     // 总开关默认关：设置页勾了才开（接线 config 只能开，不能把默认关掉）。
     enabled: merged.enabled ?? config.enabled ?? false,
     dbPath: merged.dbPath ?? wiringPath ?? DEFAULT_DB_PATH,
+    // ⚠️ autoinject 必须**逐字段**叠：整组浅合并会让分桶只写一个 every 就把公共桶的
+    // afterTool/minGap 一起抹掉（memory 的 dream 已经踩过同一个坑）。
     autoinject: {
       ...AUTOINJECT_DEFAULTS,
       ...config.autoinject,
-      ...merged.autoinject,
+      ...commonBucket?.autoinject,
+      ...specific?.autoinject,
     },
   }
 }

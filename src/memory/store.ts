@@ -61,20 +61,23 @@ export function runAdd(
 /**
  * 反思一条记忆:直接覆盖 content(设计稿 §五 5.3,防膨胀)、刷 reflected_at,
  * summary 传了才一起换。owner/kind/source 一概不动。
+ *
+ * ⚠️ **必须带 owner 过滤**:reflect 是整条覆盖,不带桶等于允许一个会话改写另一个
+ * 桶的记忆(dev 改 persona)—— id 是全局自增的,猜都能猜到。
  * 查不到 id 返回人话,不抛。
  */
-export function runReflect(db: DatabaseSync, input: MemoryReflectInput, now: Date): string {
+export function runReflect(db: DatabaseSync, input: MemoryReflectInput, owner: string, now: Date): string {
   const row = db
-    .prepare(`SELECT ${MEMORY_COLUMNS} FROM memory WHERE id = ?`)
-    .get(input.id) as unknown as MemoryRow | undefined
+    .prepare(`SELECT ${MEMORY_COLUMNS} FROM memory WHERE id = ? AND owner = ?`)
+    .get(input.id, owner) as unknown as MemoryRow | undefined
   if (row === undefined) {
-    return `没有 #${input.id} 这条记忆。reflect 只能改已有的;要记新的用 op=add。`
+    return `没有 #${input.id} 这条记忆(owner=${owner})。reflect 只能改本桶已有的;要记新的用 op=add。`
   }
   const reflectedAt = fmtCst(now)
   const summaryKept = input.summary.length === 0
   const summary = summaryKept ? row.summary : input.summary
-  db.prepare('UPDATE memory SET content = ?, summary = ?, reflected_at = ? WHERE id = ?')
-    .run(input.content, summary, reflectedAt, input.id)
+  db.prepare('UPDATE memory SET content = ?, summary = ?, reflected_at = ? WHERE id = ? AND owner = ?')
+    .run(input.content, summary, reflectedAt, input.id, owner)
   return renderReflectResult({
     id: input.id,
     reflectedAt,

@@ -76,9 +76,22 @@ export function memoryStateFile(root: string): string {
   return join(root, 'state', 'memory.json')
 }
 
-/** 整数收窄：有限数取整，钳到 [min, max]，非法回落 fallback。 */
+/**
+ * 整数收窄：有限数取整，钳到 [min, max]。
+ * ⚠️ **空串必须回落 fallback**：`Number('')` 是 0 不是 NaN —— 设置页把数字框清空
+ * 再保存，会让 intervalMs 一路钳到下限（5 分钟），dream 变成每 5 分钟跑一次。
+ */
 function clampInt(value: unknown, fallback: number, min: number, max: number): number {
-  const n = typeof value === 'number' ? value : Number(value)
+  let n: number
+  if (typeof value === 'number') {
+    n = value
+  } else if (typeof value === 'string') {
+    const text = value.trim()
+    if (text.length === 0) return fallback
+    n = Number(text)
+  } else {
+    return fallback
+  }
   if (!Number.isFinite(n)) return fallback
   const int = Math.trunc(n)
   if (int < min) return min

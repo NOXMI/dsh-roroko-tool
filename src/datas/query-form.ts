@@ -14,6 +14,8 @@
  *   - 时间一律本地口径算出相对时间;库里 companion_pool 的时间列叫 last_used
  */
 
+import { parseCstStamp } from '../time.js'
+
 /** 能查的四张素材表(与旧 roroko_query 的 table 枚举一致)。 */
 export type QueryTableKey = 'scene' | 'clothing' | 'items' | 'companion'
 
@@ -107,11 +109,14 @@ export function parseKeywords(value: unknown): string[] {
   return raw.split(',').map(s => s.trim()).filter(s => s.length > 0)
 }
 
-/** 查询词拆分:逗号分隔、去空白、去重。 */
+/** 查询词分隔符:空白与中英文逗号顿号分号斜杠竖线(与 memory 侧同一套)。 */
+const KW_SEP = /[\s,，、;；/|]+/
+
+/** 查询词拆分:按分隔符切、去重。 */
 export function splitKws(raw: unknown): string[] {
   if (typeof raw !== 'string') return []
   const out: string[] = []
-  for (const part of raw.split(',')) {
+  for (const part of raw.split(KW_SEP)) {
     const kw = part.trim()
     if (kw.length > 0 && !out.includes(kw)) out.push(kw)
   }
@@ -122,7 +127,7 @@ export function splitKws(raw: unknown): string[] {
 export function splitSlots(raw: unknown): string[] {
   if (typeof raw !== 'string') return []
   const out: string[] = []
-  for (const part of raw.split(',')) {
+  for (const part of raw.split(KW_SEP)) {
     const slot = part.trim()
     if (slot.length > 0 && !out.includes(slot)) out.push(slot)
   }
@@ -175,7 +180,7 @@ export function pickCandidates(rows: Row[], options: PickOptions): PickResult {
   const usedKws = options.kws.filter(k => k.length >= 2)
   const droppedKws = options.kws.filter(k => k.length < 2)
 
-  let matched = rows.map((row, index) => ({ row, index, score: scoreRow(row, options.kws) }))
+  let matched = rows.map((row, index) => ({ row, index, score: scoreRow(row, usedKws) }))
   if (options.kws.length > 0) matched = matched.filter(item => item.score > 0)
   shuffle(matched, rng)
   matched.sort((a, b) => b.score - a.score)
@@ -272,12 +277,13 @@ export function clampLimit(value: unknown, fallback = 5): number {
   return Math.trunc(n)
 }
 
-/** 时间戳 → 相对时间文案(本地口径,库里的时间串本身就是 CST)。 */
+/** 时间戳 → 相对时间文案(库里的时间串本身是 CST,显式 +08:00 解析,与环境时区无关)。 */
 export function fmtLastUsed(ts: unknown, now: Date): string {
   if (typeof ts !== 'string' || ts.trim().length === 0) return '从未'
-  const parsed = new Date(ts.trim().replace(' ', 'T'))
+  const parsed = parseCstStamp(ts)
   if (Number.isNaN(parsed.getTime())) return '从未'
-  const minutes = (now.getTime() - parsed.getTime()) / 60_000
+  // 负数(库里的时间在未来)= 刚写完,按 0 算 —— 别显示成奇怪的负数前缀
+  const minutes = Math.max(0, (now.getTime() - parsed.getTime()) / 60_000)
   if (minutes < 1) return '刚刚'
   if (minutes < 60) return `${Math.floor(minutes)}min前`
   if (minutes < 1440) return `${Math.floor(minutes / 60)}h前`

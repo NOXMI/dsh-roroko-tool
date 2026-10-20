@@ -275,7 +275,7 @@ export function startDreamTimer(options: DreamTimerOptions): DreamTimer {
     if (at < anchor) return
     running = true
     void options.run()
-      .then(() => { lastRun = options.now().toISOString() })
+      .then(() => { lastRun = fmtCst(options.now()) })
       .catch((error: unknown) => { options.onError(error) })
       .finally(() => {
         running = false

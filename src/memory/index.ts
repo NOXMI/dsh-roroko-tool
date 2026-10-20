@@ -206,7 +206,7 @@ export function mount(
       if (args.op === 'reflect') {
         const reflected = normalizeReflect({ id: args.id, content: args.content, summary: args.summary })
         if (reflected.input === undefined) return `反思失败: ${reflected.error}`
-        return withDb(dbPath(), db => runReflect(db, reflected.input!, at))
+        return withDb(dbPath(), db => runReflect(db, reflected.input!, owner(), at))
       }
       const normalized = normalizeAdd({
         owner: owner(),

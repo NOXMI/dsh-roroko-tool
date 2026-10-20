@@ -1,0 +1,24 @@
+/**
+ * client 半的类型检查（不产出文件）。
+ *
+ * 为什么不 extends 根 tsconfig：根配置 `exclude: ["src/client"]` 且带 `declarationDir`，
+ * 继承下来会同时撞上"没有输入文件"和"declarationDir 不能单独存在"两条错。
+ * tsdown 只用 esbuild 转译、**不做类型检查** —— 少了这一份，1056 行设置页代码就是裸奔。
+ *
+ *   npx tsc -p tsconfig.client.json
+ */
+{
+  "compilerOptions": {
+    "target": "es2024",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "types": ["node"]
+  },
+  "include": ["src/client", "src/client/**/*.tsx"]
+}

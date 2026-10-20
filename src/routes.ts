@@ -228,7 +228,8 @@ export function registerStateRoutes(
 
       json(res, 200, {
         version,
-        mounted: mount !== undefined,
+        // 三块任一挂上就算"有东西可配"：只挂 datas / memory 时也得渲染对应卡。
+        mounted: mount !== undefined || datasMount !== undefined || memoryMount !== undefined,
         root,
         stateFile: mount === undefined ? undefined : stateFile(mount.root),
         presets: state.presets,

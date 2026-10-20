@@ -41,7 +41,11 @@ export {
   escapeLike, fmtCst, normalizeAdd, normalizeReflect, resolveRange, splitKeywords,
 } from './memory/form.js'
 // 取料纯逻辑（不碰库、不碰 DSH 运行时）：给离线冒烟测试用。
-export { TABLES, pickCandidates, renderQuery, scoreRow, splitKws } from './datas/query-form.js'
+export { TABLES, fmtLastUsed, pickCandidates, renderQuery, scoreRow, splitKws } from './datas/query-form.js'
+// state 的读写两侧（吃 db + now，不碰 DSH 运行时）：真库冒烟用。
+export { runStateSnap, runStateUpdate } from './datas/state.js'
+// 时间口径：写侧 CST、读侧显式 +08:00（fmtCst 已由 memory/form 转出，这里只补另外两个）。
+export { cstDate, parseCstStamp } from './time.js'
 // 段名匹配（尾部 * 走前缀匹配）：设置页与冒烟测试共用同一口径。
 export { matchesSuppress } from './preinject.js'
 
@@ -62,6 +66,7 @@ export const Config: z<RorokoToolConfig> = z.object({
   datas: z.union([
     z.boolean(),
     z.object({
+      enabled: z.boolean().description('false 时不挂载本模块（与桶里的总开关是两回事）'),
       root: z.string().description('覆盖层基准目录（默认 $DSH_HOME/roroko）'),
       dbPath: z.string().description('soul.db 路径（默认 /var/www/api/database/soul.db）'),
       autoinject: z.object({
@@ -75,6 +80,7 @@ export const Config: z<RorokoToolConfig> = z.object({
   memory: z.union([
     z.boolean(),
     z.object({
+      enabled: z.boolean().description('false 时不挂载本模块（与桶里的总开关是两回事）'),
       root: z.string().description('覆盖层基准目录（默认 $DSH_HOME/roroko）'),
       dbPath: z.string().description('记忆库路径（默认 /var/www/api/database/roroko_memory.db）'),
       owner: z.string().description('owner 桶（默认 dev；小写字母数字与 . _ -）'),

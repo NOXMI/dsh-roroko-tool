@@ -20,8 +20,13 @@
  *     直接写库,模型侧不再暴露分类概念
  */
 
-/** 东八区固定偏移(毫秒)。 */
-const CST_OFFSET_MS = 8 * 60 * 60 * 1000
+/**
+ * 时间口径搬到包根的 `src/time.ts`（datas 与 memory 共用同一把尺），这里原样转出去，
+ * 外部导入名不变（`fmtCst` / `cstDate` 仍从本模块拿得到）。
+ */
+import { cstDate, fmtCst } from '../time.js'
+
+export { cstDate, fmtCst }
 
 /** 一天的毫秒数。 */
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -29,30 +34,6 @@ const DAY_MS = 24 * 60 * 60 * 1000
 /** 两位补零。 */
 function pad2(n: number): string {
   return String(n).padStart(2, '0')
-}
-
-/** 把绝对时刻搬到东八区那面钟上,再用 UTC getter 读(于是与运行环境时区无关)。 */
-function cstParts(date: Date): { y: number; m: number; d: number; hh: number; mm: number; ss: number } {
-  const shifted = new Date(date.getTime() + CST_OFFSET_MS)
-  return {
-    y: shifted.getUTCFullYear(),
-    m: shifted.getUTCMonth() + 1,
-    d: shifted.getUTCDate(),
-    hh: shifted.getUTCHours(),
-    mm: shifted.getUTCMinutes(),
-    ss: shifted.getUTCSeconds(),
-  }
-}
-
-/** CST 时间戳 'YYYY-MM-DD HH:mm:ss'(禁用 toISOString —— 那是 UTC,库会早 8 小时)。 */
-export function fmtCst(date: Date): string {
-  const p = cstParts(date)
-  return `${p.y}-${pad2(p.m)}-${pad2(p.d)} ${pad2(p.hh)}:${pad2(p.mm)}:${pad2(p.ss)}`
-}
-
-/** CST 日期 'YYYY-MM-DD'。 */
-export function cstDate(date: Date): string {
-  return fmtCst(date).slice(0, 10)
 }
 
 /** 真日期校验:挡 '2026-02-30' 这种格式对、值不存在的输入。 */

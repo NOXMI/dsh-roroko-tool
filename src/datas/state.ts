@@ -13,6 +13,7 @@
  */
 import type { DatabaseSync } from 'node:sqlite'
 import { parseKeywords, type Row } from './query-form.js'
+import { cstDate, fmtCst, parseCstStamp } from '../time.js'
 
 /** 素材表映射：alias → (真实表名, 名字列)。 */
 export const TABLE_META: Record<string, { table: string; nameCol: string }> = {
@@ -96,7 +97,8 @@ export function runRegister(db: DatabaseSync, typeKey: string, nameInput: string
  * 跨天自动清零今日计数器。
  */
 export function runStateSnap(db: DatabaseSync, now: Date): string {
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  // 今日计数器的跨天判断按 CST 日期算 —— 与写侧同一个时区口径。
+  const today = cstDate(now)
   const row0 = db.prepare('SELECT last_daily_reset FROM soul_state WHERE id = 1').get() as unknown as Row | undefined
   if (row0 && String(row0.last_daily_reset ?? '') !== today) {
     db.prepare(
@@ -105,6 +107,12 @@ export function runStateSnap(db: DatabaseSync, now: Date): string {
   }
   const row = db.prepare('SELECT * FROM soul_state WHERE id = 1').get() as unknown as Row | undefined
   if (!row) return '状态表为空(id=1 不存在)'
+
+  /** 字段是否为空：空字段既不显示、也不计陈旧度（否则空槽位会把总分拉满）。 */
+  const isEmpty = (key: string): boolean => {
+    const v = row[key]
+    return v === undefined || v === null || String(v).length === 0 || String(v) === '无' || String(v) === '[]'
+  }
 
   /** 字段 → (类别, 陈旧度阈值分钟列表[score1..4])。 */
   const CATS: Record<string, { cat: 'body' | 'outfit' | 'narrative'; minutes: number[] }> = {
@@ -163,9 +171,11 @@ export function runStateSnap(db: DatabaseSync, now: Date): string {
   const whipMap = new Map<string, string>()
   const maxScore = Object.keys(CATS).length * 4
   for (const [field, spec] of Object.entries(CATS)) {
+    if (isEmpty(field)) continue
     const tsStr = row[`${field}_updated`]
     if (typeof tsStr !== 'string' || tsStr.trim().length === 0) continue
-    const t = new Date(tsStr.replace(' ', 'T'))
+    // 读侧显式 +08:00 —— 库里的串没有时区标记，按宿主时区解释会整体偏 8 小时。
+    const t = parseCstStamp(tsStr)
     if (Number.isNaN(t.getTime())) continue
     const minutes = (now.getTime() - t.getTime()) / 60_000
     const score = spec.minutes.filter(m => minutes > m).length
@@ -178,14 +188,17 @@ export function runStateSnap(db: DatabaseSync, now: Date): string {
     if (phrase) whipMap.set(field, phrase)
   }
 
-  let finalWhip = SCORE_WHIPS[SCORE_WHIPS.length - 1][1]
-  for (const [threshold, phrase] of SCORE_WHIPS) {
-    if (total >= threshold) { finalWhip = phrase; break }
+  // 0 分不说"过期"：全新鲜时还喊过期，会让人以为时间没更新（2026-09-24 因此误判过一次）。
+  let finalWhip = '状态新鲜,暂时不用动'
+  if (total > 0) {
+    for (const [threshold, phrase] of SCORE_WHIPS) {
+      if (total >= threshold) { finalWhip = phrase; break }
+    }
   }
 
   const display = (key: string): string => {
+    if (isEmpty(key)) return ''
     const v = row[key]
-    if (v === undefined || v === null || String(v).length === 0 || String(v) === '无' || String(v) === '[]') return ''
     if (key === 'sexual_items') {
       try {
         const items = JSON.parse(String(v)) as Array<{ name?: string }>
@@ -214,7 +227,7 @@ export function runStateSnap(db: DatabaseSync, now: Date): string {
   for (const base of ['oral', 'vaginal', 'anal'] as const) {
     lines.push(`| ${base} | ${String(row[`${base}_today`] ?? 0)} | ${String(row[`${base}_total`] ?? 0)} |`)
   }
-  lines.push('', `now: ${now.toISOString().slice(0, 16).replace('T', ' ')} (UTC)`, `staleness: ${total}/${maxScore} ${finalWhip}`)
+  lines.push('', `now: ${fmtCst(now).slice(0, 16)} (CST)`, `staleness: ${total}/${maxScore} ${finalWhip}`)
   return lines.join('\n')
 }
 
@@ -243,9 +256,37 @@ const INT_FIELDS = new Set<string>([
   'oral_today', 'vaginal_today', 'anal_today', 'oral_total', 'vaginal_total', 'anal_total',
 ])
 
+/**
+ * 文本字段归一：数组/对象**不能直接 `String()`** —— 那会写成 `[object Object]`，
+ * 库脏了还查不出原因（道具参数是 json 类型，模型天然会给数组）。
+ *
+ *   ["跳蛋","润滑液"]        → "跳蛋,润滑液"
+ *   [{name:"跳蛋"},{name:"套"}] → "跳蛋,套"
+ *   {name:"跳蛋"}            → '{"name":"跳蛋"}'（单个对象留 JSON，读侧照旧能解析）
+ */
+function textValue(raw: unknown): string {
+  if (raw === null || raw === undefined) return ''
+  if (Array.isArray(raw)) {
+    return raw
+      .map(item => {
+        if (item === null || item === undefined) return ''
+        if (typeof item === 'object') {
+          const name = (item as { name?: unknown }).name
+          return typeof name === 'string' ? name.trim() : JSON.stringify(item)
+        }
+        return String(item).trim()
+      })
+      .filter(text => text.length > 0)
+      .join(',')
+  }
+  if (typeof raw === 'object') return JSON.stringify(raw)
+  return String(raw)
+}
+
 /** roroko_datas_state update：宽松 fields → 白名单列写回，含 incr 快捷计数。 */
 export function runStateUpdate(db: DatabaseSync, fields: Record<string, unknown>, now: Date): string {
-  const tsNow = now.toISOString().slice(0, 19).replace('T', ' ')
+  // 写侧一律 CST（禁用 toISOString —— 那是 UTC，读侧会整整齐齐差 8 小时）。
+  const tsNow = fmtCst(now)
   const updates = new Map<string, string | number>()
   const unknown: string[] = []
 
@@ -256,7 +297,7 @@ export function runStateUpdate(db: DatabaseSync, fields: Record<string, unknown>
       const n = Number(raw)
       updates.set(key, Number.isFinite(n) ? Math.trunc(n) : 0)
     } else {
-      updates.set(key, String(raw))
+      updates.set(key, textValue(raw))
     }
     if (TS_SYNC_FIELDS.has(key)) updates.set(`${key}_updated`, tsNow)
   }

@@ -49,11 +49,23 @@ export interface AutoinjectDecision {
   source: InjectSource | null
 }
 
+/**
+ * 数字收窄：**空串必须回落默认**。
+ * `Number('')` 是 0 而不是 NaN，直接判有限性会把"没填"当成"填了 0"，
+ * 一路钳到下限 —— rounds 变 1（每轮都注）、minGap 变 0（完全不限制）。
+ */
+function toNumber(value: unknown, fallback: number): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : fallback
+  if (typeof value !== 'string') return fallback
+  const text = value.trim()
+  if (text.length === 0) return fallback
+  const n = Number(text)
+  return Number.isFinite(n) ? n : fallback
+}
+
 /** 轮数阈值收窄:整数、1~200,非法值回落默认。 */
 export function clampRounds(value: unknown): number {
-  const n = Number(value)
-  if (!Number.isFinite(n)) return AutoinjectDefaultRounds
-  const int = Math.trunc(n)
+  const int = Math.trunc(toNumber(value, AutoinjectDefaultRounds))
   if (int < 1) return 1
   if (int > 200) return 200
   return int
@@ -61,9 +73,7 @@ export function clampRounds(value: unknown): number {
 
 /** 最短间隔收窄:整数、0~200,非法值回落默认(4)。 */
 export function clampMinGap(value: unknown): number {
-  const n = Number(value)
-  if (!Number.isFinite(n)) return AutoinjectDefaultMinGap
-  const int = Math.trunc(n)
+  const int = Math.trunc(toNumber(value, AutoinjectDefaultMinGap))
   if (int < 0) return 0
   if (int > 200) return 200
   return int
