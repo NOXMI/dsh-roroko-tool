@@ -893,6 +893,14 @@ function MemoryPanel(props: {
   const { t } = props
   const [state, setState] = useState<StateBody | null>(null)
   const [error, setError] = useState<string | null>(null)
+  /**
+   * ⚠️ 这两个 state 必须放在**任何 early return 之前**。
+   * 曾经放在"加载完再往下走"的分支里 → 首渲染 4 个 hook、数据到位后变 6 个，
+   * React 直接报 #310（Rendered more hooks than during the previous render），
+   * 整个设置页白屏。hooks 的数量每次渲染必须一模一样。
+   */
+  const [activeScope, setActiveScope] = useState<string>('common')
+  const [closed, setClosed] = useState<Record<string, boolean>>({})
 
   const load = useCallback(async () => {
     setError(null)
@@ -933,14 +941,6 @@ function MemoryPanel(props: {
   const roster = new Map((state.roster ?? []).map(row => [row.id, row]))
   const datas = state.datas
   const memory = state.memory
-
-  /**
-   * 当前正在编辑的作用域。**先选改谁，再改什么** —— 作用域横向排在 chips 里，
-   * 纵向只留三个模块节，preset 再多也不把面板拉长。
-   */
-  const [activeScope, setActiveScope] = useState<string>(() => scopes[0] ?? 'common')
-  /** 三个模块节的折叠状态（默认全开；收起只是不渲染，徽标仍留在标题行）。 */
-  const [closed, setClosed] = useState<Record<string, boolean>>({})
 
   // 作用域列表变了（新建/删除 preset 后刷新）→ 当前选中的若已不存在，回落到第一个。
   const current = scopes.includes(activeScope) ? activeScope : (scopes[0] ?? 'common')
