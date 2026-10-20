@@ -59,6 +59,59 @@ export interface DatasBody {
   effective: Record<string, DatasEffective>
 }
 
+/** dream（定时反思）的配置。 */
+export interface DreamConfig {
+  enabled: boolean
+  intervalMs: number
+  batch: number
+  provider: string
+  model: string
+  preset: string
+  cwd: string
+}
+
+/** memory 桶里的覆盖字段（dream 逐字段叠加）。 */
+export interface MemoryBucket {
+  enabled?: boolean
+  dbPath?: string
+  owner?: string
+  dream?: Partial<DreamConfig>
+}
+
+/** memory 合成后的生效参数。 */
+export interface MemoryEffective {
+  enabled: boolean
+  dbPath: string
+  owner: string
+  dream: DreamConfig
+}
+
+/** dream 运行面（手动触发与最近一次结果）。 */
+export interface DreamBody {
+  running: boolean
+  started: boolean
+  config: DreamConfig | null
+  last: {
+    note?: string
+    queued?: number
+    changed?: number[]
+    added?: number
+    at?: string
+    error?: string
+  } | null
+}
+
+/** memory 侧全量状态。 */
+export interface MemoryBody {
+  mounted: boolean
+  stateFile?: string
+  defaults: MemoryEffective
+  wiring: Partial<MemoryEffective>
+  presets: Record<string, MemoryBucket>
+  effective: Record<string, MemoryEffective>
+  dream: DreamBody
+}
+
 /** preset 注册表里的一行。 */
 export interface PresetRow {
   id: string
@@ -82,6 +135,8 @@ export interface StateBody {
   files?: Record<string, { system: FileInfo[]; user: FileInfo[] }>
   /** 素材库子模块（没挂载时为 undefined）。 */
   datas?: DatasBody
+  /** 记忆子模块（没挂载时为 undefined）。 */
+  memory?: MemoryBody
 }
 
 /** 写失败的通用形状。 */
@@ -112,4 +167,14 @@ export function saveConfig(patch: Record<string, unknown>): Promise<Ack> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(patch),
   })
+}
+
+/** dream 状态（同一条路由，GET 读 / POST 立即整理一次）。 */
+export function fetchDream(): Promise<DreamBody & Ack> {
+  return request<DreamBody & Ack>('/roroko-tool/dream')
+}
+
+/** 立即整理一次。 */
+export function runDream(): Promise<Ack & { result?: DreamBody['last'] }> {
+  return request<Ack & { result?: DreamBody['last'] }>('/roroko-tool/dream', { method: 'POST' })
 }

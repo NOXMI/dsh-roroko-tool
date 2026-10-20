@@ -1,13 +1,15 @@
 /**
- * 设置页的 host 侧数据口。两条普通 webServer 路由，不引入 Remote/typert，
+ * 设置页的 host 侧数据口。三条普通 webServer 路由，不引入 Remote/typert，
  * 也不依赖 configForms：
  *
  *   GET  /roroko-tool/state   公共默认 + 各 preset 桶 + roster + 文件状态
- *                             （preinject 与 datas 两块，各按挂载情况出）
+ *                             （preinject / datas / memory 三块，各按挂载情况出）
  *   POST /roroko-tool/config  按 preset 写覆盖桶
- *                             （{preset, section:'preinject'|'datas', …fields} / {preset, reset:true}）
+ *                             （{preset, section:'preinject'|'datas'|'memory', …fields}
+ *                              / {preset, section, reset:true}）
+ *   POST /roroko-tool/dream   memory 的「立即整理一次」（dream 未起时如实报错）
  *
- * 桶写完下一步装配就生效——两个子模块的 provider/执行侧都每次现读，不需要重挂载。
+ * 桶写完下一步装配就生效——三个子模块的执行侧都每次现读，不需要重挂载。
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { stat } from 'node:fs/promises'
@@ -23,7 +25,11 @@ import {
   AUTOINJECT_DEFAULTS, DEFAULT_DB_PATH, clearDatasBucket, datasWiring, readDatasState,
   resolveDatas, setDatasBucket, datasStateFile, type DatasBucket, type DatasConfig, type EffectiveDatas,
 } from './datas/presets.js'
-import { firstDatasMount, firstMount } from './state.js'
+import {
+  clearMemoryBucket, memoryStateFile, memoryWiring, readMemoryState, resolveMemory,
+  setMemoryBucket, type EffectiveMemory, type MemoryConfig,
+} from './memory/presets.js'
+import { firstDatasMount, firstMemoryMount, firstMount } from './state.js'
 
 /** webServer 服务的最小面。 */
 export interface WebServerLike {
@@ -180,19 +186,22 @@ export function registerStateRoutes(
       }
       const mount = firstMount()
       const datasMount = firstDatasMount()
-      if (mount === undefined && datasMount === undefined) {
+      const memoryMount = firstMemoryMount()
+      if (mount === undefined && datasMount === undefined && memoryMount === undefined) {
         json(res, 200, { version, mounted: false })
         return
       }
-      const root = mount?.root ?? datasMount?.root ?? ''
+      const root = mount?.root ?? datasMount?.root ?? memoryMount?.root ?? ''
       const state = mount === undefined ? { presets: {} } : readState(mount.root)
       const rows = await roster()
-      // scope 集合：公共默认 + 注册表里的 preset + 状态里已有的桶（两个模块的桶都算）。
+      // scope 集合：公共默认 + 注册表里的 preset + 状态里已有的桶（三个模块的桶都算）。
       const datasState = readDatasState(root)
+      const memoryState = readMemoryState(root)
       const scopes = [COMMON]
       for (const row of rows) if (!scopes.includes(row.id)) scopes.push(row.id)
       for (const key of Object.keys(state.presets)) if (!scopes.includes(key)) scopes.push(key)
       for (const key of Object.keys(datasState.presets)) if (!scopes.includes(key)) scopes.push(key)
+      for (const key of Object.keys(memoryState.presets)) if (!scopes.includes(key)) scopes.push(key)
 
       const views = mount === undefined
         ? { effective: {}, files: {} }
@@ -200,13 +209,22 @@ export function registerStateRoutes(
 
       /** datas 侧：各 scope 的生效参数（没有接线层就按默认算）。 */
       const datasEffective: Record<string, EffectiveDatas> = {}
+      const memoryEffective: Record<string, EffectiveMemory> = {}
       for (const scope of scopes) {
         datasEffective[scope] = resolveDatas(
           datasMount?.config ?? {},
           datasState,
           scope === COMMON ? undefined : scope,
         )
+        memoryEffective[scope] = resolveMemory(
+          memoryMount?.config ?? {},
+          memoryState,
+          scope === COMMON ? undefined : scope,
+        )
       }
+
+      /** dream 的运行时面（手动触发与最近一次结果）。 */
+      const dreamRuntime = memoryMount?.runtime
 
       json(res, 200, {
         version,
@@ -227,6 +245,20 @@ export function registerStateRoutes(
           wiring: datasMount === undefined ? {} : datasWiring(datasMount.config),
           presets: datasState.presets,
           effective: datasEffective,
+        },
+        memory: {
+          mounted: memoryMount !== undefined,
+          stateFile: memoryStateFile(root),
+          defaults: resolveMemory({}, { presets: {} }, undefined),
+          wiring: memoryMount === undefined ? {} : memoryWiring(memoryMount.config),
+          presets: memoryState.presets,
+          effective: memoryEffective,
+          dream: {
+            running: dreamRuntime?.running === true,
+            started: dreamRuntime?.run !== undefined,
+            config: dreamRuntime?.config ?? null,
+            last: dreamRuntime?.last ?? null,
+          },
         },
       })
     },
@@ -272,6 +304,18 @@ export function registerStateRoutes(
         json(res, 200, { ok: true, state })
         return
       }
+      if (section === 'memory') {
+        const memoryMount = firstMemoryMount()
+        if (memoryMount === undefined) {
+          json(res, 200, { ok: false, reason: '未挂载 memory，没有可写的桶' })
+          return
+        }
+        const state = patch.reset === true
+          ? await clearMemoryBucket(memoryMount.root, scope)
+          : await setMemoryBucket(memoryMount.root, scope, patch)
+        json(res, 200, { ok: true, state })
+        return
+      }
       if (section !== 'preinject') {
         json(res, 400, { ok: false, reason: `未知 section：${section}` })
         return
@@ -289,9 +333,48 @@ export function registerStateRoutes(
     },
   })
 
+  // dream：看状态 / 立即整理一次。数据取自 memory 子模块登记在进程内的运行面；
+  // 没接 dream 时如实回 started:false，不假装。
+  const offDream = server.register({
+    kind: 'exact',
+    path: `${PREFIX}/dream`,
+    handler: async (req, res) => {
+      const mount = firstMemoryMount()
+      const runtime = mount?.runtime
+      if (req.method === 'GET' || req.method === 'HEAD') {
+        json(res, 200, {
+          ok: true,
+          started: runtime?.run !== undefined,
+          running: runtime?.running === true,
+          config: runtime?.config ?? null,
+          last: runtime?.last ?? null,
+          reason: runtime?.run === undefined
+            ? '定时器未启动：总开关没开、或宿主重启后还没有任何会话装配过 memory'
+            : undefined,
+        })
+        return
+      }
+      if (req.method !== 'POST') {
+        json(res, 405, { error: 'GET or POST only' })
+        return
+      }
+      if (runtime?.run === undefined) {
+        json(res, 400, { ok: false, reason: 'dream 未启用（总开关没开 / 未配模型 / 服务缺席）' })
+        return
+      }
+      try {
+        const result = await runtime.run()
+        json(res, 200, { ok: result.error === undefined, result: runtime.last ?? result })
+      } catch (cause) {
+        json(res, 200, { ok: false, reason: cause instanceof Error ? cause.message : String(cause) })
+      }
+    },
+  })
+
   return () => {
     offState()
     offConfig()
+    offDream()
   }
 }
 

@@ -2,6 +2,6 @@ node_modules/
 *.log
 MEMORY.md
 PLAYER.md
-memory/
+/memory/
 .dsh-local/
 .idea/

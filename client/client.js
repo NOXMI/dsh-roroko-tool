@@ -59,7 +59,25 @@ window.__ModuleLoader__.load({
 			aiEvery: "每 N 轮",
 			aiMinGap: "最短间隔 N 轮",
 			on: "开",
-			off: "关"
+			off: "关",
+			memoryTitle: "③ 记忆（memory）",
+			memoryHint: "roroko_mem_* 四把工具：记一条 / 按日期回查 / 关键词检索 / 按 id 取全文；dream 定时把旧条反思收敛。",
+			memoryEnabled: "启用记忆（默认关闭）",
+			memoryEnabledHint: "关着 = 四把工具根本不存在、dream 也不跑。勾上保存后，下一轮请求就带上工具。",
+			coverOwner: "覆盖 owner 桶（不勾选 = 跟随继承）",
+			ownerHint: "dev",
+			coverDream: "覆盖 dream（不勾选 = 跟随继承）",
+			dreamEnabled: "定时反思",
+			dreamInterval: "间隔（小时）",
+			dreamBatch: "一次整理 N 条",
+			dreamProvider: "provider",
+			dreamModel: "model",
+			dreamPreset: "preset（空 = 默认）",
+			dreamCwd: "工作目录（空 = 进程 cwd）",
+			dreamNow: "立即整理一次",
+			dreamRunning: "正在整理…",
+			dreamIdle: "dream 未启动",
+			dreamLast: "最近一次"
 		};
 		/** English copy, same keys. */
 		const en = {
@@ -113,7 +131,25 @@ window.__ModuleLoader__.load({
 			aiEvery: "every N rounds",
 			aiMinGap: "min gap N rounds",
 			on: "on",
-			off: "off"
+			off: "off",
+			memoryTitle: "③ Memory (memory)",
+			memoryHint: "The four roroko_mem_* tools (write / by date / keyword search / full text); dream condenses old entries on a timer.",
+			memoryEnabled: "Enable memory (off by default)",
+			memoryEnabledHint: "While off, the four tools do not exist and dream never runs. Save with it ticked and the next request carries them.",
+			coverOwner: "Override the owner bucket (unchecked = inherit)",
+			ownerHint: "dev",
+			coverDream: "Override dream (unchecked = inherit)",
+			dreamEnabled: "Scheduled reflection",
+			dreamInterval: "interval (hours)",
+			dreamBatch: "entries per run",
+			dreamProvider: "provider",
+			dreamModel: "model",
+			dreamPreset: "preset (empty = default)",
+			dreamCwd: "cwd (empty = process cwd)",
+			dreamNow: "Reflect now",
+			dreamRunning: "Running…",
+			dreamIdle: "dream is not running",
+			dreamLast: "last run"
 		};
 		//#endregion
 		//#region src/client/api.ts
@@ -140,6 +176,10 @@ window.__ModuleLoader__.load({
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify(patch)
 			});
+		}
+		/** 立即整理一次。 */
+		function runDream() {
+			return request("/roroko-tool/dream", { method: "POST" });
 		}
 		//#endregion
 		//#region src/client/index.tsx
@@ -817,6 +857,359 @@ window.__ModuleLoader__.load({
 			] });
 		}
 		/**
+		* 记忆参数：库路径 + owner 桶 + dream 定时反思。
+		* @param props - 页签所有者传入的属性。
+		* @returns 面板元素。
+		*/
+		function MemoryPanel(props) {
+			const { t, scope, bucket, effective, defaults, dream, onSaved } = props;
+			const follow = effective ?? defaults;
+			const [enabled, setEnabled] = (0, react.useState)(() => follow.enabled);
+			const [coverPath, setCoverPath] = (0, react.useState)(() => bucket?.dbPath !== void 0);
+			const [coverOwner, setCoverOwner] = (0, react.useState)(() => bucket?.owner !== void 0);
+			const [coverDream, setCoverDream] = (0, react.useState)(() => bucket?.dream !== void 0);
+			const [dbPath, setDbPath] = (0, react.useState)(() => bucket?.dbPath ?? follow.dbPath);
+			const [owner, setOwner] = (0, react.useState)(() => bucket?.owner ?? follow.owner);
+			const [cfg, setCfg] = (0, react.useState)(() => ({ ...follow.dream }));
+			const [saved, setSaved] = (0, react.useState)(false);
+			const [saving, setSaving] = (0, react.useState)(false);
+			const [saveError, setSaveError] = (0, react.useState)(null);
+			const [dreamBusy, setDreamBusy] = (0, react.useState)(false);
+			const [dreamNote, setDreamNote] = (0, react.useState)(null);
+			const run = (patch) => {
+				setSaved(false);
+				setSaveError(null);
+				setSaving(true);
+				saveConfig(patch).then(async (ack) => {
+					if (!ack.ok) throw new Error(ack.reason ?? t("saveFailed"));
+					setSaved(true);
+					await onSaved();
+				}).catch((cause) => {
+					setSaveError(cause instanceof Error ? cause.message : String(cause));
+				}).finally(() => {
+					setSaving(false);
+				});
+			};
+			const save = () => {
+				run({
+					preset: scope,
+					section: "memory",
+					enabled,
+					dbPath: coverPath ? dbPath.trim() : null,
+					owner: coverOwner ? owner.trim() : null,
+					dream: coverDream ? cfg : null
+				});
+			};
+			const reflectNow = () => {
+				setDreamBusy(true);
+				setDreamNote(null);
+				runDream().then((ack) => {
+					if (!ack.ok) throw new Error(ack.reason ?? "dream 失败");
+					setDreamNote(ack.result?.note ?? null);
+					return onSaved();
+				}).catch((cause) => {
+					setDreamNote(cause instanceof Error ? cause.message : String(cause));
+				}).finally(() => {
+					setDreamBusy(false);
+				});
+			};
+			const busy = saving;
+			const hours = () => Math.round(cfg.intervalMs / 36e5 * 10) / 10;
+			const text = (key, placeholder) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+				type: "text",
+				value: cfg[key],
+				disabled: busy || !enabled,
+				placeholder,
+				style: {
+					...inputStyle,
+					width: 220
+				},
+				onChange: (event) => {
+					setCfg({
+						...cfg,
+						[key]: event.target.value
+					});
+					setSaved(false);
+				}
+			});
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(PanelShell, { children: [
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+					style: {
+						...coverLabelStyle,
+						fontWeight: 600
+					},
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+						type: "checkbox",
+						checked: enabled,
+						disabled: busy,
+						onChange: () => {
+							setEnabled((value) => !value);
+							setSaved(false);
+						}
+					}), t("memoryEnabled")]
+				}),
+				/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+					style: {
+						...hintStyle,
+						marginBottom: 6
+					},
+					children: t("memoryEnabledHint")
+				}),
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+					style: {
+						...coverLabelStyle,
+						opacity: enabled ? 1 : .5
+					},
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+						type: "checkbox",
+						checked: coverPath,
+						disabled: busy || !enabled,
+						onChange: () => {
+							setCoverPath((value) => !value);
+							setSaved(false);
+						}
+					}), t("coverDbPath")]
+				}),
+				coverPath ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+					type: "text",
+					value: dbPath,
+					disabled: busy || !enabled,
+					placeholder: t("dbPathHint"),
+					style: inputStyle,
+					onChange: (event) => {
+						setDbPath(event.target.value);
+						setSaved(false);
+					}
+				}) }) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					style: hintStyle,
+					children: [
+						t("followDbPath"),
+						": ",
+						follow.dbPath
+					]
+				}),
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+					style: {
+						...coverLabelStyle,
+						opacity: enabled ? 1 : .5
+					},
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+						type: "checkbox",
+						checked: coverOwner,
+						disabled: busy || !enabled,
+						onChange: () => {
+							setCoverOwner((value) => !value);
+							setSaved(false);
+						}
+					}), t("coverOwner")]
+				}),
+				coverOwner ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+					type: "text",
+					value: owner,
+					disabled: busy || !enabled,
+					placeholder: t("ownerHint"),
+					style: {
+						...inputStyle,
+						width: 180
+					},
+					onChange: (event) => {
+						setOwner(event.target.value);
+						setSaved(false);
+					}
+				}) }) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					style: hintStyle,
+					children: [
+						t("followDbPath"),
+						": ",
+						follow.owner
+					]
+				}),
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+					style: {
+						...coverLabelStyle,
+						opacity: enabled ? 1 : .5
+					},
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+						type: "checkbox",
+						checked: coverDream,
+						disabled: busy || !enabled,
+						onChange: () => {
+							setCoverDream((value) => !value);
+							setSaved(false);
+						}
+					}), t("coverDream")]
+				}),
+				coverDream ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", { children: [
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						style: coverLabelStyle,
+						children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+							type: "checkbox",
+							checked: cfg.enabled,
+							disabled: busy || !enabled,
+							onChange: () => {
+								setCfg({
+									...cfg,
+									enabled: !cfg.enabled
+								});
+								setSaved(false);
+							}
+						}), t("dreamEnabled")] })
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						style: coverLabelStyle,
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("dreamInterval") }),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+								type: "number",
+								min: .1,
+								max: 24,
+								step: .5,
+								value: hours(),
+								disabled: busy || !enabled,
+								style: {
+									...inputStyle,
+									width: 90
+								},
+								onChange: (event) => {
+									const next = Number(event.target.value);
+									setCfg({
+										...cfg,
+										intervalMs: Number.isFinite(next) ? Math.round(next * 36e5) : cfg.intervalMs
+									});
+									setSaved(false);
+								}
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("dreamBatch") }),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+								type: "number",
+								min: 1,
+								max: 50,
+								value: cfg.batch,
+								disabled: busy || !enabled,
+								style: {
+									...inputStyle,
+									width: 90
+								},
+								onChange: (event) => {
+									const next = Number(event.target.value);
+									setCfg({
+										...cfg,
+										batch: Number.isFinite(next) ? Math.trunc(next) : cfg.batch
+									});
+									setSaved(false);
+								}
+							})
+						]
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						style: coverLabelStyle,
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("dreamProvider") }),
+							text("provider", "deepseek"),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("dreamModel") }),
+							text("model", "deepseek-chat")
+						]
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						style: coverLabelStyle,
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("dreamPreset") }),
+							text("preset", "roroko"),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("dreamCwd") }),
+							text("cwd", "/root/roroko-workplace")
+						]
+					})
+				] }) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					style: hintStyle,
+					children: [
+						t("followAutoinject"),
+						": ",
+						follow.dream.enabled ? t("on") : t("off"),
+						" · ",
+						t("dreamInterval"),
+						Math.round(follow.dream.intervalMs / 36e5 * 10) / 10,
+						" · ",
+						t("dreamBatch"),
+						follow.dream.batch,
+						follow.dream.provider.length > 0 ? ` · ${follow.dream.provider}/${follow.dream.model}` : ""
+					]
+				}),
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					style: {
+						alignItems: "center",
+						display: "flex",
+						flexWrap: "wrap",
+						gap: 8,
+						marginTop: 10
+					},
+					children: [
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+							type: "button",
+							disabled: busy,
+							style: buttonStyle,
+							onClick: save,
+							children: saving ? t("saving") : t("save")
+						}),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+							type: "button",
+							disabled: busy,
+							style: buttonStyle,
+							onClick: () => {
+								run({
+									preset: scope,
+									section: "memory",
+									reset: true
+								});
+							},
+							children: t("resetScope")
+						}),
+						saved ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+							style: {
+								color: "var(--dsw-text-success, #46a758)",
+								fontSize: "0.8em"
+							},
+							children: t("saved")
+						}) : null,
+						saveError === null ? null : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+							style: {
+								color: "var(--dsw-text-danger, #e5484d)",
+								fontSize: "0.8em"
+							},
+							children: [
+								t("saveFailed"),
+								": ",
+								saveError
+							]
+						})
+					]
+				}),
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					style: {
+						alignItems: "center",
+						display: "flex",
+						flexWrap: "wrap",
+						gap: 8,
+						marginTop: 10
+					},
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+						type: "button",
+						disabled: busy || dreamBusy,
+						style: buttonStyle,
+						onClick: reflectNow,
+						children: dreamBusy ? t("dreamRunning") : t("dreamNow")
+					}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+						style: hintStyle,
+						children: [
+							dream.started ? null : `${t("dreamIdle")} · `,
+							dream.last?.at !== void 0 ? `${t("dreamLast")}: ${dream.last.at}` : "",
+							dream.last?.note !== void 0 ? ` · ${dream.last.note}` : "",
+							dreamNote !== null ? ` · ${dreamNote}` : ""
+						]
+					})]
+				})
+			] });
+		}
+		/**
 		* 设置页主体。
 		* @param props - 页签所有者传入的属性。
 		* @returns 设置页元素。
@@ -865,7 +1258,7 @@ window.__ModuleLoader__.load({
 				},
 				children: t("loading")
 			});
-			if (!state.mounted && state.datas?.mounted !== true) return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+			if (!state.mounted && state.datas?.mounted !== true && state.memory?.mounted !== true) return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				style: { padding: "6px 0" },
 				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 					style: { fontWeight: 600 },
@@ -957,6 +1350,46 @@ window.__ModuleLoader__.load({
 								onSaved: load
 							})
 						}, `datas:${scope}:${JSON.stringify(bucket ?? {})}`);
+					})] }) : null,
+					state.memory?.mounted ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ToolHeader, {
+						title: t("memoryTitle"),
+						desc: t("memoryHint")
+					}), scopes.map((scope) => {
+						const bucket = state.memory?.presets[scope];
+						const head = scopeHead(scope, bucket !== void 0);
+						return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScopeCard, {
+							title: head.title,
+							hint: head.hint,
+							badge: head.badge,
+							defaultOpen: false,
+							children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(MemoryPanel, {
+								t,
+								scope,
+								bucket,
+								effective: state.memory?.effective[scope],
+								defaults: state.memory?.defaults ?? {
+									enabled: false,
+									dbPath: "",
+									owner: "dev",
+									dream: {
+										enabled: true,
+										intervalMs: 144e5,
+										batch: 20,
+										provider: "",
+										model: "",
+										preset: "",
+										cwd: ""
+									}
+								},
+								dream: state.memory?.dream ?? {
+									running: false,
+									started: false,
+									config: null,
+									last: null
+								},
+								onSaved: load
+							})
+						}, `memory:${scope}:${JSON.stringify(bucket ?? {})}`);
 					})] }) : null
 				]
 			});

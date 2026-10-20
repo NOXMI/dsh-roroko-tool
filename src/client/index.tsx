@@ -15,13 +15,18 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { en, zh, type LocaleKey } from './locales.js'
 import {
   fetchState,
+  runDream,
   saveConfig,
   type AutoinjectSettings,
   type Bucket,
   type DatasBucket,
   type DatasEffective,
+  type DreamBody,
+  type DreamConfig,
   type FileInfo,
   type InjectConfig,
+  type MemoryBucket,
+  type MemoryEffective,
   type StateBody,
 } from './api.js'
 
@@ -592,6 +597,264 @@ function DatasPanel(props: {
 }
 
 /**
+ * 记忆参数：库路径 + owner 桶 + dream 定时反思。
+ * @param props - 页签所有者传入的属性。
+ * @returns 面板元素。
+ */
+function MemoryPanel(props: {
+  t: Translate
+  scope: string
+  bucket: MemoryBucket | undefined
+  effective: MemoryEffective | undefined
+  defaults: MemoryEffective
+  dream: DreamBody
+  onSaved: () => Promise<void>
+}): React.ReactElement {
+  const { t, scope, bucket, effective, defaults, dream, onSaved } = props
+  const follow = effective ?? defaults
+  const [enabled, setEnabled] = useState<boolean>(() => follow.enabled)
+  const [coverPath, setCoverPath] = useState(() => bucket?.dbPath !== undefined)
+  const [coverOwner, setCoverOwner] = useState(() => bucket?.owner !== undefined)
+  const [coverDream, setCoverDream] = useState(() => bucket?.dream !== undefined)
+  const [dbPath, setDbPath] = useState<string>(() => bucket?.dbPath ?? follow.dbPath)
+  const [owner, setOwner] = useState<string>(() => bucket?.owner ?? follow.owner)
+  const [cfg, setCfg] = useState<DreamConfig>(() => ({ ...follow.dream }))
+  const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [dreamBusy, setDreamBusy] = useState(false)
+  const [dreamNote, setDreamNote] = useState<string | null>(null)
+
+  const run = (patch: Record<string, unknown>): void => {
+    setSaved(false)
+    setSaveError(null)
+    setSaving(true)
+    void saveConfig(patch)
+      .then(async ack => {
+        if (!ack.ok) throw new Error(ack.reason ?? t('saveFailed'))
+        setSaved(true)
+        await onSaved()
+      })
+      .catch((cause: unknown) => {
+        setSaveError(cause instanceof Error ? cause.message : String(cause))
+      })
+      .finally(() => { setSaving(false) })
+  }
+
+  const save = (): void => {
+    run({
+      preset: scope,
+      section: 'memory',
+      // 总开关不勾覆盖时也必须落盘，「关」本身就是要存的意图
+      enabled,
+      dbPath: coverPath ? dbPath.trim() : null,
+      owner: coverOwner ? owner.trim() : null,
+      dream: coverDream ? cfg : null,
+    })
+  }
+
+  const reflectNow = (): void => {
+    setDreamBusy(true)
+    setDreamNote(null)
+    void runDream()
+      .then(ack => {
+        if (!ack.ok) throw new Error(ack.reason ?? 'dream 失败')
+        setDreamNote(ack.result?.note ?? null)
+        return onSaved()
+      })
+      .catch((cause: unknown) => { setDreamNote(cause instanceof Error ? cause.message : String(cause)) })
+      .finally(() => { setDreamBusy(false) })
+  }
+
+  const busy = saving
+  const hours = (): number => Math.round((cfg.intervalMs / 3600000) * 10) / 10
+  const text = (
+    key: 'provider' | 'model' | 'preset' | 'cwd',
+    placeholder: string,
+  ): React.ReactElement => (
+    <input
+      type="text"
+      value={cfg[key]}
+      disabled={busy || !enabled}
+      placeholder={placeholder}
+      style={{ ...inputStyle, width: 220 }}
+      onChange={event => { setCfg({ ...cfg, [key]: event.target.value }); setSaved(false) }}
+    />
+  )
+
+  return (
+    <PanelShell>
+      <label style={{ ...coverLabelStyle, fontWeight: 600 }}>
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={busy}
+          onChange={() => { setEnabled(value => !value); setSaved(false) }}
+        />
+        {t('memoryEnabled')}
+      </label>
+      <div style={{ ...hintStyle, marginBottom: 6 }}>{t('memoryEnabledHint')}</div>
+
+      <label style={{ ...coverLabelStyle, opacity: enabled ? 1 : 0.5 }}>
+        <input
+          type="checkbox"
+          checked={coverPath}
+          disabled={busy || !enabled}
+          onChange={() => { setCoverPath(value => !value); setSaved(false) }}
+        />
+        {t('coverDbPath')}
+      </label>
+      {coverPath
+        ? (
+          <div>
+            <input
+              type="text"
+              value={dbPath}
+              disabled={busy || !enabled}
+              placeholder={t('dbPathHint')}
+              style={inputStyle}
+              onChange={event => { setDbPath(event.target.value); setSaved(false) }}
+            />
+          </div>
+        )
+        : <div style={hintStyle}>{t('followDbPath')}: {follow.dbPath}</div>}
+
+      <label style={{ ...coverLabelStyle, opacity: enabled ? 1 : 0.5 }}>
+        <input
+          type="checkbox"
+          checked={coverOwner}
+          disabled={busy || !enabled}
+          onChange={() => { setCoverOwner(value => !value); setSaved(false) }}
+        />
+        {t('coverOwner')}
+      </label>
+      {coverOwner
+        ? (
+          <div>
+            <input
+              type="text"
+              value={owner}
+              disabled={busy || !enabled}
+              placeholder={t('ownerHint')}
+              style={{ ...inputStyle, width: 180 }}
+              onChange={event => { setOwner(event.target.value); setSaved(false) }}
+            />
+          </div>
+        )
+        : <div style={hintStyle}>{t('followDbPath')}: {follow.owner}</div>}
+
+      <label style={{ ...coverLabelStyle, opacity: enabled ? 1 : 0.5 }}>
+        <input
+          type="checkbox"
+          checked={coverDream}
+          disabled={busy || !enabled}
+          onChange={() => { setCoverDream(value => !value); setSaved(false) }}
+        />
+        {t('coverDream')}
+      </label>
+      {coverDream
+        ? (
+          <div>
+            <div style={coverLabelStyle}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={cfg.enabled}
+                  disabled={busy || !enabled}
+                  onChange={() => { setCfg({ ...cfg, enabled: !cfg.enabled }); setSaved(false) }}
+                />
+                {t('dreamEnabled')}
+              </label>
+            </div>
+            <div style={coverLabelStyle}>
+              <span>{t('dreamInterval')}</span>
+              <input
+                type="number"
+                min={0.1}
+                max={24}
+                step={0.5}
+                value={hours()}
+                disabled={busy || !enabled}
+                style={{ ...inputStyle, width: 90 }}
+                onChange={event => {
+                  const next = Number(event.target.value)
+                  setCfg({
+                    ...cfg,
+                    intervalMs: Number.isFinite(next) ? Math.round(next * 3600000) : cfg.intervalMs,
+                  })
+                  setSaved(false)
+                }}
+              />
+              <span>{t('dreamBatch')}</span>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={cfg.batch}
+                disabled={busy || !enabled}
+                style={{ ...inputStyle, width: 90 }}
+                onChange={event => {
+                  const next = Number(event.target.value)
+                  setCfg({ ...cfg, batch: Number.isFinite(next) ? Math.trunc(next) : cfg.batch })
+                  setSaved(false)
+                }}
+              />
+            </div>
+            <div style={coverLabelStyle}>
+              <span>{t('dreamProvider')}</span>{text('provider', 'deepseek')}
+              <span>{t('dreamModel')}</span>{text('model', 'deepseek-chat')}
+            </div>
+            <div style={coverLabelStyle}>
+              <span>{t('dreamPreset')}</span>{text('preset', 'roroko')}
+              <span>{t('dreamCwd')}</span>{text('cwd', '/root/roroko-workplace')}
+            </div>
+          </div>
+        )
+        : (
+          <div style={hintStyle}>
+            {t('followAutoinject')}: {follow.dream.enabled ? t('on') : t('off')}
+            {' · '}{t('dreamInterval')}{Math.round((follow.dream.intervalMs / 3600000) * 10) / 10}
+            {' · '}{t('dreamBatch')}{follow.dream.batch}
+            {follow.dream.provider.length > 0 ? ` · ${follow.dream.provider}/${follow.dream.model}` : ''}
+          </div>
+        )}
+
+      <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+        <button type="button" disabled={busy} style={buttonStyle} onClick={save}>
+          {saving ? t('saving') : t('save')}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          style={buttonStyle}
+          onClick={() => { run({ preset: scope, section: 'memory', reset: true }) }}
+        >
+          {t('resetScope')}
+        </button>
+        {saved
+          ? <span style={{ color: 'var(--dsw-text-success, #46a758)', fontSize: '0.8em' }}>{t('saved')}</span>
+          : null}
+        {saveError === null
+          ? null
+          : <span style={{ color: 'var(--dsw-text-danger, #e5484d)', fontSize: '0.8em' }}>{t('saveFailed')}: {saveError}</span>}
+      </div>
+
+      <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+        <button type="button" disabled={busy || dreamBusy} style={buttonStyle} onClick={reflectNow}>
+          {dreamBusy ? t('dreamRunning') : t('dreamNow')}
+        </button>
+        <span style={hintStyle}>
+          {dream.started ? null : `${t('dreamIdle')} · `}
+          {dream.last?.at !== undefined ? `${t('dreamLast')}: ${dream.last.at}` : ''}
+          {dream.last?.note !== undefined ? ` · ${dream.last.note}` : ''}
+          {dreamNote !== null ? ` · ${dreamNote}` : ''}
+        </span>
+      </div>
+    </PanelShell>
+  )
+}
+
+/**
  * 设置页主体。
  * @param props - 页签所有者传入的属性。
  * @returns 设置页元素。
@@ -626,7 +889,7 @@ function DatasPanel(props: {
   if (state === null) {
     return <div style={{ padding: '6px 0', color: 'var(--dsw-text-secondary, #888)', fontSize: '0.9em' }}>{t('loading')}</div>
   }
-  if (!state.mounted && state.datas?.mounted !== true) {
+  if (!state.mounted && state.datas?.mounted !== true && state.memory?.mounted !== true) {
     return (
       <div style={{ padding: '6px 0' }}>
         <div style={{ fontWeight: 600 }}>{t('notMounted')}</div>
@@ -710,6 +973,50 @@ function DatasPanel(props: {
                     bucket={bucket}
                     effective={state.datas?.effective[scope]}
                     defaults={state.datas?.defaults ?? { enabled: false, dbPath: '', autoinject: { rounds: true, every: 8, afterTool: true, minGap: 4 } }}
+                    onSaved={load}
+                  />
+                </ScopeCard>
+              )
+            })}
+          </>
+        )
+        : null}
+
+      {state.memory?.mounted
+        ? (
+          <>
+            <ToolHeader title={t('memoryTitle')} desc={t('memoryHint')} />
+            {scopes.map(scope => {
+              const bucket = state.memory?.presets[scope]
+              const head = scopeHead(scope, bucket !== undefined)
+              return (
+                <ScopeCard
+                  key={`memory:${scope}:${JSON.stringify(bucket ?? {})}`}
+                  title={head.title}
+                  hint={head.hint}
+                  badge={head.badge}
+                  defaultOpen={false}
+                >
+                  <MemoryPanel
+                    t={t}
+                    scope={scope}
+                    bucket={bucket}
+                    effective={state.memory?.effective[scope]}
+                    defaults={state.memory?.defaults ?? {
+                      enabled: false,
+                      dbPath: '',
+                      owner: 'dev',
+                      dream: {
+                        enabled: true,
+                        intervalMs: 4 * 60 * 60 * 1000,
+                        batch: 20,
+                        provider: '',
+                        model: '',
+                        preset: '',
+                        cwd: '',
+                      },
+                    }}
+                    dream={state.memory?.dream ?? { running: false, started: false, config: null, last: null }}
                     onSaved={load}
                   />
                 </ScopeCard>

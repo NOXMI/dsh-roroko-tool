@@ -70,7 +70,7 @@ const fake = {
 }
 
 apply(fake, { preinject: { root } })
-check(routes.size === 2, '注册了 state / config 两条路由')
+check(routes.size === 3, '注册了 state / config / dream 三条路由')
 
 /** 假 req：能 async 迭代出请求体。 */
 function makeReq(method, body) {
@@ -155,7 +155,15 @@ check(variables.get('roroko_preinject_system')?.() === '', '桶删掉后系统�
 const finalState = await call('/roroko-tool/state', 'GET')
 check(finalState.body.injected === undefined, 'GET state 不再返回注入记录')
 check(!routes.has('/roroko-tool/reset'), 'reset 路由已下线')
-check(routes.size === 2, '只剩 state / config 两条路由')
+check(routes.size === 3, '只剩 state / config / dream 三条路由')
+
+// ── 没挂 memory 时的诚实回执 ──
+check(finalState.body.memory?.mounted === false, '没挂 memory 时 memory.mounted 是 false')
+const noMemory = await call('/roroko-tool/config', 'POST', { preset: 'common', section: 'memory', enabled: true })
+check(noMemory.body.ok === false, '没挂 memory 时写 memory 桶被如实拒掉')
+const noDream = await call('/roroko-tool/dream', 'GET')
+check(noDream.body.ok === true && noDream.body.started === false, 'dream 未启动时 GET 如实回 started:false')
+check((await call('/roroko-tool/dream', 'POST')).status === 400, 'dream 未启用时手动触发被挡回 400')
 
 await rm(root, { recursive: true, force: true })
 console.log(problems.length === 0 ? '\n全部通过' : `\n${problems.length} 项未通过`)

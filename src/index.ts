@@ -21,6 +21,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { mount as mountPreinject, type PreinjectConfig } from './preinject.js'
 import { mount as mountDatas, type DatasConfig } from './datas/index.js'
+import { mount as mountMemory, type MemoryConfig } from './memory/index.js'
 import { registerStateRoutes, type WebServerLike, type PresetRegistryLike } from './routes.js'
 
 export { DEFAULTS, resolveEffective } from './preinject.js'
@@ -29,6 +30,16 @@ export {
   AUTOINJECT_DEFAULTS, DEFAULT_DB_PATH, cleanAutoinject, datasStateFile, datasWiring,
   readDatasState, resolveDatas, setDatasBucket, clearDatasBucket,
 } from './datas/presets.js'
+export {
+  COMMON as MEMORY_COMMON, DEFAULT_MEMORY_DB_PATH, DEFAULT_OWNER, clearMemoryBucket,
+  memoryStateFile, memoryWiring, readMemoryState, resolveMemory, setMemoryBucket,
+} from './memory/presets.js'
+export {
+  DREAM_DEFAULTS, DREAM_SKIP_KINDS, buildDreamTask, diffReflected, normalizeDreamConfig, pickQueue,
+} from './memory/dream-form.js'
+export {
+  escapeLike, fmtCst, normalizeAdd, normalizeReflect, resolveRange, splitKeywords,
+} from './memory/form.js'
 // 取料纯逻辑（不碰库、不碰 DSH 运行时）：给离线冒烟测试用。
 export { TABLES, pickCandidates, renderQuery, scoreRow, splitKws } from './datas/query-form.js'
 // 段名匹配（尾部 * 走前缀匹配）：设置页与冒烟测试共用同一口径。
@@ -61,6 +72,23 @@ export const Config: z<RorokoToolConfig> = z.object({
       }).description('state 短条自动注入'),
     }),
   ]).description('素材库子模块：roroko_datas_* 四把工具 + state 自动注入'),
+  memory: z.union([
+    z.boolean(),
+    z.object({
+      root: z.string().description('覆盖层基准目录（默认 $DSH_HOME/roroko）'),
+      dbPath: z.string().description('记忆库路径（默认 /var/www/api/database/roroko_memory.db）'),
+      owner: z.string().description('owner 桶（默认 dev；小写字母数字与 . _ -）'),
+      dream: z.object({
+        enabled: z.boolean().description('定时反思总开关'),
+        intervalMs: z.number().description('间隔毫秒（默认 4 小时）'),
+        batch: z.number().description('一次整理几条（默认 20）'),
+        provider: z.string().description('起会话用的 provider（空 = 每次跳过）'),
+        model: z.string().description('起会话用的模型（空 = 每次跳过）'),
+        preset: z.string().description('用哪个 preset 起会话（空 = 该部署的默认）'),
+        cwd: z.string().description('会话工作目录（空 = 进程 cwd）'),
+      }).description('定时反思（dream）'),
+    }),
+  ]).description('记忆子模块：roroko_mem_* 四把工具 + dream 定时反思'),
 }) as z<RorokoToolConfig>
 /** 本包版本（设置页显示用）。 */
 export const version = '0.1.0'
@@ -69,7 +97,7 @@ export const version = '0.1.0'
 export interface RorokoToolConfig {
   preinject?: PreinjectConfig | boolean
   datas?: DatasConfig | boolean
-  // memory?: MemoryConfig | boolean
+  memory?: MemoryConfig | boolean
   // onahole?: OnaholeConfig | boolean
 }
 
@@ -114,6 +142,15 @@ export function apply(ctx: Context, config: RorokoToolConfig = {}): void {
   if (datas !== undefined && datas !== false && (datas === true || datas.enabled !== false)) {
     surface.inject(['tools'], (scope) => {
       mountDatas(scope, datas === true ? {} : datas)
+    })
+  }
+
+  // 记忆：同上。dream 要的那几个服务在 mount 内部另起子 fiber 取，缺席只让
+  // 定时器不启动 —— 四把工具照常注册。
+  const memory = config.memory
+  if (memory !== undefined && memory !== false && (memory === true || memory.enabled !== false)) {
+    surface.inject(['tools'], (scope) => {
+      mountMemory(scope, memory === true ? {} : memory)
     })
   }
 }
