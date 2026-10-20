@@ -508,10 +508,20 @@ interface RorokoToolConfig {
   memory?: MemoryConfig | boolean;
 }
 /**
+ * 跨 scope 的服务句柄：playest scope 是独立子 fiber，agent / session 注册表那类
+ * 全局服务在里面不一定看得见 —— dream 要起会话，只能由 profile 层这一侧先握在手里
+ * 再交给子模块。晚到也没关系：inject 的回调会在服务就绪时补上。
+ */
+interface AgentServices {
+  agents?: unknown;
+  sessions?: unknown;
+  presets?: unknown;
+}
+/**
  * 插件入口。
  * @param ctx - 本行插件所在的上下文（profile 层或 preset scope）。
  * @param config - 见 {@link RorokoToolConfig}。
  */
 declare function apply(ctx: Context, config?: RorokoToolConfig): void;
 //#endregion
-export { AUTOINJECT_DEFAULTS, COMMON, Config, DEFAULTS, DEFAULT_DB_PATH, DEFAULT_MEMORY_DB_PATH, DEFAULT_OWNER, DREAM_DEFAULTS, DREAM_SKIP_KINDS, COMMON$1 as MEMORY_COMMON, RorokoToolConfig, TABLES, apply, buildDreamTask, cleanAutoinject, clearBucket, clearDatasBucket, clearMemoryBucket, datasStateFile, datasWiring, diffReflected, escapeLike, fmtCst, matchesSuppress, memoryStateFile, memoryWiring, name, normalizeAdd, normalizeDreamConfig, normalizeReflect, pickCandidates, pickQueue, readDatasState, readMemoryState, readState, renderQuery, resolveBucket, resolveDatas, resolveEffective, resolveMemory, resolveRange, scoreRow, setBucket, setDatasBucket, setMemoryBucket, splitKeywords, splitKws, version };
+export { AUTOINJECT_DEFAULTS, AgentServices, COMMON, Config, DEFAULTS, DEFAULT_DB_PATH, DEFAULT_MEMORY_DB_PATH, DEFAULT_OWNER, DREAM_DEFAULTS, DREAM_SKIP_KINDS, COMMON$1 as MEMORY_COMMON, RorokoToolConfig, TABLES, apply, buildDreamTask, cleanAutoinject, clearBucket, clearDatasBucket, clearMemoryBucket, datasStateFile, datasWiring, diffReflected, escapeLike, fmtCst, matchesSuppress, memoryStateFile, memoryWiring, name, normalizeAdd, normalizeDreamConfig, normalizeReflect, pickCandidates, pickQueue, readDatasState, readMemoryState, readState, renderQuery, resolveBucket, resolveDatas, resolveEffective, resolveMemory, resolveRange, scoreRow, setBucket, setDatasBucket, setMemoryBucket, splitKeywords, splitKws, version };

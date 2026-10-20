@@ -106,6 +106,17 @@ interface InjectSurface {
 }
 
 /**
+ * 跨 scope 的服务句柄：playest scope 是独立子 fiber，agent / session 注册表那类
+ * 全局服务在里面不一定看得见 —— dream 要起会话，只能由 profile 层这一侧先握在手里
+ * 再交给子模块。晚到也没关系：inject 的回调会在服务就绪时补上。
+ */
+export interface AgentServices {
+  agents?: unknown
+  sessions?: unknown
+  presets?: unknown
+}
+
+/**
  * 插件入口。
  * @param ctx - 本行插件所在的上下文（profile 层或 preset scope）。
  * @param config - 见 {@link RorokoToolConfig}。
@@ -114,14 +125,28 @@ export function apply(ctx: Context, config: RorokoToolConfig = {}): void {
   const surface = ctx as unknown as InjectSurface
   /** preset 注册表：晚到也没关系，路由按"拿得到就列"处理。 */
   let registry: PresetRegistryLike | undefined
+  /** dream 要的服务句柄（见 {@link AgentServices}）。 */
+  const services: AgentServices = {}
 
   surface.inject(['agentPresets'], (scope) => {
     const service = (scope as unknown as { agentPresets: PresetRegistryLike }).agentPresets
     ;(scope as unknown as { effect(fn: () => unknown, label?: string): unknown })
       .effect(() => {
         registry = service
-        return () => { registry = undefined }
+        services.presets = service
+        return () => { registry = undefined; services.presets = undefined }
       }, 'roroko-tool: preset 注册表')
+  })
+
+  // dream 起会话要用的两个服务。缺席只让 dream 不启动，工具照常。
+  surface.inject(['agents', 'sessions'], (scope) => {
+    const bag = scope as unknown as { agents?: unknown; sessions?: unknown }
+    ;(scope as unknown as { effect(fn: () => unknown, label?: string): unknown })
+      .effect(() => {
+        services.agents = bag.agents
+        services.sessions = bag.sessions
+        return () => { services.agents = undefined; services.sessions = undefined }
+      }, 'roroko-tool: agent 服务')
   })
 
   surface.inject(['webServer'], (scope) => {
@@ -150,7 +175,7 @@ export function apply(ctx: Context, config: RorokoToolConfig = {}): void {
   const memory = config.memory
   if (memory !== undefined && memory !== false && (memory === true || memory.enabled !== false)) {
     surface.inject(['tools'], (scope) => {
-      mountMemory(scope, memory === true ? {} : memory)
+      mountMemory(scope, memory === true ? {} : memory, () => services)
     })
   }
 }

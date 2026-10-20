@@ -86,8 +86,14 @@ function withDb(dbPath: string, fn: (db: DatabaseSync) => string): string {
  * 挂载本子模块。由 host 在自己的 ctx 上调用，不单独占一行插件。
  * @param ctx - 宿主上下文（通常是 preset scope 里的子 fiber）。
  * @param rawConfig - 子模块配置（preset 的 config.memory）。
+ * @param hostServices - 可选的跨 scope 服务句柄（dream 要的 agents / sessions /
+ *   presets 在 preset scope 里不一定看得见，host 层先握着再交进来）。
  */
-export function mount(ctx: Context, rawConfig: MemoryConfig = {}): void {
+export function mount(
+  ctx: Context,
+  rawConfig: MemoryConfig = {},
+  hostServices?: () => { agents?: unknown; sessions?: unknown; presets?: unknown },
+): void {
   const surface = ctx as unknown as Surface
   const config: MemoryConfig = { ...rawConfig }
   const root = rawConfig.root !== undefined && rawConfig.root.trim().length > 0
@@ -96,6 +102,9 @@ export function mount(ctx: Context, rawConfig: MemoryConfig = {}): void {
 
   /** 本实例最近一次在 pre-step 里见到的 preset id。 */
   let activePreset: string | undefined
+
+  /** 服务缺席的告警只打一次（sync 每轮都跑，别刷屏）。 */
+  let warnedNoService = false
 
   /** dream 的运行面：每个 mount 一份（模块级会跨 preset 串味）。 */
   const runtime = createDreamRuntime()
@@ -142,6 +151,16 @@ export function mount(ctx: Context, rawConfig: MemoryConfig = {}): void {
   const dbPath = (): string => resolved().dbPath
   const owner = (): string => resolved().owner
   const dream = (): DreamConfig => resolved().dream
+
+  /** 服务查找：host 层握着的优先，其次看 scope 里到没到。 */
+  const scopeBag = (): { agents?: unknown; sessions?: unknown; agentPresets?: unknown } =>
+    (dreamCtx ?? {}) as unknown as { agents?: unknown; sessions?: unknown; agentPresets?: unknown }
+  const lookupAgents = (): DreamAgentsLike | undefined =>
+    (hostServices?.().agents ?? scopeBag().agents) as DreamAgentsLike | undefined
+  const lookupSessions = (): DreamSessionsLike | undefined =>
+    (hostServices?.().sessions ?? scopeBag().sessions) as DreamSessionsLike | undefined
+  const lookupPresets = (): DreamPresetsLike | undefined =>
+    (hostServices?.().presets ?? scopeBag().agentPresets) as DreamPresetsLike | undefined
 
   const editTool = defineTool({
     name: 'roroko_mem_edit',
@@ -324,17 +343,19 @@ export function mount(ctx: Context, rawConfig: MemoryConfig = {}): void {
 
   /** 起 dream：确认服务可用 → 认领本库的启动权 → 装运行面 → 起分段定时器。 */
   const startDream = (): void => {
-    if (dreamCtx === undefined) return
     if (runtime.run !== undefined) return
     const cfg = dream()
     if (!cfg.enabled) return
 
     // ⚠️ 顺序要紧：**先确认能起会话，再认领启动权** —— 反过来会让一次"服务还没
     // 就绪"的装配白占掉名额，之后所有实例都被去重闸挡住，dream 永远接不上。
-    const agents = (dreamCtx as unknown as { agents?: DreamAgentsLike }).agents
-    const sessions = (dreamCtx as unknown as { sessions?: DreamSessionsLike }).sessions
+    const agents = lookupAgents()
+    const sessions = lookupSessions()
     if (agents === undefined || sessions === undefined) {
-      console.log('[roroko-memory] dream 未启动：agents/sessions 服务不可用')
+      if (!warnedNoService) {
+        warnedNoService = true
+        console.log('[roroko-memory] dream 未启动：agents/sessions 服务还没接上（四把工具照常）')
+      }
       return
     }
     const path = dbPath()
@@ -343,7 +364,7 @@ export function mount(ctx: Context, rawConfig: MemoryConfig = {}): void {
       return
     }
 
-    const presets = (dreamCtx as unknown as { agentPresets?: DreamPresetsLike }).agentPresets
+    const presets = lookupPresets()
     if (presets === undefined) {
       console.log('[roroko-memory] dream 起会话时没有 preset 名册：会话里不会有人设与工具行')
     }
