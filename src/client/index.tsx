@@ -120,6 +120,37 @@ const badgeStyle: React.CSSProperties = {
   padding: '1px 6px',
 }
 
+/** 作用域 chips 那一行：横向滚动，越多越滚，绝不换行把面板撑高。 */
+const chipsRowStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: 6,
+  margin: '2px 0 10px',
+  overflowX: 'auto',
+  paddingBottom: 2,
+  scrollbarWidth: 'none',
+}
+
+/** 未选中的作用域 chip。 */
+const chipStyle: React.CSSProperties = {
+  ...buttonStyle,
+  alignItems: 'center',
+  display: 'inline-flex',
+  flex: '0 0 auto',
+  gap: 5,
+  fontSize: '0.85em',
+  padding: '3px 9px',
+  whiteSpace: 'nowrap',
+}
+
+/** 当前作用域 chip：实底 + 主色描边。 */
+const chipActiveStyle: React.CSSProperties = {
+  ...chipStyle,
+  background: 'var(--dsw-surface-secondary, rgba(128,128,128,.16))',
+  borderColor: 'var(--dsw-text-primary, #ddd)',
+  color: 'var(--dsw-text-primary, #eee)',
+  fontWeight: 600,
+}
+
 /** 「覆盖这一组」复选框所在行。 */
 const coverLabelStyle: React.CSSProperties = {
   alignItems: 'center',
@@ -144,33 +175,33 @@ function PanelShell(props: { children: React.ReactNode }): React.ReactElement {
   )
 }
 
-/** 工具卡片头：标题 + 一句说明。 */
-function ToolHeader(props: { title: string; desc: string }): React.ReactElement {
-  return (
-    <div style={{ margin: '14px 0 4px' }}>
-      <div style={{ fontWeight: 600 }}>{props.title}</div>
-      <div style={hintStyle}>{props.desc}</div>
-    </div>
-  )
-}
-
-/** 可折叠卡片：标题一行，点开才渲染内容。 */
-function ScopeCard(props: {
+/**
+ * 一节可折叠的外壳：标题 + 一串徽标 + 右侧「收起 / 展开」。
+ *
+ * 作用域不再各占一张卡（那是 0.1.6 的形态，preset 一多就纵向爆炸）：
+ * 顶部 chips 选作用域，这里只按模块分节，三节就是全部。
+ */
+function Section(props: {
   title: string
   hint: string
-  badge: string
-  defaultOpen: boolean
+  badges: string[]
+  open: boolean
+  onToggle: () => void
+  collapseLabel: string
+  expandLabel: string
   children: React.ReactNode
 }): React.ReactElement {
-  const [open, setOpen] = useState(props.defaultOpen)
   return (
     <div style={cardStyle}>
-      <button type="button" style={cardHeadStyle} onClick={() => { setOpen(value => !value) }}>
-        <span style={{ fontWeight: 600 }}>{open ? '▾' : '▸'} {props.title}</span>
-        <span style={badgeStyle}>{props.badge}</span>
+      <button type="button" style={cardHeadStyle} onClick={props.onToggle}>
+        <span style={{ fontWeight: 600 }}>{props.open ? '▾' : '▸'} {props.title}</span>
+        {props.badges.map(item => <span key={item} style={badgeStyle}>{item}</span>)}
+        <span style={{ ...hintStyle, marginLeft: 'auto', marginTop: 0 }}>
+          {props.open ? props.collapseLabel : props.expandLabel}
+        </span>
       </button>
       <div style={hintStyle}>{props.hint}</div>
-      {open ? <div style={{ marginTop: 8 }}>{props.children}</div> : null}
+      {props.open ? <div style={{ marginTop: 8 }}>{props.children}</div> : null}
     </div>
   )
 }
@@ -900,129 +931,156 @@ function MemoryPanel(props: {
 
   const scopes = state.scopes ?? ['common']
   const roster = new Map((state.roster ?? []).map(row => [row.id, row]))
+  const datas = state.datas
+  const memory = state.memory
 
-  /** 一张 scope 卡的公共头部信息：标题 + 徽标 + 提示。 */
-  const scopeHead = (scope: string, overridden: boolean): { title: string; badge: string; hint: string } => {
-    const isCommon = scope === 'common'
+  /**
+   * 当前正在编辑的作用域。**先选改谁，再改什么** —— 作用域横向排在 chips 里，
+   * 纵向只留三个模块节，preset 再多也不把面板拉长。
+   */
+  const [activeScope, setActiveScope] = useState<string>(() => scopes[0] ?? 'common')
+  /** 三个模块节的折叠状态（默认全开；收起只是不渲染，徽标仍留在标题行）。 */
+  const [closed, setClosed] = useState<Record<string, boolean>>({})
+
+  // 作用域列表变了（新建/删除 preset 后刷新）→ 当前选中的若已不存在，回落到第一个。
+  const current = scopes.includes(activeScope) ? activeScope : (scopes[0] ?? 'common')
+
+  /** 该作用域有没有自己的桶（三个模块任一）—— 决定 chips 上的实心点。 */
+  const hasBucket = (scope: string): boolean =>
+    state.presets?.[scope] !== undefined
+    || datas?.presets[scope] !== undefined
+    || memory?.presets[scope] !== undefined
+
+  /** 作用域显示名：公共默认用文案，preset 用「id · 名字」。 */
+  const scopeLabel = (scope: string): string => {
+    if (scope === 'common') return t('commonTitle')
     const row = roster.get(scope)
-    const badge = isCommon
-      ? t('badgeBaseline')
-      : row?.broken !== undefined
-        ? t('badgeBroken')
-        : overridden ? t('badgeOverridden') : t('badgeInherit')
-    const title = isCommon
-      ? t('commonTitle')
-      : row?.name === undefined || row.name.length === 0 ? scope : `${scope} · ${row.name}`
-    return { title, badge, hint: isCommon ? t('commonHint') : t('presetHint') }
+    return row?.name === undefined || row.name.length === 0 ? scope : `${scope} · ${row.name}`
   }
+
+  /** 一节：标题 + 徽标 + 当前作用域的内容（key 带 scope → 切作用域时强制重挂载）。 */
+  const sectionOf = (
+    key: string,
+    title: string,
+    hint: string,
+    badges: string[],
+    body: React.ReactNode,
+  ): React.ReactElement => (
+    <Section
+      title={title}
+      hint={hint}
+      badges={badges}
+      open={closed[key] !== true}
+      onToggle={() => { setClosed(value => ({ ...value, [key]: !value[key] })) }}
+      collapseLabel={t('collapse')}
+      expandLabel={t('expand')}
+    >
+      {body}
+    </Section>
+  )
 
   return (
     <div style={{ padding: '6px 0' }}>
-      <div style={{ color: 'var(--dsw-text-secondary, #888)', fontSize: '0.9em', marginBottom: 12 }}>
+      <div style={{ color: 'var(--dsw-text-secondary, #888)', fontSize: '0.9em', marginBottom: 10 }}>
         {t('title')} · {t('subtitle')} — {t('root')}: {state.root ?? '—'}
       </div>
 
+      <div style={{ ...groupLabelStyle, marginBottom: 2 }}>{t('scopeLabel')}</div>
+      <div style={chipsRowStyle}>
+        {scopes.map(scope => {
+          const overridden = hasBucket(scope)
+          return (
+            <button
+              key={`chip:${scope}`}
+              type="button"
+              title={overridden ? t('badgeOverridden') : t('badgeInherit')}
+              style={scope === current ? chipActiveStyle : chipStyle}
+              onClick={() => { setActiveScope(scope) }}
+            >
+              <span style={{ opacity: overridden ? 1 : 0.4 }}>{overridden ? '●' : '○'}</span>
+              {scopeLabel(scope)}
+            </button>
+          )
+        })}
+      </div>
+
+      <div style={{ ...hintStyle, marginBottom: 10 }}>
+        {current === 'common'
+          ? t('commonHint')
+          : `${t('presetHint')} · ${t('applyTo')}: ${scopeLabel(current)}`}
+      </div>
+
       {state.mounted
-        ? (
-          <>
-            <ToolHeader title={t('preinjectTitle')} desc={t('preinjectHint')} />
-            {scopes.map(scope => {
-              const bucket = state.presets?.[scope]
-              const head = scopeHead(scope, bucket !== undefined)
-              return (
-                <ScopeCard
-                  key={`preinject:${scope}:${JSON.stringify(bucket ?? {})}`}
-                  title={head.title}
-                  hint={head.hint}
-                  badge={head.badge}
-                  defaultOpen={scope === 'common'}
-                >
-                  <ScopePanel
-                    t={t}
-                    scope={scope}
-                    bucket={bucket}
-                    effective={state.effective?.[scope]}
-                    files={state.files?.[scope]}
-                    onSaved={load}
-                  />
-                </ScopeCard>
-              )
-            })}
-          </>
+        ? sectionOf(
+          'preinject',
+          t('preinjectTitle'),
+          t('preinjectHint'),
+          [state.presets?.[current] !== undefined ? t('badgeOverridden') : t('badgeInherit')],
+          <ScopePanel
+            key={`preinject:${current}`}
+            t={t}
+            scope={current}
+            bucket={state.presets?.[current]}
+            effective={state.effective?.[current]}
+            files={state.files?.[current]}
+            onSaved={load}
+          />,
         )
         : null}
 
-      {state.datas?.mounted
-        ? (
-          <>
-            <ToolHeader title={t('datasTitle')} desc={t('datasHint')} />
-            {scopes.map(scope => {
-              const bucket = state.datas?.presets[scope]
-              const head = scopeHead(scope, bucket !== undefined)
-              return (
-                <ScopeCard
-                  key={`datas:${scope}:${JSON.stringify(bucket ?? {})}`}
-                  title={head.title}
-                  hint={head.hint}
-                  badge={head.badge}
-                  defaultOpen={false}
-                >
-                  <DatasPanel
-                    t={t}
-                    scope={scope}
-                    bucket={bucket}
-                    effective={state.datas?.effective[scope]}
-                    defaults={state.datas?.defaults ?? { enabled: false, dbPath: '', autoinject: { rounds: true, every: 8, afterTool: true, minGap: 4 } }}
-                    onSaved={load}
-                  />
-                </ScopeCard>
-              )
-            })}
-          </>
+      {datas !== undefined && datas.mounted
+        ? sectionOf(
+          'datas',
+          t('datasTitle'),
+          t('datasHint'),
+          [
+            (datas.presets[current]?.enabled ?? datas.effective[current]?.enabled ?? false) ? t('on') : t('off'),
+            datas.presets[current] !== undefined ? t('badgeOverridden') : t('badgeInherit'),
+          ],
+          <DatasPanel
+            key={`datas:${current}`}
+            t={t}
+            scope={current}
+            bucket={datas.presets[current]}
+            effective={datas.effective[current]}
+            defaults={datas.defaults ?? { enabled: false, dbPath: '', autoinject: { rounds: true, every: 8, afterTool: true, minGap: 4 } }}
+            onSaved={load}
+          />,
         )
         : null}
 
-      {state.memory?.mounted
-        ? (
-          <>
-            <ToolHeader title={t('memoryTitle')} desc={t('memoryHint')} />
-            {scopes.map(scope => {
-              const bucket = state.memory?.presets[scope]
-              const head = scopeHead(scope, bucket !== undefined)
-              return (
-                <ScopeCard
-                  key={`memory:${scope}:${JSON.stringify(bucket ?? {})}`}
-                  title={head.title}
-                  hint={head.hint}
-                  badge={head.badge}
-                  defaultOpen={false}
-                >
-                  <MemoryPanel
-                    t={t}
-                    scope={scope}
-                    bucket={bucket}
-                    effective={state.memory?.effective[scope]}
-                    defaults={state.memory?.defaults ?? {
-                      enabled: false,
-                      dbPath: '',
-                      owner: 'dev',
-                      dream: {
-                        enabled: true,
-                        intervalMs: 4 * 60 * 60 * 1000,
-                        batch: 20,
-                        provider: '',
-                        model: '',
-                        preset: '',
-                        cwd: '',
-                      },
-                    }}
-                    dream={state.memory?.dream ?? { running: false, started: false, config: null, last: null }}
-                    onSaved={load}
-                  />
-                </ScopeCard>
-              )
-            })}
-          </>
+      {memory !== undefined && memory.mounted
+        ? sectionOf(
+          'memory',
+          t('memoryTitle'),
+          t('memoryHint'),
+          [
+            (memory.presets[current]?.enabled ?? memory.effective[current]?.enabled ?? false) ? t('on') : t('off'),
+            memory.presets[current] !== undefined ? t('badgeOverridden') : t('badgeInherit'),
+          ],
+          <MemoryPanel
+            key={`memory:${current}`}
+            t={t}
+            scope={current}
+            bucket={memory.presets[current]}
+            effective={memory.effective[current]}
+            defaults={memory.defaults ?? {
+              enabled: false,
+              dbPath: '',
+              owner: 'dev',
+              dream: {
+                enabled: true,
+                intervalMs: 4 * 60 * 60 * 1000,
+                batch: 20,
+                provider: '',
+                model: '',
+                preset: '',
+                cwd: '',
+              },
+            }}
+            dream={memory.dream ?? { running: false, started: false, config: null, last: null }}
+            onSaved={load}
+          />,
         )
         : null}
 

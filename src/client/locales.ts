@@ -19,6 +19,11 @@ export const zh = {
   commonHint: '没写覆盖的 preset 都吃这一层，也是每个 preset 的基线。',
   presetHint: '会话 header.agentPreset 等于这个 id 时，这一层叠在公共默认之上。',
 
+  scopeLabel: '作用域',
+  applyTo: '正在编辑',
+  collapse: '收起',
+  expand: '展开',
+
   badgeBaseline: '基线',
   badgeOverridden: '已覆盖',
   badgeInherit: '跟随继承',
@@ -103,6 +108,11 @@ export const en: Record<LocaleKey, string> = {
   commonTitle: 'Common default',
   commonHint: 'Every preset without overrides reads this layer; it is the baseline.',
   presetHint: 'Applied on top of the common default when the session header carries this preset id.',
+
+  scopeLabel: 'Scope',
+  applyTo: 'Editing',
+  collapse: 'Collapse',
+  expand: 'Expand',
 
   badgeBaseline: 'baseline',
   badgeOverridden: 'overridden',

@@ -23,6 +23,10 @@ window.__ModuleLoader__.load({
 			commonTitle: "公共默认",
 			commonHint: "没写覆盖的 preset 都吃这一层，也是每个 preset 的基线。",
 			presetHint: "会话 header.agentPreset 等于这个 id 时，这一层叠在公共默认之上。",
+			scopeLabel: "作用域",
+			applyTo: "正在编辑",
+			collapse: "收起",
+			expand: "展开",
 			badgeBaseline: "基线",
 			badgeOverridden: "已覆盖",
 			badgeInherit: "跟随继承",
@@ -95,6 +99,10 @@ window.__ModuleLoader__.load({
 			commonTitle: "Common default",
 			commonHint: "Every preset without overrides reads this layer; it is the baseline.",
 			presetHint: "Applied on top of the common default when the session header carries this preset id.",
+			scopeLabel: "Scope",
+			applyTo: "Editing",
+			collapse: "Collapse",
+			expand: "Expand",
 			badgeBaseline: "baseline",
 			badgeOverridden: "overridden",
 			badgeInherit: "inherited",
@@ -250,6 +258,13 @@ window.__ModuleLoader__.load({
 			fontSize: "0.8em",
 			marginTop: 2
 		};
+		const groupLabelStyle = {
+			color: "var(--dsw-text-secondary, #888)",
+			display: "block",
+			fontSize: "0.85em",
+			marginBottom: 4,
+			marginTop: 8
+		};
 		/** 卡片外壳。 */
 		const cardStyle = {
 			border: "1px solid var(--dsw-text-secondary, #444)",
@@ -280,6 +295,34 @@ window.__ModuleLoader__.load({
 			fontSize: "0.78em",
 			padding: "1px 6px"
 		};
+		/** 作用域 chips 那一行：横向滚动，越多越滚，绝不换行把面板撑高。 */
+		const chipsRowStyle = {
+			display: "flex",
+			gap: 6,
+			margin: "2px 0 10px",
+			overflowX: "auto",
+			paddingBottom: 2,
+			scrollbarWidth: "none"
+		};
+		/** 未选中的作用域 chip。 */
+		const chipStyle = {
+			...buttonStyle,
+			alignItems: "center",
+			display: "inline-flex",
+			flex: "0 0 auto",
+			gap: 5,
+			fontSize: "0.85em",
+			padding: "3px 9px",
+			whiteSpace: "nowrap"
+		};
+		/** 当前作用域 chip：实底 + 主色描边。 */
+		const chipActiveStyle = {
+			...chipStyle,
+			background: "var(--dsw-surface-secondary, rgba(128,128,128,.16))",
+			borderColor: "var(--dsw-text-primary, #ddd)",
+			color: "var(--dsw-text-primary, #eee)",
+			fontWeight: 600
+		};
 		/** 「覆盖这一组」复选框所在行。 */
 		const coverLabelStyle = {
 			alignItems: "center",
@@ -301,48 +344,48 @@ window.__ModuleLoader__.load({
 				children: props.children
 			});
 		}
-		/** 工具卡片头：标题 + 一句说明。 */
-		function ToolHeader(props) {
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-				style: { margin: "14px 0 4px" },
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-					style: { fontWeight: 600 },
-					children: props.title
-				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-					style: hintStyle,
-					children: props.desc
-				})]
-			});
-		}
-		/** 可折叠卡片：标题一行，点开才渲染内容。 */
-		function ScopeCard(props) {
-			const [open, setOpen] = (0, react.useState)(props.defaultOpen);
+		/**
+		* 一节可折叠的外壳：标题 + 一串徽标 + 右侧「收起 / 展开」。
+		*
+		* 作用域不再各占一张卡（那是 0.1.6 的形态，preset 一多就纵向爆炸）：
+		* 顶部 chips 选作用域，这里只按模块分节，三节就是全部。
+		*/
+		function Section(props) {
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				style: cardStyle,
 				children: [
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
 						type: "button",
 						style: cardHeadStyle,
-						onClick: () => {
-							setOpen((value) => !value);
-						},
-						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
-							style: { fontWeight: 600 },
-							children: [
-								open ? "▾" : "▸",
-								" ",
-								props.title
-							]
-						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-							style: badgeStyle,
-							children: props.badge
-						})]
+						onClick: props.onToggle,
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+								style: { fontWeight: 600 },
+								children: [
+									props.open ? "▾" : "▸",
+									" ",
+									props.title
+								]
+							}),
+							props.badges.map((item) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+								style: badgeStyle,
+								children: item
+							}, item)),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+								style: {
+									...hintStyle,
+									marginLeft: "auto",
+									marginTop: 0
+								},
+								children: props.open ? props.collapseLabel : props.expandLabel
+							})
+						]
 					}),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 						style: hintStyle,
 						children: props.hint
 					}),
-					open ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+					props.open ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 						style: { marginTop: 8 },
 						children: props.children
 					}) : null
@@ -1270,17 +1313,40 @@ window.__ModuleLoader__.load({
 			});
 			const scopes = state.scopes ?? ["common"];
 			const roster = new Map((state.roster ?? []).map((row) => [row.id, row]));
-			/** 一张 scope 卡的公共头部信息：标题 + 徽标 + 提示。 */
-			const scopeHead = (scope, overridden) => {
-				const isCommon = scope === "common";
+			const datas = state.datas;
+			const memory = state.memory;
+			/**
+			* 当前正在编辑的作用域。**先选改谁，再改什么** —— 作用域横向排在 chips 里，
+			* 纵向只留三个模块节，preset 再多也不把面板拉长。
+			*/
+			const [activeScope, setActiveScope] = (0, react.useState)(() => scopes[0] ?? "common");
+			/** 三个模块节的折叠状态（默认全开；收起只是不渲染，徽标仍留在标题行）。 */
+			const [closed, setClosed] = (0, react.useState)({});
+			const current = scopes.includes(activeScope) ? activeScope : scopes[0] ?? "common";
+			/** 该作用域有没有自己的桶（三个模块任一）—— 决定 chips 上的实心点。 */
+			const hasBucket = (scope) => state.presets?.[scope] !== void 0 || datas?.presets[scope] !== void 0 || memory?.presets[scope] !== void 0;
+			/** 作用域显示名：公共默认用文案，preset 用「id · 名字」。 */
+			const scopeLabel = (scope) => {
+				if (scope === "common") return t("commonTitle");
 				const row = roster.get(scope);
-				const badge = isCommon ? t("badgeBaseline") : row?.broken !== void 0 ? t("badgeBroken") : overridden ? t("badgeOverridden") : t("badgeInherit");
-				return {
-					title: isCommon ? t("commonTitle") : row?.name === void 0 || row.name.length === 0 ? scope : `${scope} · ${row.name}`,
-					badge,
-					hint: isCommon ? t("commonHint") : t("presetHint")
-				};
+				return row?.name === void 0 || row.name.length === 0 ? scope : `${scope} · ${row.name}`;
 			};
+			/** 一节：标题 + 徽标 + 当前作用域的内容（key 带 scope → 切作用域时强制重挂载）。 */
+			const sectionOf = (key, title, hint, badges, body) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Section, {
+				title,
+				hint,
+				badges,
+				open: closed[key] !== true,
+				onToggle: () => {
+					setClosed((value) => ({
+						...value,
+						[key]: !value[key]
+					}));
+				},
+				collapseLabel: t("collapse"),
+				expandLabel: t("expand"),
+				children: body
+			});
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				style: { padding: "6px 0" },
 				children: [
@@ -1288,7 +1354,7 @@ window.__ModuleLoader__.load({
 						style: {
 							color: "var(--dsw-text-secondary, #888)",
 							fontSize: "0.9em",
-							marginBottom: 12
+							marginBottom: 10
 						},
 						children: [
 							t("title"),
@@ -1300,97 +1366,90 @@ window.__ModuleLoader__.load({
 							state.root ?? "—"
 						]
 					}),
-					state.mounted ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ToolHeader, {
-						title: t("preinjectTitle"),
-						desc: t("preinjectHint")
-					}), scopes.map((scope) => {
-						const bucket = state.presets?.[scope];
-						const head = scopeHead(scope, bucket !== void 0);
-						return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScopeCard, {
-							title: head.title,
-							hint: head.hint,
-							badge: head.badge,
-							defaultOpen: scope === "common",
-							children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScopePanel, {
-								t,
-								scope,
-								bucket,
-								effective: state.effective?.[scope],
-								files: state.files?.[scope],
-								onSaved: load
-							})
-						}, `preinject:${scope}:${JSON.stringify(bucket ?? {})}`);
-					})] }) : null,
-					state.datas?.mounted ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ToolHeader, {
-						title: t("datasTitle"),
-						desc: t("datasHint")
-					}), scopes.map((scope) => {
-						const bucket = state.datas?.presets[scope];
-						const head = scopeHead(scope, bucket !== void 0);
-						return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScopeCard, {
-							title: head.title,
-							hint: head.hint,
-							badge: head.badge,
-							defaultOpen: false,
-							children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(DatasPanel, {
-								t,
-								scope,
-								bucket,
-								effective: state.datas?.effective[scope],
-								defaults: state.datas?.defaults ?? {
-									enabled: false,
-									dbPath: "",
-									autoinject: {
-										rounds: true,
-										every: 8,
-										afterTool: true,
-										minGap: 4
-									}
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						style: {
+							...groupLabelStyle,
+							marginBottom: 2
+						},
+						children: t("scopeLabel")
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						style: chipsRowStyle,
+						children: scopes.map((scope) => {
+							const overridden = hasBucket(scope);
+							return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
+								type: "button",
+								title: overridden ? t("badgeOverridden") : t("badgeInherit"),
+								style: scope === current ? chipActiveStyle : chipStyle,
+								onClick: () => {
+									setActiveScope(scope);
 								},
-								onSaved: load
-							})
-						}, `datas:${scope}:${JSON.stringify(bucket ?? {})}`);
-					})] }) : null,
-					state.memory?.mounted ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ToolHeader, {
-						title: t("memoryTitle"),
-						desc: t("memoryHint")
-					}), scopes.map((scope) => {
-						const bucket = state.memory?.presets[scope];
-						const head = scopeHead(scope, bucket !== void 0);
-						return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScopeCard, {
-							title: head.title,
-							hint: head.hint,
-							badge: head.badge,
-							defaultOpen: false,
-							children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(MemoryPanel, {
-								t,
-								scope,
-								bucket,
-								effective: state.memory?.effective[scope],
-								defaults: state.memory?.defaults ?? {
-									enabled: false,
-									dbPath: "",
-									owner: "dev",
-									dream: {
-										enabled: true,
-										intervalMs: 144e5,
-										batch: 20,
-										provider: "",
-										model: "",
-										preset: "",
-										cwd: ""
-									}
-								},
-								dream: state.memory?.dream ?? {
-									running: false,
-									started: false,
-									config: null,
-									last: null
-								},
-								onSaved: load
-							})
-						}, `memory:${scope}:${JSON.stringify(bucket ?? {})}`);
-					})] }) : null
+								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									style: { opacity: overridden ? 1 : .4 },
+									children: overridden ? "●" : "○"
+								}), scopeLabel(scope)]
+							}, `chip:${scope}`);
+						})
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						style: {
+							...hintStyle,
+							marginBottom: 10
+						},
+						children: current === "common" ? t("commonHint") : `${t("presetHint")} · ${t("applyTo")}: ${scopeLabel(current)}`
+					}),
+					state.mounted ? sectionOf("preinject", t("preinjectTitle"), t("preinjectHint"), [state.presets?.[current] !== void 0 ? t("badgeOverridden") : t("badgeInherit")], /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScopePanel, {
+						t,
+						scope: current,
+						bucket: state.presets?.[current],
+						effective: state.effective?.[current],
+						files: state.files?.[current],
+						onSaved: load
+					}, `preinject:${current}`)) : null,
+					datas !== void 0 && datas.mounted ? sectionOf("datas", t("datasTitle"), t("datasHint"), [datas.presets[current]?.enabled ?? datas.effective[current]?.enabled ?? false ? t("on") : t("off"), datas.presets[current] !== void 0 ? t("badgeOverridden") : t("badgeInherit")], /* @__PURE__ */ (0, react_jsx_runtime.jsx)(DatasPanel, {
+						t,
+						scope: current,
+						bucket: datas.presets[current],
+						effective: datas.effective[current],
+						defaults: datas.defaults ?? {
+							enabled: false,
+							dbPath: "",
+							autoinject: {
+								rounds: true,
+								every: 8,
+								afterTool: true,
+								minGap: 4
+							}
+						},
+						onSaved: load
+					}, `datas:${current}`)) : null,
+					memory !== void 0 && memory.mounted ? sectionOf("memory", t("memoryTitle"), t("memoryHint"), [memory.presets[current]?.enabled ?? memory.effective[current]?.enabled ?? false ? t("on") : t("off"), memory.presets[current] !== void 0 ? t("badgeOverridden") : t("badgeInherit")], /* @__PURE__ */ (0, react_jsx_runtime.jsx)(MemoryPanel, {
+						t,
+						scope: current,
+						bucket: memory.presets[current],
+						effective: memory.effective[current],
+						defaults: memory.defaults ?? {
+							enabled: false,
+							dbPath: "",
+							owner: "dev",
+							dream: {
+								enabled: true,
+								intervalMs: 144e5,
+								batch: 20,
+								provider: "",
+								model: "",
+								preset: "",
+								cwd: ""
+							}
+						},
+						dream: memory.dream ?? {
+							running: false,
+							started: false,
+							config: null,
+							last: null
+						},
+						onSaved: load
+					}, `memory:${current}`)) : null
 				]
 			});
 		}
