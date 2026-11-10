@@ -215,7 +215,9 @@ export function apply(ctx: Context, config: RorokoToolConfig = {}): void {
     // 注入段走另一条服务线（systemPrompt），与 preinject 同一个路子。
     // 桥那份（tools: false）不挂，它不需要往系统提示词里塞东西。
     if (dndConfig.tools !== false) {
+      console.log('[roroko-dnd] 准备挂注入段（systemPrompt）')
       surface.inject(['systemPrompt'], (scope) => {
+        console.log('[roroko-dnd] systemPrompt scope 到手')
         mountDndInject(scope, dndConfig)
       })
     }
