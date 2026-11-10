@@ -394,10 +394,17 @@ export function mount(
     },
   })
 
-  disposers.push(surface.tools.register(rollTool))
-  disposers.push(surface.tools.register(partyTool))
-  disposers.push(surface.tools.register(applyTool))
-  log('enabled → 三把工具已注册，桥=' + (config.bridge === false ? '关' : '开'))
+  // 工具与桥分开开关：preset 里挂工具（bridge: false），profile 层挂桥（tools: false）。
+  // 会话是被桥创建的，桥不能挂在会话自己的 scope 里，否则鸡生蛋。
+  if (config.tools !== false) {
+    disposers.push(surface.tools.register(rollTool))
+    disposers.push(surface.tools.register(partyTool))
+    disposers.push(surface.tools.register(applyTool))
+  }
+  log(
+    'enabled → 工具' + (config.tools === false ? '关' : '三把已注册')
+    + '，桥=' + (config.bridge === false ? '关' : '开'),
+  )
 
   // ── 收尾 ───────────────────────────────────────────────────
   const stop = (): void => {

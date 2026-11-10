@@ -1,0 +1,18 @@
+# roroko_DND · 桥（profile 层）
+#
+# 桥必须挂在 profile 层：会话是它自己用 roroko_DND 建的，挂在会话 scope 里
+# 就是鸡生蛋（没会话就不会挂载，不挂载就建不了会话）。
+#
+# 这一行只跑桥，不注册工具（tools: false），所以不会污染别家会话的工具表。
+# 工具在 preset 的 dnd 桶里注册，桥不做任何与房间有关的事。
+- insert:
+    - id: roroko-dnd-bridge
+      name: '@roroko-tool/dsh-roroko-tool'
+      config:
+        dnd:
+          tools: false
+          bridge: ws://127.0.0.1:8792
+          preset: roroko_DND
+          cwd: /root/roroko-workplace
+          provider: deepseek-official
+          model: deepseek-flash

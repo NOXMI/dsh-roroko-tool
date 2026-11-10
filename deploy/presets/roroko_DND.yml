@@ -1,8 +1,11 @@
-# roroko_DND · 跑团形态
+# roroko_DND · 跑团形态（preset 层）
 #
 # 只挂两个桶：
 #   preinject —— 人格层，唯一注入 /root/.dsh/roroko_DND/IDENTITY.md
-#   dnd        —— 三把工具（dnd_roll / dnd_party / dnd_apply）+ gateway 桥
+#   dnd        —— 三把工具（dnd_roll / dnd_party / dnd_apply）
+#
+# 桥不在这里（bridge: false）：会话是被桥创建的，桥不能挂在会话自己的 scope 里。
+# 桥挂在 profile 层，见 roroko_dnd_bridge.yml。
 #
 # 不给 bash / fs / web / jobs / todo：DM 不需要摸服务器。
 # 生效方式：把整块 append 到 $DSH_HOME/profiles/web/cordis.patch.yml，重启 dsh-web。
@@ -23,8 +26,7 @@
                 systemFiles:
                   - IDENTITY.md
               dnd:
-                bridge: ws://127.0.0.1:8792
-                preset: roroko_DND
+                bridge: false
 
           - id: time-context
             name: '@deepseek-ai/dsh-time-context'

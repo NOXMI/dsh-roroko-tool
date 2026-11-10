@@ -103,6 +103,7 @@ export const Config: z<RorokoToolConfig> = z.object({
       root: z.string().description('身份根（默认 $DSH_HOME/roroko_DND）'),
       dbPath: z.string().description('dnd.db 路径（默认 <root>/data/dnd.db）'),
       bridge: z.union([z.string(), z.boolean()]).description('gateway 地址，false = 不连（只留工具）'),
+      tools: z.boolean().description('是否注册三把工具，false = 只跑桥'),
       token: z.string().description('与 gateway 约定的 token（缺省读 ROROKO_DND_TOKEN）'),
       cwd: z.string().description('会话工作目录'),
       preset: z.string().description('用哪个 preset 起会话（默认 roroko_DND）'),

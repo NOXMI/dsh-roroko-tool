@@ -11,6 +11,8 @@ export interface DndConfig {
   dbPath?: string
   /** bridge 地址；false = 不连（只留工具）。默认 ws://127.0.0.1:8792。 */
   bridge?: string | false
+  /** 是否注册三把工具；false = 只跑桥。默认 true。 */
+  tools?: boolean
   /** 与 gateway 约定的 token；缺省读 ROROKO_DND_TOKEN。 */
   token?: string
   /** 会话工作目录。 */
