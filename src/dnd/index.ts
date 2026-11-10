@@ -188,31 +188,76 @@ export function mount(
     return peer
   }
 
-  /** 倒查最后一条 assistant 文本。 */
+  /** 从任意形状里挖出最后一个文本块（chunk 流 / message / content 都吃）。 */
+  function digText(node: unknown, depth = 0): string {
+    if (!node || depth > 7) return ''
+    if (Array.isArray(node)) {
+      for (let index = node.length - 1; index >= 0; index -= 1) {
+        const found = digText(node[index], depth + 1)
+        if (found) return found
+      }
+      return ''
+    }
+    if (typeof node !== 'object') return ''
+    const bag = node as Record<string, unknown>
+    if (bag.type === 'text' && typeof bag.text === 'string' && bag.text.trim()) return bag.text
+    if (bag.type === 'reasoning') return ''
+    for (const key of ['block', 'message', 'content', 'chunk', 'data', 'blocks', 'items', 'response']) {
+      if (key in bag) {
+        const found = digText(bag[key], depth + 1)
+        if (found) return found
+      }
+    }
+    return ''
+  }
+
+  /** 倒查最后一条 assistant 文本：先走官方 derive，再退到底层事件里挖。 */
   function lastAssistantText(session: unknown): string {
     let events: unknown[] = []
     try {
       const reader = session as { ownEvents?: () => unknown[] }
       events = reader.ownEvents?.() ?? []
     } catch {
+      events = []
+    }
+    if (!events.length) {
+      log('session.ownEvents() 空，取不到回复')
       return ''
     }
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-      let message: { role?: string; content?: unknown[] } | null = null
-      try {
-        const derive = (session as { deriveEventMessage?: (ev: unknown) => unknown }).deriveEventMessage
-        message = (derive?.(events[index]) ?? null) as { role?: string; content?: unknown[] } | null
-      } catch {
-        message = null
+
+    const derive = (session as { deriveEventMessage?: (ev: unknown) => unknown }).deriveEventMessage
+    if (typeof derive === 'function') {
+      for (let index = events.length - 1; index >= 0; index -= 1) {
+        let message: { role?: string; content?: unknown[] } | null = null
+        try {
+          message = (derive(events[index]) ?? null) as { role?: string; content?: unknown[] } | null
+        } catch {
+          message = null
+        }
+        if (!message || message.role !== 'assistant') continue
+        const joined = (message.content ?? [])
+          .filter((block) => (block as { type?: string })?.type === 'text')
+          .map((block) => String((block as { text?: unknown }).text ?? ''))
+          .join('\n')
+          .trim()
+        if (joined) return joined
       }
-      if (!message || message.role !== 'assistant') continue
-      const joined = (message.content ?? [])
-        .filter((block) => (block as { type?: string })?.type === 'text')
-        .map((block) => String((block as { text?: unknown }).text ?? ''))
-        .join('\n')
-        .trim()
-      if (joined) return joined
     }
+
+    // derive 不认（chunk 流式写入的回复），退到底层 events 里挖
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const found = digText(events[index]).trim()
+      if (found) {
+        log('derive 取不到，从 events 里挖到回复', found.length + '字')
+        return found
+      }
+    }
+    const types = new Map<string, number>()
+    for (const event of events) {
+      const kind = String((event as { type?: unknown })?.type ?? '?')
+      types.set(kind, (types.get(kind) ?? 0) + 1)
+    }
+    log('事件里挖不到文本', events.length, [...types.entries()].map(([k, v]) => `${k}:${v}`).join(' '))
     return ''
   }
 
