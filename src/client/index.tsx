@@ -886,33 +886,30 @@ function MemoryPanel(props: {
 }
 
 /**
- * 跑团面板：只有一个总开关。
+ * 跑团面板：一个总开关，按 preset 分桶。
  *
- * 关掉只是撤下三把工具、断开桥；dnd.db 与 IDENTITY.md 一个字节不碰，
- * preinject / datas / memory 的桶也不受影响。不分预设、不分桶。
+ * 默认关；想让哪个 preset 开，就切到它的作用域勾上。关掉只是撤下三把工具、
+ * 断开桥；dnd.db 与 IDENTITY.md 一个字节不碰。
  */
 function DndPanel(props: {
   t: (key: string) => string
-  enabled: boolean
-  stateFile: string
+  scope: string
+  bucket: { enabled?: boolean } | undefined
+  effective: { enabled: boolean } | undefined
+  defaults: { enabled: boolean }
   onSaved: () => void
 }): React.ReactElement {
-  const { t, stateFile, onSaved } = props
-  const [enabled, setEnabled] = useState(props.enabled)
+  const { t, scope, bucket, effective, defaults, onSaved } = props
+  const [enabled, setEnabled] = useState(bucket?.enabled ?? effective?.enabled ?? defaults.enabled)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // 外面刷新过状态就跟着走（别让本地勾选盖住真值）
-  useEffect(() => { setEnabled(props.enabled) }, [props.enabled])
-
-  const toggle = (): void => {
-    const next = !enabled
-    setEnabled(next)
+  const run = (patch: Record<string, unknown>): void => {
+    setSaving(true)
     setSaved(false)
     setError(null)
-    setSaving(true)
-    saveConfig({ section: 'dnd', enabled: next })
+    saveConfig(patch)
       .then((ack) => {
         if (ack.ok !== true) throw new Error(ack.reason ?? '宿主拒绝')
         setSaved(true)
@@ -920,30 +917,48 @@ function DndPanel(props: {
       })
       .catch((cause: unknown) => {
         setError(cause instanceof Error ? cause.message : String(cause))
-        setEnabled(!next)
       })
       .finally(() => { setSaving(false) })
   }
 
+  const busy = saving
   return (
     <PanelShell>
       <label style={{ ...coverLabelStyle, fontWeight: 600 }}>
         <input
           type="checkbox"
           checked={enabled}
-          disabled={saving}
-          onChange={toggle}
+          disabled={busy}
+          onChange={() => { setEnabled(value => !value); setSaved(false) }}
         />
         {t('dndEnabled')}
       </label>
       <div style={{ ...hintStyle, marginBottom: 6 }}>{t('dndEnabledHint')}</div>
-      <div style={hintStyle}>{t('dndStateFile')}: {stateFile}</div>
-      {error === null ? null : (
-        <div style={{ ...hintStyle, color: 'var(--dsw-text-danger, #e5484d)' }}>{t('saveFailed')}: {error}</div>
-      )}
-      {saved ? (
-        <div style={{ ...hintStyle, color: 'var(--dsw-text-success, #46a758)' }}>{t('saved')}</div>
-      ) : null}
+
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+        <button
+          type="button"
+          disabled={busy}
+          style={buttonStyle}
+          onClick={() => { run({ preset: scope, section: 'dnd', enabled }) }}
+        >
+          {busy ? t('saving') : t('save')}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          style={buttonStyle}
+          onClick={() => { run({ preset: scope, section: 'dnd', reset: true }) }}
+        >
+          {t('resetScope')}
+        </button>
+        {saved
+          ? <span style={{ color: 'var(--dsw-text-success, #46a758)', fontSize: '0.8em' }}>{t('saved')}</span>
+          : null}
+        {error === null
+          ? null
+          : <span style={{ color: 'var(--dsw-text-danger, #e5484d)', fontSize: '0.8em' }}>{t('saveFailed')}: {error}</span>}
+      </div>
     </PanelShell>
   )
 }
@@ -1148,18 +1163,22 @@ function DndPanel(props: {
         )
         : null}
 
-      {/* dnd 不分作用域：一个总开关管工具 + 桥，所以固定用同一个 key，不跟 current 走。 */}
       {dnd !== undefined && dnd.mounted
         ? sectionOf(
           'dnd',
           t('dndTitle'),
           t('dndHint'),
-          [(dnd.enabled ?? dnd.defaults.enabled) ? t('on') : t('off')],
+          [
+            (dnd.effective[current]?.enabled ?? dnd.defaults.enabled) ? t('on') : t('off'),
+            dnd.presets[current] !== undefined ? t('badgeOverridden') : t('badgeInherit'),
+          ],
           <DndPanel
-            key="dnd"
+            key={`dnd:${current}`}
             t={t}
-            enabled={dnd.enabled ?? dnd.defaults.enabled}
-            stateFile={dnd.stateFile}
+            scope={current}
+            bucket={dnd.presets[current]}
+            effective={dnd.effective[current]}
+            defaults={dnd.defaults}
             onSaved={load}
           />,
         )

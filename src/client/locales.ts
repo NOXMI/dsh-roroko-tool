@@ -67,10 +67,9 @@ export const zh = {
   off: '关',
 
   dndTitle: '④ 跑团（dnd）',
-  dndHint: 'dnd_roll / dnd_party / dnd_apply 三把工具 + 接 gateway 的桥。一个总开关管这两件事。',
-  dndEnabled: '启用跑团模块',
-  dndEnabledHint: '关掉只是撤下三把工具、断开桥；dnd.db 与人格文件原样留着，再打开就回来。',
-  dndStateFile: '开关文件',
+  dndHint: 'dnd_roll / dnd_party / dnd_apply 三把工具 + 接 gateway 的桥。默认关，勾上的预设才生效。',
+  dndEnabled: '启用跑团模块（本预设）',
+  dndEnabledHint: '默认关。勾上保存后，这个预设的会话就带三把工具、桥也接上；别的预设不受影响。',
 
   memoryTitle: '③ 记忆（memory）',
   memoryHint: 'roroko_mem_* 四把工具：记一条 / 按日期回查 / 关键词检索 / 按 id 取全文；dream 定时把旧条反思收敛。',
@@ -163,10 +162,9 @@ export const en: Record<LocaleKey, string> = {
   off: 'off',
 
   dndTitle: '④ Tabletop (dnd)',
-  dndHint: 'The dnd_roll / dnd_party / dnd_apply tools plus the bridge to the gateway. One switch covers both.',
-  dndEnabled: 'Enable the tabletop module',
-  dndEnabledHint: 'Turning it off only withdraws the three tools and drops the bridge; dnd.db and the persona file stay untouched.',
-  dndStateFile: 'Switch file',
+  dndHint: 'The dnd_roll / dnd_party / dnd_apply tools plus the bridge to the gateway. Off by default; only presets that opt in get them.',
+  dndEnabled: 'Enable the tabletop module (this preset)',
+  dndEnabledHint: 'Off by default. Save with it ticked and this preset carries the three tools and the bridge; other presets are unaffected.',
 
   memoryTitle: '③ Memory (memory)',
   memoryHint: 'The four roroko_mem_* tools (write / by date / keyword search / full text); dream condenses old entries on a timer.',

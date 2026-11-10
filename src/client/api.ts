@@ -120,12 +120,13 @@ export interface PresetRow {
   broken?: string
 }
 
-/** dnd 侧全量状态：不分桶，就一个总开关。 */
+/** dnd 侧全量状态：按 preset 分桶，默认关。 */
 export interface DndBody {
   mounted: boolean
   stateFile: string
   defaults: { enabled: boolean }
-  enabled?: boolean
+  presets: Record<string, { enabled?: boolean }>
+  effective: Record<string, { enabled: boolean }>
 }
 
 /** 设置页拿到的全量状态。 */export interface StateBody {

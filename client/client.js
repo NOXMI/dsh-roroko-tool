@@ -65,10 +65,9 @@ window.__ModuleLoader__.load({
 			on: "开",
 			off: "关",
 			dndTitle: "④ 跑团（dnd）",
-			dndHint: "dnd_roll / dnd_party / dnd_apply 三把工具 + 接 gateway 的桥。一个总开关管这两件事。",
-			dndEnabled: "启用跑团模块",
-			dndEnabledHint: "关掉只是撤下三把工具、断开桥；dnd.db 与人格文件原样留着，再打开就回来。",
-			dndStateFile: "开关文件",
+			dndHint: "dnd_roll / dnd_party / dnd_apply 三把工具 + 接 gateway 的桥。默认关，勾上的预设才生效。",
+			dndEnabled: "启用跑团模块（本预设）",
+			dndEnabledHint: "默认关。勾上保存后，这个预设的会话就带三把工具、桥也接上；别的预设不受影响。",
 			memoryTitle: "③ 记忆（memory）",
 			memoryHint: "roroko_mem_* 四把工具：记一条 / 按日期回查 / 关键词检索 / 按 id 取全文；dream 定时把旧条反思收敛。",
 			memoryEnabled: "启用记忆（默认关闭）",
@@ -146,10 +145,9 @@ window.__ModuleLoader__.load({
 			on: "on",
 			off: "off",
 			dndTitle: "④ Tabletop (dnd)",
-			dndHint: "The dnd_roll / dnd_party / dnd_apply tools plus the bridge to the gateway. One switch covers both.",
-			dndEnabled: "Enable the tabletop module",
-			dndEnabledHint: "Turning it off only withdraws the three tools and drops the bridge; dnd.db and the persona file stay untouched.",
-			dndStateFile: "Switch file",
+			dndHint: "The dnd_roll / dnd_party / dnd_apply tools plus the bridge to the gateway. Off by default; only presets that opt in get them.",
+			dndEnabled: "Enable the tabletop module (this preset)",
+			dndEnabledHint: "Off by default. Save with it ticked and this preset carries the three tools and the bridge; other presets are unaffected.",
 			memoryTitle: "③ Memory (memory)",
 			memoryHint: "The four roroko_mem_* tools (write / by date / keyword search / full text); dream condenses old entries on a timer.",
 			memoryEnabled: "Enable memory (off by default)",
@@ -1263,40 +1261,32 @@ window.__ModuleLoader__.load({
 			] });
 		}
 		/**
-		* 跑团面板：只有一个总开关。
+		* 跑团面板：一个总开关，按 preset 分桶。
 		*
-		* 关掉只是撤下三把工具、断开桥；dnd.db 与 IDENTITY.md 一个字节不碰，
-		* preinject / datas / memory 的桶也不受影响。不分预设、不分桶。
+		* 默认关；想让哪个 preset 开，就切到它的作用域勾上。关掉只是撤下三把工具、
+		* 断开桥；dnd.db 与 IDENTITY.md 一个字节不碰。
 		*/
 		function DndPanel(props) {
-			const { t, stateFile, onSaved } = props;
-			const [enabled, setEnabled] = (0, react.useState)(props.enabled);
+			const { t, scope, bucket, effective, defaults, onSaved } = props;
+			const [enabled, setEnabled] = (0, react.useState)(bucket?.enabled ?? effective?.enabled ?? defaults.enabled);
 			const [saving, setSaving] = (0, react.useState)(false);
 			const [saved, setSaved] = (0, react.useState)(false);
 			const [error, setError] = (0, react.useState)(null);
-			(0, react.useEffect)(() => {
-				setEnabled(props.enabled);
-			}, [props.enabled]);
-			const toggle = () => {
-				const next = !enabled;
-				setEnabled(next);
+			const run = (patch) => {
+				setSaving(true);
 				setSaved(false);
 				setError(null);
-				setSaving(true);
-				saveConfig({
-					section: "dnd",
-					enabled: next
-				}).then((ack) => {
+				saveConfig(patch).then((ack) => {
 					if (ack.ok !== true) throw new Error(ack.reason ?? "宿主拒绝");
 					setSaved(true);
 					onSaved();
 				}).catch((cause) => {
 					setError(cause instanceof Error ? cause.message : String(cause));
-					setEnabled(!next);
 				}).finally(() => {
 					setSaving(false);
 				});
 			};
+			const busy = saving;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(PanelShell, { children: [
 				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 					style: {
@@ -1306,8 +1296,11 @@ window.__ModuleLoader__.load({
 					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
 						type: "checkbox",
 						checked: enabled,
-						disabled: saving,
-						onChange: toggle
+						disabled: busy,
+						onChange: () => {
+							setEnabled((value) => !value);
+							setSaved(false);
+						}
 					}), t("dndEnabled")]
 				}),
 				/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
@@ -1318,31 +1311,60 @@ window.__ModuleLoader__.load({
 					children: t("dndEnabledHint")
 				}),
 				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-					style: hintStyle,
-					children: [
-						t("dndStateFile"),
-						": ",
-						stateFile
-					]
-				}),
-				error === null ? null : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 					style: {
-						...hintStyle,
-						color: "var(--dsw-text-danger, #e5484d)"
+						display: "flex",
+						alignItems: "center",
+						flexWrap: "wrap",
+						gap: 8,
+						marginTop: 8
 					},
 					children: [
-						t("saveFailed"),
-						": ",
-						error
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+							type: "button",
+							disabled: busy,
+							style: buttonStyle,
+							onClick: () => {
+								run({
+									preset: scope,
+									section: "dnd",
+									enabled
+								});
+							},
+							children: busy ? t("saving") : t("save")
+						}),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+							type: "button",
+							disabled: busy,
+							style: buttonStyle,
+							onClick: () => {
+								run({
+									preset: scope,
+									section: "dnd",
+									reset: true
+								});
+							},
+							children: t("resetScope")
+						}),
+						saved ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+							style: {
+								color: "var(--dsw-text-success, #46a758)",
+								fontSize: "0.8em"
+							},
+							children: t("saved")
+						}) : null,
+						error === null ? null : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+							style: {
+								color: "var(--dsw-text-danger, #e5484d)",
+								fontSize: "0.8em"
+							},
+							children: [
+								t("saveFailed"),
+								": ",
+								error
+							]
+						})
 					]
-				}),
-				saved ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-					style: {
-						...hintStyle,
-						color: "var(--dsw-text-success, #46a758)"
-					},
-					children: t("saved")
-				}) : null
+				})
 			] });
 		}
 		/**
@@ -1545,12 +1567,14 @@ window.__ModuleLoader__.load({
 						},
 						onSaved: load
 					}, `memory:${current}`)) : null,
-					dnd !== void 0 && dnd.mounted ? sectionOf("dnd", t("dndTitle"), t("dndHint"), [dnd.enabled ?? dnd.defaults.enabled ? t("on") : t("off")], /* @__PURE__ */ (0, react_jsx_runtime.jsx)(DndPanel, {
+					dnd !== void 0 && dnd.mounted ? sectionOf("dnd", t("dndTitle"), t("dndHint"), [dnd.effective[current]?.enabled ?? dnd.defaults.enabled ? t("on") : t("off"), dnd.presets[current] !== void 0 ? t("badgeOverridden") : t("badgeInherit")], /* @__PURE__ */ (0, react_jsx_runtime.jsx)(DndPanel, {
 						t,
-						enabled: dnd.enabled ?? dnd.defaults.enabled,
-						stateFile: dnd.stateFile,
+						scope: current,
+						bucket: dnd.presets[current],
+						effective: dnd.effective[current],
+						defaults: dnd.defaults,
 						onSaved: load
-					}, "dnd")) : null
+					}, `dnd:${current}`)) : null
 				]
 			});
 		}

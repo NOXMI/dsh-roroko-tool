@@ -31,7 +31,7 @@ import {
 } from './memory/presets.js'
 import { firstDatasMount, firstDndMount, firstMemoryMount, firstMount } from './state.js'
 import {
-  DND_STATE_DEFAULTS, dndStateFile, readDndState, setDndState,
+  DND_COMMON, clearDndBucket, dndStateFile, readDndState, resolveDnd, setDndBucket,
 } from './dnd/presets.js'
 
 /** webServer 服务的最小面。 */
@@ -198,14 +198,17 @@ export function registerStateRoutes(
       const root = mount?.root ?? datasMount?.root ?? memoryMount?.root ?? ''
       const state = mount === undefined ? { presets: {} } : readState(mount.root)
       const rows = await roster()
-      // scope 集合：公共默认 + 注册表里的 preset + 状态里已有的桶（三个模块的桶都算）。
+      // scope 集合：公共默认 + 注册表里的 preset + 状态里已有的桶（四个模块的桶都算）。
       const datasState = readDatasState(root)
       const memoryState = readMemoryState(root)
+      const dndRoot = dndMount?.root ?? root
+      const dndState = dndMount === undefined ? { presets: {} } : readDndState(dndRoot)
       const scopes = [COMMON]
       for (const row of rows) if (!scopes.includes(row.id)) scopes.push(row.id)
       for (const key of Object.keys(state.presets)) if (!scopes.includes(key)) scopes.push(key)
       for (const key of Object.keys(datasState.presets)) if (!scopes.includes(key)) scopes.push(key)
       for (const key of Object.keys(memoryState.presets)) if (!scopes.includes(key)) scopes.push(key)
+      for (const key of Object.keys(dndState.presets)) if (!scopes.includes(key)) scopes.push(key)
 
       const views = mount === undefined
         ? { effective: {}, files: {} }
@@ -265,12 +268,15 @@ export function registerStateRoutes(
             last: dreamRuntime?.last ?? null,
           },
         },
-        // dnd 只要一个总开关：不分桶，一个 enabled 管工具 + 桥。
+        // dnd：按 preset 分桶，默认关，preset 覆盖才开。
         dnd: {
           mounted: dndMount !== undefined,
-          stateFile: dndStateFile(dndMount?.root ?? root),
-          defaults: DND_STATE_DEFAULTS,
-          enabled: dndMount === undefined ? undefined : readDndState(dndMount.root).enabled,
+          stateFile: dndStateFile(dndRoot),
+          defaults: DND_COMMON,
+          presets: dndState.presets,
+          effective: Object.fromEntries(
+            scopes.map(scope => [scope, resolveDnd(dndState, scope === COMMON ? undefined : scope)]),
+          ),
         },
       })
     },
@@ -329,17 +335,15 @@ export function registerStateRoutes(
         return
       }
       if (section === 'dnd') {
-        // dnd 不分桶：一个 enabled 管工具 + 桥。只认这一个字段，别的一律不理。
+        // dnd 与其它三个模块一样分桶：桶名就是 preset id，只认 enabled 一个字段。
         const dndMount = firstDndMount()
         if (dndMount === undefined) {
-          json(res, 200, { ok: false, reason: '未挂载 dnd，没有可写的开关' })
+          json(res, 200, { ok: false, reason: '未挂载 dnd，没有可写的桶' })
           return
         }
-        if (typeof patch.enabled !== 'boolean') {
-          json(res, 400, { ok: false, reason: 'dnd 只认 enabled（布尔）' })
-          return
-        }
-        const state = await setDndState(dndMount.root, { enabled: patch.enabled })
+        const state = patch.reset === true
+          ? await clearDndBucket(dndMount.root, scope)
+          : await setDndBucket(dndMount.root, scope, patch)
         json(res, 200, { ok: true, state })
         return
       }

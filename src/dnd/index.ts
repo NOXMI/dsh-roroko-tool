@@ -18,11 +18,14 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { openBridge, type Bridge, type InjectFrame } from './bridge.js'
-import { DND_DEFAULTS, readDndState } from './presets.js'
+import { readDndState, resolveDnd } from './presets.js'
 import { registerDndMount } from '../state.js'
 
-export type { DndConfig, DndState } from './presets.js'
-export { DND_DEFAULTS, DND_STATE_DEFAULTS, dndStateFile, readDndState, setDndState } from './presets.js'
+export type { DndBucket, DndConfig, DndState } from './presets.js'
+export {
+  COMMON, DND_COMMON, DND_DEFAULTS, clearDndBucket, dndStateFile,
+  readDndState, resolveDnd, setDndBucket,
+} from './presets.js'
 
 /** 子模块标识：只用于日志与消息来源签名，不是独立插件。 */
 export const moduleName = 'roroko-dnd'
@@ -37,6 +40,7 @@ export function defaultRoot(): string {
 interface Surface {
   tools: { register(definition: unknown): () => void }
   effect(callback: () => unknown, label?: string): unknown
+  on(event: string, listener: (...args: any[]) => unknown): unknown
 }
 
 /** 跨 scope 递进来的服务句柄（host 层先握在手里）。 */
@@ -447,13 +451,15 @@ export function mount(
     },
   })
 
-  // ── 总开关 ─────────────────────────────────────────────────
-  // 一个开关管整个子模块：工具 + 桥。关掉只是撤下工具、断开桥，
-  // dnd.db 与 IDENTITY.md 一个字节不碰，别的模块的桶也不受影响。
+  // ── 总开关（按 preset 分桶）───────────────────────────────
+  // 一个开关管整个子模块：工具 + 桥。默认关，哪个 preset 想开就在自己的桶里
+  // 覆盖。关掉只是撤下工具、断开桥，dnd.db 与 IDENTITY.md 一个字节不碰。
   const root = config.root !== undefined && config.root.trim().length > 0
     ? config.root.trim()
     : defaultRoot()
   let started = false
+  /** 本实例最近一次见到的 preset id（工具侧靠它选桶）。 */
+  let activePreset: string | undefined
 
   /** 开：按 tools / bridge 两个接线开关分别挂。 */
   const start = (): void => {
@@ -489,11 +495,14 @@ export function mount(
     log('关 → 工具撤下、桥断开')
   }
 
+  /** 这个实例该读哪个桶：工具侧跟着会话的 preset 走，桥侧用配置里那个。 */
+  const scopedPreset = (): string | undefined => activePreset ?? config.preset
+
   /** 读开关对齐一次（幂等，状态没变就什么都不做）。 */
   const sync = (): void => {
-    let on = true
+    let on = false
     try {
-      on = config.enabled === false ? false : readDndState(root).enabled
+      on = config.enabled === false ? false : resolveDnd(readDndState(root), scopedPreset()).enabled
     } catch (error) {
       log('读开关失败，保持现状', error instanceof Error ? error.message : String(error))
       return
@@ -502,9 +511,25 @@ export function mount(
     else stop()
   }
 
+  // 工具侧要知道自己在替哪个 preset 干活 —— 桶名就是 preset id。
+  surface.on('agent/pre-step', (
+    payload: { agent?: { session?: { header?: { agentPreset?: string } } } },
+    next: () => Promise<unknown>,
+  ) => {
+    const id = payload.agent?.session?.header?.agentPreset
+    if (id !== undefined) activePreset = id
+    sync()
+    return next()
+  })
+  surface.on('agent/created', (payload: { agent?: { session?: { header?: { agentPreset?: string } } } }) => {
+    const id = payload.agent?.session?.header?.agentPreset
+    if (id !== undefined) activePreset = id
+    sync()
+  })
+
   surface.effect(() => registerDndMount({ root, config }), 'dnd.status()')
-  // 轮询而不是挂会话事件：profile 层的桥实例未必收得到 agent 事件，
-  // 而两份实例读的是同一份 state，读文件最不容易漏。
+  // 轮询兜底：profile 层的桥实例收不分桶、也未必收得到 agent 事件，
+  // 两份实例读同一份 state 文件最不容易漏。
   const timer = setInterval(sync, 3000)
   surface.effect(
     () => () => {

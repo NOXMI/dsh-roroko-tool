@@ -401,7 +401,7 @@ interface DndConfig {
   token?: string;
   /** 会话工作目录。 */
   cwd?: string;
-  /** 用哪个 preset 起会话（默认 roroko_DND）。 */
+  /** 用哪个 preset 起会话（默认 roroko_DND）。桥侧读哪个桶也用它。 */
   preset?: string;
   provider?: string;
   model?: string;
