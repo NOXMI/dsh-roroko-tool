@@ -150,6 +150,98 @@ function tierOf(hp: number, hpMax: number): string {
   return '完好'
 }
 
+/** 世界段正文：世界名 + 简介 + 房规。**一次性**，不含剧情进展。 */
+function renderWorld(dbPath: string): string {
+  const room = sharedRoom
+  if (!room || !existsSync(dbPath)) return ''
+  try {
+    return withDb(dbPath, (db) => {
+      const row = db
+        .prepare('SELECT w.name, w.lore_brief, w.rules FROM rooms r'
+          + ' JOIN worlds w ON w.id = r.world_id WHERE r.id = ?')
+        .get(room) as Record<string, unknown> | undefined
+      if (!row) return ''
+      const parts = [`[世界] ${String(row.name ?? '')}`, String(row.lore_brief ?? '')]
+      const rules = String(row.rules ?? '{}')
+      if (rules.length > 2 && rules !== '{}') parts.push(`[房规] ${rules}`)
+      return parts.filter(line => line.trim().length > 0).join('\n')
+    })
+  } catch {
+    return ''
+  }
+}
+
+/** 队伍段正文：名字 + 一句人设。**一个数字都不给。** */
+function renderParty(dbPath: string): string {
+  const room = sharedRoom
+  if (!room || !existsSync(dbPath)) return ''
+  try {
+    return withDb(dbPath, (db) => {
+      const rows = db
+        .prepare('SELECT c.name, c.race, c.class, c.personality, c.extras FROM characters c'
+          + ' JOIN room_members m ON m.character_id = c.id WHERE m.room_id = ? ORDER BY m.joined_at')
+        .all(room) as Array<Record<string, unknown>>
+      if (!rows.length) return ''
+      const lines = rows.map((row) => {
+        let intro = String(row.personality ?? '').trim()
+        if (intro.length === 0) {
+          try {
+            const extras = JSON.parse(String(row.extras ?? '{}')) as { intro?: unknown }
+            intro = String(extras.intro ?? '').trim()
+          } catch {
+            intro = ''
+          }
+        }
+        const who = `${String(row.race ?? '')}${String(row.class ?? '')}`
+        const head = `${String(row.name ?? '?')} —— ${who.length > 0 ? who : '来历不明'}`
+        return intro.length > 0 ? `${head}。${intro}` : head
+      })
+      return ['[队伍]', ...lines].join('\n')
+    })
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 只挂注入段的那一份：由 host 在 `inject(['systemPrompt'])` 的 scope 上调用。
+ *
+ * 与 mount 分开是因为 systemPrompt 与 tools 是两条不同的服务线 ——
+ * preinject 也是这么挂的，照它的路子走。
+ * @param ctx - systemPrompt 可见的 scope。
+ * @param rawConfig - 子模块配置。
+ */
+export function mountInject(ctx: Context, rawConfig: import('./presets.js').DndConfig = {}): void {
+  const scope = ctx as unknown as {
+    systemPrompt: {
+      variable(name: string, provider: () => string): unknown
+      section(input: { name: string; order: number; text: string }): unknown
+      getSectionOrder(name: string): number
+    }
+    effect(callback: () => unknown, label?: string): unknown
+  }
+  if (!scope.systemPrompt) {
+    console.log('[roroko-dnd] systemPrompt 不可见，注入段没挂')
+    return
+  }
+  const dbPath = rawConfig.dbPath && rawConfig.dbPath.trim().length > 0
+    ? rawConfig.dbPath.trim()
+    : (DND_DEFAULTS.dbPath as string)
+  const prompt = scope.systemPrompt
+  const base = prompt.getSectionOrder('DEPLOYMENT_PERSONA_PREFIX')
+  scope.effect(() => prompt.variable(WORLD_VAR, () => renderWorld(dbPath)), 'roroko-dnd: 世界段变量')
+  scope.effect(
+    () => prompt.section({ name: 'dnd:world', order: base + 1, text: `{{${WORLD_VAR}}}` }),
+    'roroko-dnd: 世界段',
+  )
+  scope.effect(() => prompt.variable(PARTY_VAR, () => renderParty(dbPath)), 'roroko-dnd: 队伍段变量')
+  scope.effect(
+    () => prompt.section({ name: 'dnd:party', order: base + 2, text: `{{${PARTY_VAR}}}` }),
+    'roroko-dnd: 队伍段',
+  )
+  console.log('[roroko-dnd] 注入段已注册 · dnd:world / dnd:party')
+}
+
 /** 掷骰：本地真随机。支持 NdM+K，N 缺省 1。 */
 export function rollDice(expr: string): {
   n: number
@@ -229,60 +321,6 @@ export function mount(
     }
   }
 
-  /** 世界段正文：世界名 + 简介 + 房规。不含剧情进展，一次性。 */
-  const worldText = (): string => {
-    const room = sharedRoom
-    const path = dbPath()
-    if (!room || !existsSync(path)) return ''
-    try {
-      return withDb(path, (db) => {
-        const row = db.prepare(
-          'SELECT w.name, w.lore_brief, w.rules FROM rooms r'
-          + ' JOIN worlds w ON w.id = r.world_id WHERE r.id = ?',
-        ).get(room) as Record<string, unknown> | undefined
-        if (!row) return ''
-        const parts = [`[世界] ${String(row.name ?? '')}`, String(row.lore_brief ?? '')]
-        const rules = String(row.rules ?? '{}')
-        if (rules.length > 2 && rules !== '{}') parts.push(`[房规] ${rules}`)
-        return parts.filter(line => line.trim().length > 0).join('\n')
-      })
-    } catch {
-      return ''
-    }
-  }
-
-  /** 队伍段正文：名字 + 一句人设 + 来由。**一个数字都不给。** */
-  const partyText = (): string => {
-    const room = sharedRoom
-    const path = dbPath()
-    if (!room || !existsSync(path)) return ''
-    try {
-      return withDb(path, (db) => {
-        const rows = db.prepare(
-          'SELECT c.name, c.race, c.class, c.personality, c.extras FROM characters c'
-          + ' JOIN room_members m ON m.character_id = c.id WHERE m.room_id = ? ORDER BY m.joined_at',
-        ).all(room) as Array<Record<string, unknown>>
-        if (!rows.length) return ''
-        const lines = rows.map((row) => {
-          let intro = String(row.personality ?? '').trim()
-          if (!intro) {
-            try {
-              const extras = JSON.parse(String(row.extras ?? '{}')) as { intro?: unknown }
-              intro = String(extras.intro ?? '').trim()
-            } catch {
-              intro = ''
-            }
-          }
-          const who = `${String(row.race ?? '')}${String(row.class ?? '')}`
-          const head = `${String(row.name ?? '?')} —— ${who.length > 0 ? who : '来历不明'}`
-          return intro.length > 0 ? `${head}。${intro}` : head
-        })
-        return ['[队伍]', ...lines].join('\n')
-      })
-    } catch {
-      return ''
-    }
-  }
 
   /** 每个房间一个常驻会话，与 qq-gateway 的 peers 同构。 */
   const peers = new Map<string, Peer>()
@@ -850,46 +888,6 @@ export function mount(
     if (id !== undefined) activePreset = id
     sync()
   })
-
-  // ── 注入段（一次性：世界 + 队伍，不含任何数字）─────────────
-  // 只注册一次、内容不随轮次变，所以是固定前缀，缓存能一直命中。
-  // 只有挂工具的那份实例才注入（桥那份 tools:false，不掺和）。
-  if (config.tools !== false) {
-    const inject = (ctx as unknown as {
-      inject?: (services: string[], callback: (scope: unknown) => void) => unknown
-    }).inject
-    if (typeof inject === 'function') {
-      inject.call(ctx, ['systemPrompt'], (scopeRaw) => {
-        const scope = scopeRaw as {
-          systemPrompt: {
-            variable(name: string, provider: () => string): unknown
-            section(input: { name: string; order: number; text: string }): unknown
-            getSectionOrder(name: string): number
-          }
-          effect(callback: () => unknown, label?: string): unknown
-        }
-        const prompt = scope.systemPrompt
-        const base = prompt.getSectionOrder('DEPLOYMENT_PERSONA_PREFIX')
-        scope.effect(
-          () => prompt.variable(WORLD_VAR, () => worldText()),
-          'roroko-dnd: 世界段变量',
-        )
-        scope.effect(
-          () => prompt.section({ name: 'dnd:world', order: base + 1, text: `{{${WORLD_VAR}}}` }),
-          'roroko-dnd: 世界段',
-        )
-        scope.effect(
-          () => prompt.variable(PARTY_VAR, () => partyText()),
-          'roroko-dnd: 队伍段变量',
-        )
-        scope.effect(
-          () => prompt.section({ name: 'dnd:party', order: base + 2, text: `{{${PARTY_VAR}}}` }),
-          'roroko-dnd: 队伍段',
-        )
-        log('注入段已注册 · dnd:world / dnd:party')
-      })
-    }
-  }
 
   surface.effect(() => registerDndMount({ root, config }), 'dnd.status()')
   // 轮询兜底：profile 层的桥实例收不分桶、也未必收得到 agent 事件，

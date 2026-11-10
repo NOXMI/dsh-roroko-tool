@@ -22,7 +22,7 @@ import z from '@deepseek-ai/schemastery'
 import { mount as mountPreinject, type PreinjectConfig } from './preinject.js'
 import { mount as mountDatas, type DatasConfig } from './datas/index.js'
 import { mount as mountMemory, type MemoryConfig } from './memory/index.js'
-import { mount as mountDnd, type DndConfig } from './dnd/index.js'
+import { mount as mountDnd, mountInject as mountDndInject, type DndConfig } from './dnd/index.js'
 import { registerStateRoutes, type WebServerLike, type PresetRegistryLike } from './routes.js'
 
 export { DEFAULTS, resolveEffective } from './preinject.js'
@@ -208,9 +208,17 @@ export function apply(ctx: Context, config: RorokoToolConfig = {}): void {
   // 缺席只让桥不建会话，工具照常。
   const dnd = config.dnd
   if (dnd !== undefined && dnd !== false && (dnd === true || dnd.enabled !== false)) {
+    const dndConfig = dnd === true ? {} : dnd
     surface.inject(['tools'], (scope) => {
-      mountDnd(scope, dnd === true ? {} : dnd, () => services)
+      mountDnd(scope, dndConfig, () => services)
     })
+    // 注入段走另一条服务线（systemPrompt），与 preinject 同一个路子。
+    // 桥那份（tools: false）不挂，它不需要往系统提示词里塞东西。
+    if (dndConfig.tools !== false) {
+      surface.inject(['systemPrompt'], (scope) => {
+        mountDndInject(scope, dndConfig)
+      })
+    }
   }
 }
 
