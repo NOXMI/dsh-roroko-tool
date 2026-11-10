@@ -39,6 +39,10 @@ export const moduleName = 'roroko-dnd'
  */
 let sharedRoom: string | undefined
 
+/** 两个注入段的变量名（段里只放宏，正文由 provider 现读一次就固定）。 */
+const WORLD_VAR = 'roroko-dnd-world'
+const PARTY_VAR = 'roroko-dnd-party'
+
 const dshHome = (): string => process.env.DSH_HOME ?? join(homedir(), '.dsh')
 
 export function defaultRoot(): string {
@@ -114,6 +118,37 @@ function withDb<T>(dbPath: string, fn: (db: DatabaseSync) => T): T {
 }
 
 const DICE = /^(\d{0,2})[dD](\d{1,4})([+-]\d{1,3})?$/
+
+/** 难度 → DC。DM 只判断「多难」，不判断数字。 */
+const DIFFICULTY: Record<string, number> = {
+  trivial: 5, easy: 10, normal: 15, hard: 20, deadly: 25,
+}
+
+/** 属性 → 视图里的调整值列。 */
+const ABILITY_COL: Record<string, string> = {
+  str: 'str_mod', dex: 'dex_mod', con: 'con_mod', int: 'int_mod', wis: 'wis_mod', cha: 'cha_mod',
+}
+
+/** 伤害档 → 骰式。DM 只判断「一下多狠」。 */
+const HURT_DICE: Record<string, string> = {
+  light: '1d6', medium: '2d6+2', heavy: '4d6+4', deadly: '6d6+8',
+}
+
+function int(value: unknown): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : 0
+}
+
+/** 血量档位：完好 / 轻伤 ≤3/4 / 重伤 ≤1/2 / 濒死 ≤1/4 / 倒地 0。 */
+function tierOf(hp: number, hpMax: number): string {
+  if (hpMax <= 0) return '完好'
+  if (hp <= 0) return '倒地'
+  const ratio = hp / hpMax
+  if (ratio <= 0.25) return '濒死'
+  if (ratio <= 0.5) return '重伤'
+  if (ratio <= 0.75) return '轻伤'
+  return '完好'
+}
 
 /** 掷骰：本地真随机。支持 NdM+K，N 缺省 1。 */
 export function rollDice(expr: string): {
@@ -194,6 +229,61 @@ export function mount(
     }
   }
 
+  /** 世界段正文：世界名 + 简介 + 房规。不含剧情进展，一次性。 */
+  const worldText = (): string => {
+    const room = sharedRoom
+    const path = dbPath()
+    if (!room || !existsSync(path)) return ''
+    try {
+      return withDb(path, (db) => {
+        const row = db.prepare(
+          'SELECT w.name, w.lore_brief, w.rules FROM rooms r'
+          + ' JOIN worlds w ON w.id = r.world_id WHERE r.id = ?',
+        ).get(room) as Record<string, unknown> | undefined
+        if (!row) return ''
+        const parts = [`[世界] ${String(row.name ?? '')}`, String(row.lore_brief ?? '')]
+        const rules = String(row.rules ?? '{}')
+        if (rules.length > 2 && rules !== '{}') parts.push(`[房规] ${rules}`)
+        return parts.filter(line => line.trim().length > 0).join('\n')
+      })
+    } catch {
+      return ''
+    }
+  }
+
+  /** 队伍段正文：名字 + 一句人设 + 来由。**一个数字都不给。** */
+  const partyText = (): string => {
+    const room = sharedRoom
+    const path = dbPath()
+    if (!room || !existsSync(path)) return ''
+    try {
+      return withDb(path, (db) => {
+        const rows = db.prepare(
+          'SELECT c.name, c.race, c.class, c.personality, c.extras FROM characters c'
+          + ' JOIN room_members m ON m.character_id = c.id WHERE m.room_id = ? ORDER BY m.joined_at',
+        ).all(room) as Array<Record<string, unknown>>
+        if (!rows.length) return ''
+        const lines = rows.map((row) => {
+          let intro = String(row.personality ?? '').trim()
+          if (!intro) {
+            try {
+              const extras = JSON.parse(String(row.extras ?? '{}')) as { intro?: unknown }
+              intro = String(extras.intro ?? '').trim()
+            } catch {
+              intro = ''
+            }
+          }
+          const who = `${String(row.race ?? '')}${String(row.class ?? '')}`
+          const head = `${String(row.name ?? '?')} —— ${who.length > 0 ? who : '来历不明'}`
+          return intro.length > 0 ? `${head}。${intro}` : head
+        })
+        return ['[队伍]', ...lines].join('\n')
+      })
+    } catch {
+      return ''
+    }
+  }
+
   /** 每个房间一个常驻会话，与 qq-gateway 的 peers 同构。 */
   const peers = new Map<string, Peer>()
   const disposers: Array<() => void> = []
@@ -248,6 +338,17 @@ export function mount(
     })
     const peer: Peer = { handle, queue: [], busy: false }
     peers.set(room, peer)
+    // 回填 session_id：注入段的 provider 靠它反查房间
+    try {
+      const path = dbPath()
+      if (existsSync(path)) {
+        withDb(path, (db) => {
+          db.prepare('UPDATE rooms SET session_id = ? WHERE id = ?').run(sessionId, room)
+        })
+      }
+    } catch (error) {
+      log('回填 session_id 失败', error instanceof Error ? error.message : String(error))
+    }
     log('会话已建立', sessionId, 'preset=' + (preset?.id ?? '(默认)'))
     return peer
   }
@@ -435,6 +536,142 @@ export function mount(
     },
   })
 
+  // ── 检定与伤害：加值由服务器算，DM 只看成败 ────────────────
+  const checkTool = defineTool({
+    name: 'dnd_check',
+    description:
+      '检定。你只给：谁、要干什么、这件事本身多难。加值和骰子由服务器算，你拿到的只有成败。'
+      + '难度看事不看人：锈死的锁 normal，冻住的锁 hard，普通门闩 easy。',
+    parameters: {
+      who: { type: 'string', required: true, description: '角色名' },
+      intent: { type: 'string', required: true, description: '要干什么，一句话' },
+      difficulty: {
+        type: 'string',
+        required: true,
+        enum: ['trivial', 'easy', 'normal', 'hard', 'deadly'],
+        description: '这件事本身多难',
+      },
+      ability: {
+        type: 'string',
+        enum: ['str', 'dex', 'con', 'int', 'wis', 'cha'],
+        description: '靠哪项属性，默认 dex',
+      },
+      skill: { type: 'string', description: '技能名（可选，用来算熟练）' },
+    },
+    output: { schema: { type: 'string' }, render: textRender },
+    async execute(args: { who: string; intent: string; difficulty: string; ability?: string; skill?: string }) {
+      const room = sharedRoom
+      if (!room) return '当前没有活跃房间。'
+      const path = dbPath()
+      if (!existsSync(path)) return `库还没建：${path}`
+      const dc = DIFFICULTY[String(args.difficulty ?? 'normal')] ?? 15
+      const col = ABILITY_COL[String(args.ability ?? 'dex')] ?? 'dex_mod'
+      try {
+        return withDb(path, (db) => {
+          const row = db
+            .prepare(
+              `SELECT v.name, v.${col} AS mod, v.prof_bonus, v.skills FROM v_characters v`
+              + ' JOIN room_members m ON m.character_id = v.id'
+              + ' WHERE m.room_id = ? AND v.name = ? LIMIT 1',
+            )
+            .get(room, String(args.who)) as Record<string, unknown> | undefined
+          if (!row) return `房间里找不到「${args.who}」。`
+          let bonus = Number(row.mod ?? 0)
+          const skill = String(args.skill ?? '').trim()
+          const prof = Number(row.prof_bonus ?? 2)
+          if (skill.length > 0) {
+            try {
+              const table = JSON.parse(String(row.skills ?? '{}')) as Record<string, string>
+              const level = table[skill]
+              if (level === 'prof') bonus += prof
+              else if (level === 'exp') bonus += prof * 2
+            } catch {
+              // 熟练表坏了就当没熟练
+            }
+          }
+          const die = 1 + Math.floor(Math.random() * 20)
+          const total = die + bonus
+          const passed = total >= dc
+          recordRoll({
+            room,
+            expr: `1d20+${bonus}`,
+            dice: [die],
+            total,
+            why: `${args.who} · ${args.intent}（DC ${dc}）`,
+          })
+          const verdict = die === 20 ? '大成功' : die === 1 ? '大失败' : passed ? '成功' : '失败'
+          const gap = total - dc
+          return `${args.who} · ${args.intent} → **${verdict}**（${total} vs DC ${dc}，差 ${gap >= 0 ? '+' : ''}${gap}）`
+        })
+      } catch (error) {
+        return '检定失败：' + (error instanceof Error ? error.message : String(error))
+      }
+    },
+    presentCall(args: { who: string; intent: string }) {
+      return { card: 'generic', title: `检定 ${args.who}`, kind: 'read', rawInput: args.intent }
+    },
+  })
+
+  const hurtTool = defineTool({
+    name: 'dnd_hurt',
+    description:
+      '造成伤害。你只给：谁、这一下有多狠。伤害骰与血量由服务器算，你拿到的只有新的档位。'
+      + '轻伤 light / 中伤 medium / 重击 heavy / 致命 deadly。',
+    parameters: {
+      who: { type: 'string', required: true, description: '挨打的人' },
+      severity: {
+        type: 'string',
+        required: true,
+        enum: ['light', 'medium', 'heavy', 'deadly'],
+        description: '这一下多狠',
+      },
+      note: { type: 'string', description: '怎么挨的，写进日志' },
+    },
+    output: { schema: { type: 'string' }, render: textRender },
+    async execute(args: { who: string; severity: string; note?: string }) {
+      const room = sharedRoom
+      if (!room) return '当前没有活跃房间。'
+      const path = dbPath()
+      if (!existsSync(path)) return `库还没建：${path}`
+      const expr = HURT_DICE[String(args.severity ?? 'medium')] ?? '2d6+2'
+      const roll = rollDice(expr)
+      if (!roll) return `伤害骰算不出来：${expr}`
+      try {
+        return withDb(path, (db) => {
+          const row = db
+            .prepare(
+              'SELECT v.id, v.name, v.hp, v.hp_max FROM v_characters v'
+              + ' JOIN room_members m ON m.character_id = v.id'
+              + ' WHERE m.room_id = ? AND v.name = ? LIMIT 1',
+            )
+            .get(room, String(args.who)) as Record<string, unknown> | undefined
+          if (!row) return `房间里找不到「${args.who}」。`
+          const before = int(row?.hp)
+          const max = int(row?.hp_max)
+          const after = Math.max(0, before - roll.total)
+          db.prepare('UPDATE characters SET hp = ? WHERE id = ?').run(after, int(row?.id))
+          recordRoll({
+            room,
+            expr,
+            dice: roll.dice,
+            total: roll.total,
+            why: `${args.who} 受到伤害${args.note ? '：' + args.note : ''}`,
+          })
+          const tier = tierOf(after, max)
+          const danger = after <= 0
+            ? '已经倒地，需要立刻稳定伤势'
+            : after <= max * 0.25 ? '再挨一下就倒' : ''
+          return `${args.who} 吃了 ${roll.total} 点（${expr}）→ 现在 **${tier}**${danger ? '，' + danger : ''}。`
+        })
+      } catch (error) {
+        return '结算伤害失败：' + (error instanceof Error ? error.message : String(error))
+      }
+    },
+    presentCall(args: { who: string; severity: string }) {
+      return { card: 'generic', title: `伤害 ${args.who}`, kind: 'edit', rawInput: args.severity }
+    },
+  })
+
   const partyTool = defineTool({
     name: 'dnd_party',
     description: '读当前房间的全员角色卡（属性与调整值 / HP / AC / 条件 / 手持 / 经验），裁定前先看这个，别凭记忆。',
@@ -552,6 +789,8 @@ export function mount(
     started = true
     if (config.tools !== false) {
       disposers.push(surface.tools.register(rollTool))
+      disposers.push(surface.tools.register(checkTool))
+      disposers.push(surface.tools.register(hurtTool))
       disposers.push(surface.tools.register(partyTool))
       disposers.push(surface.tools.register(applyTool))
     }
@@ -611,6 +850,46 @@ export function mount(
     if (id !== undefined) activePreset = id
     sync()
   })
+
+  // ── 注入段（一次性：世界 + 队伍，不含任何数字）─────────────
+  // 只注册一次、内容不随轮次变，所以是固定前缀，缓存能一直命中。
+  // 只有挂工具的那份实例才注入（桥那份 tools:false，不掺和）。
+  if (config.tools !== false) {
+    const inject = (ctx as unknown as {
+      inject?: (services: string[], callback: (scope: unknown) => void) => unknown
+    }).inject
+    if (typeof inject === 'function') {
+      inject.call(ctx, ['systemPrompt'], (scopeRaw) => {
+        const scope = scopeRaw as {
+          systemPrompt: {
+            variable(name: string, provider: () => string): unknown
+            section(input: { name: string; order: number; text: string }): unknown
+            getSectionOrder(name: string): number
+          }
+          effect(callback: () => unknown, label?: string): unknown
+        }
+        const prompt = scope.systemPrompt
+        const base = prompt.getSectionOrder('DEPLOYMENT_PERSONA_PREFIX')
+        scope.effect(
+          () => prompt.variable(WORLD_VAR, () => worldText()),
+          'roroko-dnd: 世界段变量',
+        )
+        scope.effect(
+          () => prompt.section({ name: 'dnd:world', order: base + 1, text: `{{${WORLD_VAR}}}` }),
+          'roroko-dnd: 世界段',
+        )
+        scope.effect(
+          () => prompt.variable(PARTY_VAR, () => partyText()),
+          'roroko-dnd: 队伍段变量',
+        )
+        scope.effect(
+          () => prompt.section({ name: 'dnd:party', order: base + 2, text: `{{${PARTY_VAR}}}` }),
+          'roroko-dnd: 队伍段',
+        )
+        log('注入段已注册 · dnd:world / dnd:party')
+      })
+    }
+  }
 
   surface.effect(() => registerDndMount({ root, config }), 'dnd.status()')
   // 轮询兜底：profile 层的桥实例收不分桶、也未必收得到 agent 事件，
