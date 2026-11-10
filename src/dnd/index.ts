@@ -18,7 +18,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { openBridge, type Bridge, type InjectFrame } from './bridge.js'
-import { readDndState, resolveDnd } from './presets.js'
+import { DND_DEFAULTS, readDndState, resolveDnd } from './presets.js'
 import { registerDndMount } from '../state.js'
 
 export type { DndBucket, DndConfig, DndState } from './presets.js'
@@ -160,7 +160,7 @@ export function mount(
   const dbPath = (): string =>
     config.dbPath && config.dbPath.trim().length > 0
       ? config.dbPath.trim()
-      : join(defaultRoot(), 'data', 'dnd.db')
+      : (DND_DEFAULTS.dbPath as string)
 
   /** 本实例最近一次 inject 的房间：工具 execute 时现读。 */
   let activeRoom: string | undefined

@@ -12,6 +12,7 @@
         dnd:
           tools: false
           bridge: ws://127.0.0.1:8792
+          dbPath: /var/www/dnd/data/dnd.db
           preset: roroko_DND
           cwd: /root/roroko-workplace
           provider: deepseek-official

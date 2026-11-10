@@ -1,8 +1,12 @@
 # roroko_DND · 跑团形态（preset 层）
 #
 # 只挂两个桶：
-#   preinject —— 人格层，唯一注入 /root/.dsh/roroko_DND/IDENTITY.md
+#   preinject —— 人格层，清单走设置页（与 roroko 同一个路子，桶名 roroko_DND）
 #   dnd        —— 三把工具（dnd_roll / dnd_party / dnd_apply）
+#
+# 注入清单**不写死在这里**：照 preset-roroko 的做法只给空桶，实际清单落
+# $DSH_HOME/roroko/state/preinject.json 的 roroko_DND 桶，面板里改、即时生效。
+# IDENTITY.md 放 $DSH_HOME/roroko_DND/IDENTITY.md，桶里用绝对路径指过去。
 #
 # 桥不在这里（bridge: false）：会话是被桥创建的，桥不能挂在会话自己的 scope 里。
 # 桥挂在 profile 层，见 roroko_dnd_bridge.yml。
@@ -21,12 +25,10 @@
           - id: roroko-tool
             name: '@roroko-tool/dsh-roroko-tool'
             config:
-              preinject:
-                root: /root/.dsh/roroko_DND
-                systemFiles:
-                  - IDENTITY.md
+              preinject: {}
               dnd:
                 bridge: false
+                dbPath: /var/www/dnd/data/dnd.db
 
           - id: time-context
             name: '@deepseek-ai/dsh-time-context'

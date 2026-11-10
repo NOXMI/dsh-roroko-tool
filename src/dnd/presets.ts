@@ -38,6 +38,8 @@ export interface DndConfig {
 export const DND_DEFAULTS: DndConfig = {
   bridge: 'ws://127.0.0.1:8792',
   preset: 'roroko_DND',
+  // 库跟 gateway 放一起（/var/www/dnd），不放身份根下面 —— 它俩是一套的
+  dbPath: '/var/www/dnd/data/dnd.db',
   log: true,
 }
 
