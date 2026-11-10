@@ -67,6 +67,34 @@ function textRender(_args: unknown, value: string): ContentBlock[] {
   return [{ type: 'text', text: value }]
 }
 
+/** json 数组转字符串数组（坏数据当空）。 */
+function asList(value: unknown): string[] {
+  try {
+    const parsed: unknown = JSON.parse(String(value ?? '[]'))
+    return Array.isArray(parsed) ? parsed.map(item => String(item)) : []
+  } catch {
+    return []
+  }
+}
+
+/** 物品栏 json 转「长剑×1、火把×3」。 */
+function asItems(value: unknown): string {
+  try {
+    const parsed: unknown = JSON.parse(String(value ?? '[]'))
+    if (!Array.isArray(parsed) || parsed.length === 0) return '—'
+    return parsed
+      .map((item) => {
+        const bag = item as { name?: unknown; qty?: unknown }
+        const qty = Number(bag.qty)
+        const name = String(bag.name ?? '?')
+        return qty > 1 ? `${name}×${qty}` : name
+      })
+      .join('、')
+  } catch {
+    return '—'
+  }
+}
+
 function withDb<T>(dbPath: string, fn: (db: DatabaseSync) => T): T {
   const db = new DatabaseSync(dbPath)
   try {
@@ -369,7 +397,7 @@ export function mount(
 
   const partyTool = defineTool({
     name: 'dnd_party',
-    description: '读当前房间的全员角色卡（属性 / HP / AC / 手持 / 经验），裁定前先看这个，别凭记忆。',
+    description: '读当前房间的全员角色卡（属性与调整值 / HP / AC / 条件 / 手持 / 经验），裁定前先看这个，别凭记忆。',
     parameters: {},
     output: { schema: { type: 'string' }, render: textRender },
     async execute() {
@@ -381,16 +409,31 @@ export function mount(
         return withDb(path, (db) => {
           const rows = db
             .prepare(
-              'SELECT name, race, class, level, hp, hp_max, ac, str, dex, con, int_, wis, cha, inventory, xp'
-              + ' FROM characters WHERE room_id = ? ORDER BY id',
+              'SELECT name, race, class, level, hp, hp_max, hp_temp, ac, exhaustion, conditions, concentration,'
+              + ' str, dex, con, int_, wis, cha,'
+              + ' str_mod, dex_mod, con_mod, int_mod, wis_mod, cha_mod, prof_bonus, inventory, xp'
+              + ' FROM v_characters WHERE room_id = ? ORDER BY id',
             )
             .all(room) as Array<Record<string, unknown>>
           if (!rows.length) return `房间 ${room} 里还没人捏角色。`
-          const head = '| 角色 | 种族/职业 | 等级 | HP | AC | 属性 | 手持 | XP |'
-          const line = '| --- | --- | --- | --- | --- | --- | --- | --- |'
+          const head = '| 角色 | 种族/职业 | 等级 | HP | AC | 六属性（调整） | 熟练 | 状态 | 手持 | XP |'
+          const line = '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |'
           const body = rows.map((row) => {
-            const attrs = [row.str, row.dex, row.con, row.int_, row.wis, row.cha].join('/')
-            return `| ${row.name} | ${row.race ?? '?'}/${row.class ?? '?'} | ${row.level} | ${row.hp}/${row.hp_max} | ${row.ac} | ${attrs} | ${row.inventory ?? '—'} | ${row.xp} |`
+            const attrs = [
+              [row.str, row.str_mod], [row.dex, row.dex_mod], [row.con, row.con_mod],
+              [row.int_, row.int_mod], [row.wis, row.wis_mod], [row.cha, row.cha_mod],
+            ]
+              .map(([score, mod]) => `${score}(${Number(mod) >= 0 ? '+' : ''}${mod})`)
+              .join(' ')
+            const hp = `${row.hp}/${row.hp_max}${Number(row.hp_temp) > 0 ? `+${row.hp_temp}` : ''}`
+            const marks = [
+              ...asList(row.conditions),
+              Number(row.exhaustion) > 0 ? `力竭${row.exhaustion}` : '',
+              row.concentration ? `专注:${row.concentration}` : '',
+            ].filter(Boolean)
+            return `| ${row.name} | ${row.race ?? '?'}/${row.class ?? '?'} | ${row.level} | ${hp} | ${row.ac}`
+              + ` | ${attrs} | +${row.prof_bonus} | ${marks.length ? marks.join('、') : '—'}`
+              + ` | ${asItems(row.inventory)} | ${row.xp} |`
           })
           return ['## 队伍 · ' + room, '', head, line, ...body].join('\n')
         })
