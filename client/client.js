@@ -64,6 +64,11 @@ window.__ModuleLoader__.load({
 			aiMinGap: "最短间隔 N 轮",
 			on: "开",
 			off: "关",
+			dndTitle: "④ 跑团（dnd）",
+			dndHint: "dnd_roll / dnd_party / dnd_apply 三把工具 + 接 gateway 的桥。一个总开关管这两件事。",
+			dndEnabled: "启用跑团模块",
+			dndEnabledHint: "关掉只是撤下三把工具、断开桥；dnd.db 与人格文件原样留着，再打开就回来。",
+			dndStateFile: "开关文件",
 			memoryTitle: "③ 记忆（memory）",
 			memoryHint: "roroko_mem_* 四把工具：记一条 / 按日期回查 / 关键词检索 / 按 id 取全文；dream 定时把旧条反思收敛。",
 			memoryEnabled: "启用记忆（默认关闭）",
@@ -140,6 +145,11 @@ window.__ModuleLoader__.load({
 			aiMinGap: "min gap N rounds",
 			on: "on",
 			off: "off",
+			dndTitle: "④ Tabletop (dnd)",
+			dndHint: "The dnd_roll / dnd_party / dnd_apply tools plus the bridge to the gateway. One switch covers both.",
+			dndEnabled: "Enable the tabletop module",
+			dndEnabledHint: "Turning it off only withdraws the three tools and drops the bridge; dnd.db and the persona file stay untouched.",
+			dndStateFile: "Switch file",
 			memoryTitle: "③ Memory (memory)",
 			memoryHint: "The four roroko_mem_* tools (write / by date / keyword search / full text); dream condenses old entries on a timer.",
 			memoryEnabled: "Enable memory (off by default)",
@@ -1253,6 +1263,89 @@ window.__ModuleLoader__.load({
 			] });
 		}
 		/**
+		* 跑团面板：只有一个总开关。
+		*
+		* 关掉只是撤下三把工具、断开桥；dnd.db 与 IDENTITY.md 一个字节不碰，
+		* preinject / datas / memory 的桶也不受影响。不分预设、不分桶。
+		*/
+		function DndPanel(props) {
+			const { t, stateFile, onSaved } = props;
+			const [enabled, setEnabled] = (0, react.useState)(props.enabled);
+			const [saving, setSaving] = (0, react.useState)(false);
+			const [saved, setSaved] = (0, react.useState)(false);
+			const [error, setError] = (0, react.useState)(null);
+			(0, react.useEffect)(() => {
+				setEnabled(props.enabled);
+			}, [props.enabled]);
+			const toggle = () => {
+				const next = !enabled;
+				setEnabled(next);
+				setSaved(false);
+				setError(null);
+				setSaving(true);
+				saveConfig({
+					section: "dnd",
+					enabled: next
+				}).then((ack) => {
+					if (ack.ok !== true) throw new Error(ack.reason ?? "宿主拒绝");
+					setSaved(true);
+					onSaved();
+				}).catch((cause) => {
+					setError(cause instanceof Error ? cause.message : String(cause));
+					setEnabled(!next);
+				}).finally(() => {
+					setSaving(false);
+				});
+			};
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(PanelShell, { children: [
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+					style: {
+						...coverLabelStyle,
+						fontWeight: 600
+					},
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+						type: "checkbox",
+						checked: enabled,
+						disabled: saving,
+						onChange: toggle
+					}), t("dndEnabled")]
+				}),
+				/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+					style: {
+						...hintStyle,
+						marginBottom: 6
+					},
+					children: t("dndEnabledHint")
+				}),
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					style: hintStyle,
+					children: [
+						t("dndStateFile"),
+						": ",
+						stateFile
+					]
+				}),
+				error === null ? null : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					style: {
+						...hintStyle,
+						color: "var(--dsw-text-danger, #e5484d)"
+					},
+					children: [
+						t("saveFailed"),
+						": ",
+						error
+					]
+				}),
+				saved ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+					style: {
+						...hintStyle,
+						color: "var(--dsw-text-success, #46a758)"
+					},
+					children: t("saved")
+				}) : null
+			] });
+		}
+		/**
 		* 设置页主体。
 		* @param props - 页签所有者传入的属性。
 		* @returns 设置页元素。
@@ -1323,6 +1416,7 @@ window.__ModuleLoader__.load({
 			const roster = new Map((state.roster ?? []).map((row) => [row.id, row]));
 			const datas = state.datas;
 			const memory = state.memory;
+			const dnd = state.dnd;
 			const current = scopes.includes(activeScope) ? activeScope : scopes[0] ?? "common";
 			/** 该作用域有没有自己的桶（三个模块任一）—— 决定 chips 上的实心点。 */
 			const hasBucket = (scope) => state.presets?.[scope] !== void 0 || datas?.presets[scope] !== void 0 || memory?.presets[scope] !== void 0;
@@ -1450,7 +1544,13 @@ window.__ModuleLoader__.load({
 							last: null
 						},
 						onSaved: load
-					}, `memory:${current}`)) : null
+					}, `memory:${current}`)) : null,
+					dnd !== void 0 && dnd.mounted ? sectionOf("dnd", t("dndTitle"), t("dndHint"), [dnd.enabled ?? dnd.defaults.enabled ? t("on") : t("off")], /* @__PURE__ */ (0, react_jsx_runtime.jsx)(DndPanel, {
+						t,
+						enabled: dnd.enabled ?? dnd.defaults.enabled,
+						stateFile: dnd.stateFile,
+						onSaved: load
+					}, "dnd")) : null
 				]
 			});
 		}

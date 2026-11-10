@@ -29,7 +29,10 @@ import {
   clearMemoryBucket, memoryStateFile, memoryWiring, readMemoryState, resolveMemory,
   setMemoryBucket, type EffectiveMemory, type MemoryConfig,
 } from './memory/presets.js'
-import { firstDatasMount, firstMemoryMount, firstMount } from './state.js'
+import { firstDatasMount, firstDndMount, firstMemoryMount, firstMount } from './state.js'
+import {
+  DND_STATE_DEFAULTS, dndStateFile, readDndState, setDndState,
+} from './dnd/presets.js'
 
 /** webServer 服务的最小面。 */
 export interface WebServerLike {
@@ -187,7 +190,8 @@ export function registerStateRoutes(
       const mount = firstMount()
       const datasMount = firstDatasMount()
       const memoryMount = firstMemoryMount()
-      if (mount === undefined && datasMount === undefined && memoryMount === undefined) {
+      const dndMount = firstDndMount()
+      if (mount === undefined && datasMount === undefined && memoryMount === undefined && dndMount === undefined) {
         json(res, 200, { version, mounted: false })
         return
       }
@@ -228,8 +232,8 @@ export function registerStateRoutes(
 
       json(res, 200, {
         version,
-        // 三块任一挂上就算"有东西可配"：只挂 datas / memory 时也得渲染对应卡。
-        mounted: mount !== undefined || datasMount !== undefined || memoryMount !== undefined,
+        // 三块任一挂上就算"有东西可配"：只挂 datas / memory / dnd 时也得渲染对应卡。
+        mounted: mount !== undefined || datasMount !== undefined || memoryMount !== undefined || dndMount !== undefined,
         root,
         stateFile: mount === undefined ? undefined : stateFile(mount.root),
         presets: state.presets,
@@ -260,6 +264,13 @@ export function registerStateRoutes(
             config: dreamRuntime?.config ?? null,
             last: dreamRuntime?.last ?? null,
           },
+        },
+        // dnd 只要一个总开关：不分桶，一个 enabled 管工具 + 桥。
+        dnd: {
+          mounted: dndMount !== undefined,
+          stateFile: dndStateFile(dndMount?.root ?? root),
+          defaults: DND_STATE_DEFAULTS,
+          enabled: dndMount === undefined ? undefined : readDndState(dndMount.root).enabled,
         },
       })
     },
@@ -314,6 +325,21 @@ export function registerStateRoutes(
         const state = patch.reset === true
           ? await clearMemoryBucket(memoryMount.root, scope)
           : await setMemoryBucket(memoryMount.root, scope, patch)
+        json(res, 200, { ok: true, state })
+        return
+      }
+      if (section === 'dnd') {
+        // dnd 不分桶：一个 enabled 管工具 + 桥。只认这一个字段，别的一律不理。
+        const dndMount = firstDndMount()
+        if (dndMount === undefined) {
+          json(res, 200, { ok: false, reason: '未挂载 dnd，没有可写的开关' })
+          return
+        }
+        if (typeof patch.enabled !== 'boolean') {
+          json(res, 400, { ok: false, reason: 'dnd 只认 enabled（布尔）' })
+          return
+        }
+        const state = await setDndState(dndMount.root, { enabled: patch.enabled })
         json(res, 200, { ok: true, state })
         return
       }

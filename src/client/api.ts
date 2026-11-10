@@ -120,8 +120,15 @@ export interface PresetRow {
   broken?: string
 }
 
-/** 设置页拿到的全量状态。 */
-export interface StateBody {
+/** dnd 侧全量状态：不分桶，就一个总开关。 */
+export interface DndBody {
+  mounted: boolean
+  stateFile: string
+  defaults: { enabled: boolean }
+  enabled?: boolean
+}
+
+/** 设置页拿到的全量状态。 */export interface StateBody {
   version: string
   mounted: boolean
   root?: string
@@ -137,6 +144,8 @@ export interface StateBody {
   datas?: DatasBody
   /** 记忆子模块（没挂载时为 undefined）。 */
   memory?: MemoryBody
+  /** 跑团子模块（没挂载时为 undefined）：只有一个总开关。 */
+  dnd?: DndBody
 }
 
 /** 写失败的通用形状。 */

@@ -10,6 +10,7 @@ import type { PreinjectConfig } from './preinject.js'
 import type { DatasConfig } from './datas/presets.js'
 import type { DreamRuntime } from './memory/dream.js'
 import type { MemoryConfig } from './memory/presets.js'
+import type { DndConfig } from './dnd/presets.js'
 
 export interface MountStatus {
   /** 文件基准目录（身份根）。 */
@@ -36,6 +37,14 @@ export interface MemoryMountStatus {
   runtime: DreamRuntime
 }
 
+/** dnd 子模块的挂载登记。 */
+export interface DndMountStatus {
+  /** 身份根（state 与 dnd.db 都在这下面）。 */
+  root: string
+  /** 接线层参数。 */
+  config: DndConfig
+}
+
 /** 一张挂载表：登记 + 注销 + 取首个。 */
 function slots<T>(): { register(status: T): () => void; all(): T[]; first(): T | undefined } {
   const items = new Map<number, T>()
@@ -57,6 +66,7 @@ function slots<T>(): { register(status: T): () => void; all(): T[]; first(): T |
 const PREINJECT = slots<MountStatus>()
 const DATAS = slots<DatasMountStatus>()
 const MEMORY = slots<MemoryMountStatus>()
+const DND = slots<DndMountStatus>()
 
 /**
  * 登记一次 preinject 挂载。
@@ -103,4 +113,18 @@ export function registerMemoryMount(status: MemoryMountStatus): () => void {
 /** 首个 memory 挂载（设置页与手动触发只跟一个实例对话）。 */
 export function firstMemoryMount(): MemoryMountStatus | undefined {
   return MEMORY.first()
+}
+
+/**
+ * 登记一次 dnd 挂载。
+ * @param status - 本次挂载的实际配置。
+ * @returns 注销函数。
+ */
+export function registerDndMount(status: DndMountStatus): () => void {
+  return DND.register(status)
+}
+
+/** 首个 dnd 挂载（设置页只跟一个实例对话）。 */
+export function firstDndMount(): DndMountStatus | undefined {
+  return DND.first()
 }

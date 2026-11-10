@@ -18,9 +18,11 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { openBridge, type Bridge, type InjectFrame } from './bridge.js'
+import { DND_DEFAULTS, readDndState } from './presets.js'
+import { registerDndMount } from '../state.js'
 
-export type { DndConfig } from './presets.js'
-export { DND_DEFAULTS } from './presets.js'
+export type { DndConfig, DndState } from './presets.js'
+export { DND_DEFAULTS, DND_STATE_DEFAULTS, dndStateFile, readDndState, setDndState } from './presets.js'
 
 /** 子模块标识：只用于日志与消息来源签名，不是独立插件。 */
 export const moduleName = 'roroko-dnd'
@@ -313,7 +315,10 @@ export function mount(
 
   // ── 桥 ─────────────────────────────────────────────────────
   let bridge: Bridge | undefined
-  if (config.bridge !== false) {
+
+  /** 起桥。总开关关着时走不到这里。 */
+  function startBridge(): void {
+    if (bridge !== undefined || config.bridge === false) return
     const base = typeof config.bridge === 'string' && config.bridge.trim().length > 0
       ? config.bridge.trim()
       : 'ws://127.0.0.1:8792'
@@ -328,7 +333,10 @@ export function mount(
       url = base
     }
     bridge = openBridge(url, { onInject, log: (...args) => log(...args) })
-    disposers.push(() => bridge?.close())
+    disposers.push(() => {
+      bridge?.close()
+      bridge = undefined
+    })
   }
 
   // ── 工具 ───────────────────────────────────────────────────
@@ -403,12 +411,12 @@ export function mount(
       patch: { type: 'json', required: true, description: '要改的字段对象，如 {"hp":12}。' },
     },
     output: { schema: { type: 'string' }, render: textRender },
-    async execute(args: { character: string; patch: Record<string, unknown> }) {
+    async execute(args: { character: string; patch: unknown }) {
       const room = activeRoom
       if (!room) return '当前没有活跃房间，改不了。'
       const path = dbPath()
       if (!existsSync(path)) return `库还没建：${path}`
-      const patch = args.patch ?? {}
+      const patch = (args.patch ?? {}) as Record<string, unknown>
       const keys = Object.keys(patch).filter((key) => (APPLY_FIELDS as readonly string[]).includes(key))
       if (!keys.length) return '可改字段：' + APPLY_FIELDS.join(' / ')
       try {
@@ -434,25 +442,36 @@ export function mount(
         return '写库失败：' + (error instanceof Error ? error.message : String(error))
       }
     },
-    presentCall(args: { character: string }) {
+    presentCall(args: { character: string; patch?: unknown }) {
       return { card: 'generic', title: `改 ${args.character}`, kind: 'edit', rawInput: JSON.stringify(args.patch) }
     },
   })
 
-  // 工具与桥分开开关：preset 里挂工具（bridge: false），profile 层挂桥（tools: false）。
-  // 会话是被桥创建的，桥不能挂在会话自己的 scope 里，否则鸡生蛋。
-  if (config.tools !== false) {
-    disposers.push(surface.tools.register(rollTool))
-    disposers.push(surface.tools.register(partyTool))
-    disposers.push(surface.tools.register(applyTool))
-  }
-  log(
-    'enabled → 工具' + (config.tools === false ? '关' : '三把已注册')
-    + '，桥=' + (config.bridge === false ? '关' : '开'),
-  )
+  // ── 总开关 ─────────────────────────────────────────────────
+  // 一个开关管整个子模块：工具 + 桥。关掉只是撤下工具、断开桥，
+  // dnd.db 与 IDENTITY.md 一个字节不碰，别的模块的桶也不受影响。
+  const root = config.root !== undefined && config.root.trim().length > 0
+    ? config.root.trim()
+    : defaultRoot()
+  let started = false
 
-  // ── 收尾 ───────────────────────────────────────────────────
+  /** 开：按 tools / bridge 两个接线开关分别挂。 */
+  const start = (): void => {
+    if (started) return
+    started = true
+    if (config.tools !== false) {
+      disposers.push(surface.tools.register(rollTool))
+      disposers.push(surface.tools.register(partyTool))
+      disposers.push(surface.tools.register(applyTool))
+    }
+    startBridge()
+    log('开 → 工具' + (config.tools === false ? '关' : '三把已注册') + '，桥=' + (bridge ? '连' : '关'))
+  }
+
+  /** 关：撤工具、断桥、清会话。库与人格文件原样留着。 */
   const stop = (): void => {
+    if (!started) return
+    started = false
     for (const dispose of disposers.splice(0).reverse()) {
       try {
         dispose()
@@ -467,8 +486,34 @@ export function mount(
       }
     }
     peers.clear()
+    log('关 → 工具撤下、桥断开')
   }
 
-  surface.effect(() => stop, 'roroko-dnd: 桥与工具')
+  /** 读开关对齐一次（幂等，状态没变就什么都不做）。 */
+  const sync = (): void => {
+    let on = true
+    try {
+      on = config.enabled === false ? false : readDndState(root).enabled
+    } catch (error) {
+      log('读开关失败，保持现状', error instanceof Error ? error.message : String(error))
+      return
+    }
+    if (on) start()
+    else stop()
+  }
+
+  surface.effect(() => registerDndMount({ root, config }), 'dnd.status()')
+  // 轮询而不是挂会话事件：profile 层的桥实例未必收得到 agent 事件，
+  // 而两份实例读的是同一份 state，读文件最不容易漏。
+  const timer = setInterval(sync, 3000)
+  surface.effect(
+    () => () => {
+      clearInterval(timer)
+      stop()
+    },
+    'roroko-dnd: 总开关',
+  )
+  sync()
+
   return stop
 }

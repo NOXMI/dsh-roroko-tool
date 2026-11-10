@@ -886,6 +886,69 @@ function MemoryPanel(props: {
 }
 
 /**
+ * 跑团面板：只有一个总开关。
+ *
+ * 关掉只是撤下三把工具、断开桥；dnd.db 与 IDENTITY.md 一个字节不碰，
+ * preinject / datas / memory 的桶也不受影响。不分预设、不分桶。
+ */
+function DndPanel(props: {
+  t: (key: string) => string
+  enabled: boolean
+  stateFile: string
+  onSaved: () => void
+}): React.ReactElement {
+  const { t, stateFile, onSaved } = props
+  const [enabled, setEnabled] = useState(props.enabled)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // 外面刷新过状态就跟着走（别让本地勾选盖住真值）
+  useEffect(() => { setEnabled(props.enabled) }, [props.enabled])
+
+  const toggle = (): void => {
+    const next = !enabled
+    setEnabled(next)
+    setSaved(false)
+    setError(null)
+    setSaving(true)
+    saveConfig({ section: 'dnd', enabled: next })
+      .then((ack) => {
+        if (ack.ok !== true) throw new Error(ack.reason ?? '宿主拒绝')
+        setSaved(true)
+        onSaved()
+      })
+      .catch((cause: unknown) => {
+        setError(cause instanceof Error ? cause.message : String(cause))
+        setEnabled(!next)
+      })
+      .finally(() => { setSaving(false) })
+  }
+
+  return (
+    <PanelShell>
+      <label style={{ ...coverLabelStyle, fontWeight: 600 }}>
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={saving}
+          onChange={toggle}
+        />
+        {t('dndEnabled')}
+      </label>
+      <div style={{ ...hintStyle, marginBottom: 6 }}>{t('dndEnabledHint')}</div>
+      <div style={hintStyle}>{t('dndStateFile')}: {stateFile}</div>
+      {error === null ? null : (
+        <div style={{ ...hintStyle, color: 'var(--dsw-text-danger, #e5484d)' }}>{t('saveFailed')}: {error}</div>
+      )}
+      {saved ? (
+        <div style={{ ...hintStyle, color: 'var(--dsw-text-success, #46a758)' }}>{t('saved')}</div>
+      ) : null}
+    </PanelShell>
+  )
+}
+
+/**
  * 设置页主体。
  * @param props - 页签所有者传入的属性。
  * @returns 设置页元素。
@@ -941,6 +1004,7 @@ function MemoryPanel(props: {
   const roster = new Map((state.roster ?? []).map(row => [row.id, row]))
   const datas = state.datas
   const memory = state.memory
+  const dnd = state.dnd
 
   // 作用域列表变了（新建/删除 preset 后刷新）→ 当前选中的若已不存在，回落到第一个。
   const current = scopes.includes(activeScope) ? activeScope : (scopes[0] ?? 'common')
@@ -1079,6 +1143,23 @@ function MemoryPanel(props: {
               },
             }}
             dream={memory.dream ?? { running: false, started: false, config: null, last: null }}
+            onSaved={load}
+          />,
+        )
+        : null}
+
+      {/* dnd 不分作用域：一个总开关管工具 + 桥，所以固定用同一个 key，不跟 current 走。 */}
+      {dnd !== undefined && dnd.mounted
+        ? sectionOf(
+          'dnd',
+          t('dndTitle'),
+          t('dndHint'),
+          [(dnd.enabled ?? dnd.defaults.enabled) ? t('on') : t('off')],
+          <DndPanel
+            key="dnd"
+            t={t}
+            enabled={dnd.enabled ?? dnd.defaults.enabled}
+            stateFile={dnd.stateFile}
             onSaved={load}
           />,
         )

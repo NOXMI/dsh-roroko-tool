@@ -386,14 +386,10 @@ declare function memoryWiring(config: MemoryConfig): Record<string, unknown>;
 declare function resolveMemory(config: MemoryConfig, state: MemoryState, presetId: string | undefined): EffectiveMemory;
 //#endregion
 //#region src/dnd/presets.d.ts
-/**
- * dnd 子模块的配置形状。preset 里直接给这一份，不做设置页桶
- * （跑团这套是给玩家的，参数少，改一次就定）。
- */
 interface DndConfig {
-  /** false 时不挂载本模块。 */
+  /** false 时不挂载本模块（接线层，改这个要重启）。 */
   enabled?: boolean;
-  /** 身份根（默认 $DSH_HOME/roroko_DND）。IDENTITY.md 也在这下面。 */
+  /** 身份根（默认 $DSH_HOME/roroko_DND）。IDENTITY.md 与 state 都在这下面。 */
   root?: string;
   /** dnd.db 路径（默认 <root>/data/dnd.db）。 */
   dbPath?: string;
