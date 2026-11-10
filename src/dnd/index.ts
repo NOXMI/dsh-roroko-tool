@@ -419,7 +419,8 @@ export function mount(
               'SELECT name, race, class, level, hp, hp_max, hp_temp, ac, exhaustion, conditions, concentration,'
               + ' str, dex, con, int_, wis, cha,'
               + ' str_mod, dex_mod, con_mod, int_mod, wis_mod, cha_mod, prof_bonus, inventory, xp'
-              + ' FROM v_characters WHERE room_id = ? ORDER BY id',
+              + ' FROM v_characters v JOIN room_members m ON m.character_id = v.id'
+              + ' WHERE m.room_id = ? ORDER BY v.id',
             )
             .all(room) as Array<Record<string, unknown>>
           if (!rows.length) return `房间 ${room} 里还没人捏角色。`
@@ -476,7 +477,8 @@ export function mount(
       try {
         return withDb(path, (db) => {
           const target = db
-            .prepare('SELECT id FROM characters WHERE room_id = ? AND name = ? LIMIT 1')
+            .prepare('SELECT c.id FROM characters c JOIN room_members m ON m.character_id = c.id'
+              + ' WHERE m.room_id = ? AND c.name = ? LIMIT 1')
             .get(room, String(args.character)) as { id?: number } | undefined
           if (!target?.id) return `房间 ${room} 里没有叫「${args.character}」的角色。`
           const sets = keys.map((key) => `${key} = ?`).join(', ')
