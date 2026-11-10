@@ -171,6 +171,29 @@ export function mount(
       ? config.dbPath.trim()
       : (DND_DEFAULTS.dbPath as string)
 
+  /** 掷骰留痕：写 rolls 表。写不进去不把工具打崩。 */
+  const recordRoll = (item: {
+    room?: string
+    expr: string
+    dice: number[]
+    total: number
+    why: string
+  }): void => {
+    if (!item.room) return
+    const path = dbPath()
+    if (!existsSync(path)) return
+    try {
+      withDb(path, (db) => {
+        db.prepare(
+          "INSERT INTO rolls(room_id, who, expr, dice, total, why, decision)"
+          + " VALUES(?, ?, ?, ?, ?, ?, 'rolled')",
+        ).run(item.room as string, '', item.expr, JSON.stringify(item.dice), item.total, item.why)
+      })
+    } catch (error) {
+      log('掷骰留痕失败', error instanceof Error ? error.message : String(error))
+    }
+  }
+
   /** 每个房间一个常驻会话，与 qq-gateway 的 peers 同构。 */
   const peers = new Map<string, Peer>()
   const disposers: Array<() => void> = []
@@ -395,7 +418,17 @@ export function mount(
       const detail = result.dice.join(' + ')
       const mod = result.mod === 0 ? '' : result.mod > 0 ? ` + ${result.mod}` : ` - ${Math.abs(result.mod)}`
       const head = args.why ? `${args.why}\n` : ''
-      return `${head}${result.n}d${result.sides}${result.mod === 0 ? '' : (result.mod > 0 ? '+' + result.mod : result.mod)} = [${detail}]${mod} → **${result.total}**`
+      const expr = `${result.n}d${result.sides}${result.mod === 0 ? '' : (result.mod > 0 ? '+' + result.mod : result.mod)}`
+      // 每颗骰子留痕：事后要能查「它是不是自己编的」
+      recordRoll({
+        room: sharedRoom,
+        expr,
+        dice: result.dice,
+        total: result.total,
+        why: String(args.why ?? ''),
+      })
+      log(`掷骰 ${expr} = ${result.total}`, args.why ? `（${args.why}）` : '')
+      return `${head}${expr} = [${detail}]${mod} → **${result.total}**`
     },
     presentCall(args: { expr: string; why?: string }) {
       return { card: 'generic', title: `掷骰 ${args.expr}`, kind: 'other', rawInput: args.why ?? args.expr }
