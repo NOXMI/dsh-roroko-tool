@@ -30,6 +30,15 @@ export {
 /** 子模块标识：只用于日志与消息来源签名，不是独立插件。 */
 export const moduleName = 'roroko-dnd'
 
+/**
+ * 当前活跃房间：**桥写、工具读**。
+ *
+ * 桥（profile 层）与工具（preset 层）是同一进程里的两个实例，各自的实例变量
+ * 互相看不见 —— 所以这个必须放在模块级共享。同一时刻只有一个房间在跑
+ * （见设计里的硬约束），后一次 inject 覆盖前一次是可接受的。
+ */
+let sharedRoom: string | undefined
+
 const dshHome = (): string => process.env.DSH_HOME ?? join(homedir(), '.dsh')
 
 export function defaultRoot(): string {
@@ -162,8 +171,6 @@ export function mount(
       ? config.dbPath.trim()
       : (DND_DEFAULTS.dbPath as string)
 
-  /** 本实例最近一次 inject 的房间：工具 execute 时现读。 */
-  let activeRoom: string | undefined
   /** 每个房间一个常驻会话，与 qq-gateway 的 peers 同构。 */
   const peers = new Map<string, Peer>()
   const disposers: Array<() => void> = []
@@ -332,7 +339,7 @@ export function mount(
     const round = Number(frame.round ?? 0)
     const text = String(frame.text ?? '')
     if (!room || !text) return
-    activeRoom = room
+    sharedRoom = room
     ensurePeer(room)
       .then((peer) => {
         peer.queue.push({ round, text })
@@ -401,7 +408,7 @@ export function mount(
     parameters: {},
     output: { schema: { type: 'string' }, render: textRender },
     async execute() {
-      const room = activeRoom
+      const room = sharedRoom
       if (!room) return '当前没有活跃房间：等 gateway 塞进来一轮行动先。'
       const path = dbPath()
       if (!existsSync(path)) return `库还没建：${path}`
@@ -459,7 +466,7 @@ export function mount(
     },
     output: { schema: { type: 'string' }, render: textRender },
     async execute(args: { character: string; patch: unknown }) {
-      const room = activeRoom
+      const room = sharedRoom
       if (!room) return '当前没有活跃房间，改不了。'
       const path = dbPath()
       if (!existsSync(path)) return `库还没建：${path}`
