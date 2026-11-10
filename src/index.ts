@@ -22,6 +22,7 @@ import z from '@deepseek-ai/schemastery'
 import { mount as mountPreinject, type PreinjectConfig } from './preinject.js'
 import { mount as mountDatas, type DatasConfig } from './datas/index.js'
 import { mount as mountMemory, type MemoryConfig } from './memory/index.js'
+import { mount as mountDnd, type DndConfig } from './dnd/index.js'
 import { registerStateRoutes, type WebServerLike, type PresetRegistryLike } from './routes.js'
 
 export { DEFAULTS, resolveEffective } from './preinject.js'
@@ -95,6 +96,22 @@ export const Config: z<RorokoToolConfig> = z.object({
       }).description('定时反思（dream）'),
     }),
   ]).description('记忆子模块：roroko_mem_* 四把工具 + dream 定时反思'),
+  dnd: z.union([
+    z.boolean(),
+    z.object({
+      enabled: z.boolean().description('false 时不挂载本模块'),
+      root: z.string().description('身份根（默认 $DSH_HOME/roroko_DND）'),
+      dbPath: z.string().description('dnd.db 路径（默认 <root>/data/dnd.db）'),
+      bridge: z.union([z.string(), z.boolean()]).description('gateway 地址，false = 不连（只留工具）'),
+      token: z.string().description('与 gateway 约定的 token（缺省读 ROROKO_DND_TOKEN）'),
+      cwd: z.string().description('会话工作目录'),
+      preset: z.string().description('用哪个 preset 起会话（默认 roroko_DND）'),
+      provider: z.string().description('模型 provider'),
+      model: z.string().description('模型 id'),
+      maxTokens: z.number().description('单轮输出上限'),
+      log: z.boolean().description('打日志'),
+    }),
+  ]).description('跑团子模块：dnd_roll / dnd_party / dnd_apply 三把工具 + gateway 桥'),
 }) as z<RorokoToolConfig>
 /** 本包版本（设置页显示用）。 */
 export const version = '0.1.0'
@@ -104,6 +121,7 @@ export interface RorokoToolConfig {
   preinject?: PreinjectConfig | boolean
   datas?: DatasConfig | boolean
   memory?: MemoryConfig | boolean
+  dnd?: DndConfig | boolean
   // onahole?: OnaholeConfig | boolean
 }
 
@@ -182,6 +200,15 @@ export function apply(ctx: Context, config: RorokoToolConfig = {}): void {
   if (memory !== undefined && memory !== false && (memory === true || memory.enabled !== false)) {
     surface.inject(['tools'], (scope) => {
       mountMemory(scope, memory === true ? {} : memory, () => services)
+    })
+  }
+
+  // 跑团：三把工具 + gateway 桥。agents / presets 句柄由上面握好再递进去，
+  // 缺席只让桥不建会话，工具照常。
+  const dnd = config.dnd
+  if (dnd !== undefined && dnd !== false && (dnd === true || dnd.enabled !== false)) {
+    surface.inject(['tools'], (scope) => {
+      mountDnd(scope, dnd === true ? {} : dnd, () => services)
     })
   }
 }

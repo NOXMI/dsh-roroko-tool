@@ -1,0 +1,30 @@
+# roroko_DND · 跑团形态
+#
+# 只挂两个桶：
+#   preinject —— 人格层，唯一注入 /root/.dsh/roroko_DND/IDENTITY.md
+#   dnd        —— 三把工具（dnd_roll / dnd_party / dnd_apply）+ gateway 桥
+#
+# 不给 bash / fs / web / jobs / todo：DM 不需要摸服务器。
+# 生效方式：把整块 append 到 $DSH_HOME/profiles/web/cordis.patch.yml，重启 dsh-web。
+- insert:
+    - id: preset-roroko-dnd
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: roroko_DND
+        name: 洛洛可 DM
+        description: 跑团形态——人格由 IDENTITY.md 注入，user 输入由 gateway 组合后投递。
+        order: 40
+        plugins:
+          - id: roroko-tool
+            name: '@roroko-tool/dsh-roroko-tool'
+            config:
+              preinject:
+                root: /root/.dsh/roroko_DND
+                systemFiles:
+                  - IDENTITY.md
+              dnd:
+                bridge: ws://127.0.0.1:8792
+                preset: roroko_DND
+
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
