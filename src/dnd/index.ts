@@ -19,6 +19,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { openBridge, type Bridge, type InjectFrame } from './bridge.js'
 import { DND_DEFAULTS, readDndState, resolveDnd } from './presets.js'
+import { createNpcTool, createPlotTool, createSheetTool, createWorldTool } from './tools.js'
 import { registerDndMount } from '../state.js'
 
 export type { DndBucket, DndConfig, DndState } from './presets.js'
@@ -715,6 +716,18 @@ export function mount(
     },
   })
 
+  // 看世界那四把：单人卡 / 世界状态 / NPC / 剧情
+  const toolDeps = {
+    room: () => sharedRoom,
+    dbPath,
+    withDb,
+    log,
+  }
+  const sheetTool = createSheetTool(toolDeps)
+  const worldTool = createWorldTool(toolDeps)
+  const npcTool = createNpcTool(toolDeps)
+  const plotTool = createPlotTool(toolDeps)
+
   // ── 总开关（按 preset 分桶）───────────────────────────────
   // 一个开关管整个子模块：工具 + 桥。默认关，哪个 preset 想开就在自己的桶里
   // 覆盖。关掉只是撤下工具、断开桥，dnd.db 与 IDENTITY.md 一个字节不碰。
@@ -735,6 +748,10 @@ export function mount(
       disposers.push(surface.tools.register(hurtTool))
       disposers.push(surface.tools.register(partyTool))
       disposers.push(surface.tools.register(applyTool))
+      disposers.push(surface.tools.register(sheetTool))
+      disposers.push(surface.tools.register(worldTool))
+      disposers.push(surface.tools.register(npcTool))
+      disposers.push(surface.tools.register(plotTool))
     }
     startBridge()
     log('开 → 工具' + (config.tools === false ? '关' : '三把已注册') + '，桥=' + (bridge ? '连' : '关'))
