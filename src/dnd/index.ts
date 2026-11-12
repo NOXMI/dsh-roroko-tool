@@ -12,7 +12,7 @@
  */
 import { DatabaseSync } from 'node:sqlite'
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -20,6 +20,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { openBridge, type Bridge, type InjectFrame } from './bridge.js'
 import { DND_DEFAULTS, readDndState, resolveDnd } from './presets.js'
 import { createNpcTool, createPlotTool, createSheetTool, createWorldTool } from './tools.js'
+import { createLookupTool } from './lookup.js'
 import { registerDndMount } from '../state.js'
 
 export type { DndBucket, DndConfig, DndState } from './presets.js'
@@ -727,6 +728,13 @@ export function mount(
   const worldTool = createWorldTool(toolDeps)
   const npcTool = createNpcTool(toolDeps)
   const plotTool = createPlotTool(toolDeps)
+  // 查规则库那几把：种族/背景/职业/专长/法术/物品/怪物/状态/术语，一个工具一个 kind
+  const lookupTool = createLookupTool({
+    rulesPath: () =>
+      process.env.ROROKO_RULES_DB
+      ?? join(dirname(dbPath()), 'rules.db'),
+    log,
+  })
 
   // ── 总开关（按 preset 分桶）───────────────────────────────
   // 一个开关管整个子模块：工具 + 桥。默认关，哪个 preset 想开就在自己的桶里
@@ -752,6 +760,7 @@ export function mount(
       disposers.push(surface.tools.register(worldTool))
       disposers.push(surface.tools.register(npcTool))
       disposers.push(surface.tools.register(plotTool))
+      disposers.push(surface.tools.register(lookupTool))
     }
     startBridge()
     log('开 → 工具' + (config.tools === false ? '关' : '三把已注册') + '，桥=' + (bridge ? '连' : '关'))
