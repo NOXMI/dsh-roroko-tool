@@ -387,12 +387,12 @@ export function createItemTool(deps: ToolDeps) {
   return defineTool({
     name: 'dnd_item',
     description:
-      '给玩家发道具 / 查房间里有什么 / 收回一件。'
+      '给玩家发道具 / 查房间里有什么 / 查某个人身上有什么 / 收回一件。'
       + '发的是「能干什么」的东西（钥匙、地图、信、药），不是数值加成。'
       + 'temp=true 是临时道具：用完就消失、离团也消失。',
     parameters: {
       action: { type: 'string', required: true, description: 'give | list | take' },
-      to: { type: 'string', description: '角色名（give / take 用）' },
+      to: { type: 'string', description: '角色名（give / take 用；list 带上也查这个人身上）' },
       name: { type: 'string', description: '道具名（give / take 必填）' },
       kind: { type: 'string', description: 'map | key | consumable | misc，默认 misc' },
       temp: { type: 'boolean', description: 'true = 一次性' },
@@ -410,6 +410,50 @@ export function createItemTool(deps: ToolDeps) {
       try {
         return deps.withDb(path, (db) => {
           if (action === 'list') {
+            const who0 = String(args.to ?? '').trim()
+
+            // 点了名：这个角色身上的 = 卡里自带的 + 你发给他的
+            if (who0) {
+              const card = db
+                .prepare(
+                  'SELECT c.id, c.name, c.inventory, c.coin FROM characters c'
+                  + ' JOIN room_members m ON m.character_id = c.id'
+                  + ' WHERE m.room_id = ? AND c.name = ? LIMIT 1',
+                )
+                .get(room, who0) as { id?: number; name?: string; inventory?: unknown; coin?: unknown } | undefined
+              if (!card) return `房间里没有「${who0}」。`
+              const inv = jsonOf<Array<Record<string, unknown>>>(card.inventory, [])
+              const given = db
+                .prepare(
+                  'SELECT name, kind, temp, note FROM room_items'
+                  + ' WHERE room_id = ? AND owner_id = ? AND used = 0 ORDER BY created_at',
+                )
+                .all(room, Number(card.id)) as Array<Record<string, unknown>>
+              const lines = [`${String(card.name)} 身上：`]
+              if (inv.length > 0) {
+                lines.push('随身（卡里带的）：')
+                for (const o of inv) {
+                  lines.push(`- ${String(o.name ?? '?')}${Number(o.qty ?? 1) > 1 ? ` ${String(o.qty)}` : ''}`)
+                }
+              }
+              if (given.length > 0) {
+                lines.push('这边发的：')
+                for (const r of given) {
+                  const temp = Number(r.temp) === 1 ? '  临时' : ''
+                  const note = r.note ? `  ${String(r.note)}` : ''
+                  lines.push(`- ${String(r.name)}  ${String(r.kind ?? 'misc')}${temp}${note}`)
+                }
+              }
+              if (inv.length === 0 && given.length === 0) lines.push('- 两手空空。')
+              const coin = jsonOf<Record<string, unknown>>(card.coin, {})
+              const money = ['gp', 'sp', 'cp']
+                .filter((k) => Number(coin[k] ?? 0) !== 0)
+                .map((k) => `${String(coin[k])}${k}`)
+                .join(' ')
+              if (money) lines.push(`钱袋：${money}`)
+              return lines.join('\n')
+            }
+
             const rows = db
               .prepare(
                 'SELECT i.name, i.kind, i.temp, i.note, c.name AS owner FROM room_items i'
@@ -418,7 +462,7 @@ export function createItemTool(deps: ToolDeps) {
               )
               .all(room) as Array<Record<string, unknown>>
             if (rows.length === 0) return '这间房里没有道具。'
-            return ['房里的道具：', ...rows.map((r) => {
+            return ['房里的道具（点名某个人可以看到他身上带的东西）：', ...rows.map((r) => {
               const owner = r.owner ? `（${String(r.owner)}）` : '（无主，谁都能拿）'
               const temp = Number(r.temp) === 1 ? '  临时' : ''
               const note = r.note ? `  ${String(r.note)}` : ''
